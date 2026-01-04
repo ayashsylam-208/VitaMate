@@ -1,0 +1,51 @@
+﻿# ======================
+# OS / IDE
+# ======================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ======================
+# Python / Django
+# ======================
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+.env.*
+venv/
+*.log
+media/
+staticfiles/
+
+# ======================
+# Flutter / Dart
+# ======================
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# ======================
+# Android
+# ======================
+**/android/.gradle/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+
+# ======================
+# iOS
+# ======================
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/Generated.xcconfig
+
+# ======================
+# Node (if any)
+# ======================
+node_modules/
