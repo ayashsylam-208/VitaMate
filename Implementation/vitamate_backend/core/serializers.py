@@ -20,7 +20,8 @@ class MealLogSerializer(serializers.ModelSerializer):
     food_name = serializers.CharField(source='food.name', read_only=True)
     class Meta: 
         model = MealLog; 
-        fields = '__all__'
+        fields = ['id', 'user', 'food', 'food_name', 'meal_type', 'quantity_grams', 'date', 'total_calories']
+        read_only_fields = ['user', 'date', 'total_calories']
 
 
 
@@ -31,7 +32,13 @@ class WaterLogSerializer(serializers.ModelSerializer):
         read_only_fields = ('user', 'date')
 
 class StepLogSerializer(serializers.ModelSerializer):
-    class Meta: model = StepLog; fields = '__all__'
+    calories_burned = serializers.ReadOnlyField()
+    burn_rate_kcal_per_km = serializers.ReadOnlyField()
+
+    class Meta:
+        model = StepLog
+        fields = '__all__'
+        read_only_fields = ('user', 'date', 'calories_burned', 'burn_rate_kcal_per_km')
 
 class MedicineSerializer(serializers.ModelSerializer):
     class Meta: model = Medicine; fields = '__all__'
@@ -50,14 +57,27 @@ class ActivityLogSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'exercise', 'exercise_name', 'duration_minutes', 'date', 'calories_burned']
         read_only_fields = ['user', 'date', 'calories_burned']
 
+class ExerciseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exercise
+        fields = ['id', 'name', 'met_value']
+
 class SleepLogSerializer(serializers.ModelSerializer):
     # حقل للقراءة فقط لجلب مدة النوم بالساعات
     duration_hours = serializers.ReadOnlyField()
+    points_earned = serializers.SerializerMethodField()
+
+    def get_points_earned(self, obj):
+        profile = getattr(obj.user, 'userprofile', None)
+        if not profile or not profile.recommended_sleep_hours:
+            return 0
+        goal = profile.recommended_sleep_hours
+        return 10 if obj.duration_hours >= 0.9 * goal else 0
 
     class Meta:
         model = SleepLog
-        fields = ['id', 'user', 'start_time', 'end_time', 'quality', 'date', 'duration_hours']
-        read_only_fields = ['user', 'date', 'duration_hours']
+        fields = ['id', 'user', 'start_time', 'end_time', 'quality', 'date', 'duration_hours', 'points_earned']
+        read_only_fields = ['user', 'date', 'duration_hours', 'points_earned']
 
 class HabitLogSerializer(serializers.ModelSerializer):
     # لجلب اسم العادة وتفاصيلها

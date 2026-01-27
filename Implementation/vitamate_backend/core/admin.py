@@ -9,12 +9,12 @@ from .models import (
 # --- Nutrition ---
 @admin.register(FoodItem)
 class FoodItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'calories', 'protein', 'carbs', 'fat')
+    list_display = ('name', 'calories_100g', 'protein_100g', 'carbs_100g', 'fat_100g', 'serving_label', 'serving_grams')
     search_fields = ('name',)
 
 @admin.register(MealLog)
 class MealLogAdmin(admin.ModelAdmin):
-    list_display = ('user', 'food', 'meal_type', 'quantity', 'total_calories', 'date')
+    list_display = ('user', 'food', 'meal_type', 'quantity_grams', 'total_calories', 'date')
     list_filter = ('date', 'meal_type')
 
 # --- Hydration ---

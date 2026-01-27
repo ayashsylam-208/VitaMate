@@ -1,6 +1,7 @@
 from rest_framework import generics
 from django.contrib.auth.models import User
 from .serializers import RegisterSerializer
+from users.services.user_profile_service import UserProfileService
 from rest_framework.permissions import AllowAny
 
 class RegisterView(generics.CreateAPIView):
@@ -23,4 +24,5 @@ class ManageUserView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_object(self):
         # إجبار الواجهة على التعامل مع المستخدم الحالي فقط
+        UserProfileService.ensure_profile(self.request.user)
         return self.request.user

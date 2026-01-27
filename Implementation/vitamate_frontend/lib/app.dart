@@ -17,6 +17,7 @@ import 'features/water/screens/water_screen.dart';
 import 'features/nutrition/screens/nutrition_screen.dart';
 import 'features/activity/screens/activity_screen.dart';
 import 'features/goals/screens/goals_screen.dart';
+import 'features/steps/screens/steps_screen.dart';
 
 class VitaMateApp extends StatelessWidget {
   const VitaMateApp({super.key});
@@ -50,6 +51,7 @@ class VitaMateApp extends StatelessWidget {
 
         Routes.meals: (_) => const NutritionScreen(),
         Routes.activities: (_) => const ActivityScreen(),
+        Routes.steps: (_) => const StepsScreen(),
         Routes.goal: (_) => const GoalsScreen(),
 
         // ✅ Missing route used by Home (Details button)

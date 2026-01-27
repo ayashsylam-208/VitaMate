@@ -10,6 +10,7 @@ import '../../shared/widgets/labled_row.dart';
 import '../../shared/widgets/primary_button.dart';
 import '../../shared/widgets/vitamate_app_bar.dart';
 import '../../shared/utils/validators.dart';
+import '../../core/notifications/notifications_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -38,6 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
 
+    FocusScope.of(context).unfocus();
     setState(() => _loading = true);
 
     try {
@@ -62,6 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await SecureStorage.saveTokens(access: access, refresh: refresh);
 
       if (!mounted) return;
+      await NotificationsService.showWelcomeBack();
       Navigator.pushReplacementNamed(context, Routes.home);
     } on DioException catch (e) {
       String message = 'Login failed. Please check your credentials.';
@@ -79,14 +82,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Unexpected error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Unexpected error: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -96,14 +96,16 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: const VitaMateAppBar(),
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
           child: Form(
             key: _formKey,
             child: Column(
               children: [
-                const SizedBox(height: 24),
+                const SizedBox(height: 6),
                 const Text(
                   'Begin your journey to better health\nwith your smart health assistant.',
                   textAlign: TextAlign.center,
@@ -142,15 +144,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: InputDecoration(
                       suffixIcon: IconButton(
                         onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(
-                          _obscure ? Icons.visibility_off : Icons.visibility,
-                        ),
+                        icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
                       ),
                     ),
                   ),
                 ),
 
-                const Spacer(),
+                const SizedBox(height: 22),
 
                 PrimaryButton(
                   text: _loading ? 'Logging in...' : 'Login',
@@ -170,7 +170,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 18),
+                const SizedBox(height: 12),
               ],
             ),
           ),

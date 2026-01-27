@@ -10,6 +10,7 @@ import '../../shared/widgets/avatar_slot.dart';
 import '../../shared/widgets/labled_row.dart';
 import '../../shared/widgets/primary_button.dart';
 import '../../shared/widgets/vitamate_app_bar.dart';
+import '../../core/notifications/notifications_service.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -68,6 +69,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
+    FocusScope.of(context).unfocus();
     setState(() => _loading = true);
 
     try {
@@ -80,7 +82,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final firstName = parts.first;
       final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
-      // 1) register
       await HttpClient.dio.post(
         ApiEndpoints.register,
         data: {
@@ -92,7 +93,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
         },
       );
 
-      // 2) login to get tokens
       final loginRes = await HttpClient.dio.post(
         ApiEndpoints.login,
         data: {'username': username, 'password': password},
@@ -103,12 +103,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       final access = data['access']?.toString() ?? '';
       final refresh = data['refresh']?.toString() ?? '';
-      if (access.isEmpty || refresh.isEmpty)
+      if (access.isEmpty || refresh.isEmpty) {
         throw Exception('Missing access/refresh');
+      }
 
       await SecureStorage.saveTokens(access: access, refresh: refresh);
 
       if (!mounted) return;
+      await NotificationsService.showWelcomeNewUser();
       Navigator.pushReplacementNamed(context, Routes.onboarding);
     } on DioException catch (e) {
       String message = 'Registration failed. Please try again.';
@@ -124,14 +126,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Unexpected error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Unexpected error: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -141,14 +140,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: const VitaMateAppBar(),
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
           child: Form(
             key: _formKey,
             child: Column(
               children: [
-                const SizedBox(height: 22),
+                const SizedBox(height: 6),
                 const Text(
                   'Your journey toward a healthier lifestyle starts here',
                   textAlign: TextAlign.center,
@@ -203,9 +204,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     decoration: InputDecoration(
                       suffixIcon: IconButton(
                         onPressed: () => setState(() => _obscure1 = !_obscure1),
-                        icon: Icon(
-                          _obscure1 ? Icons.visibility_off : Icons.visibility,
-                        ),
+                        icon: Icon(_obscure1 ? Icons.visibility_off : Icons.visibility),
                       ),
                     ),
                   ),
@@ -222,15 +221,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     decoration: InputDecoration(
                       suffixIcon: IconButton(
                         onPressed: () => setState(() => _obscure2 = !_obscure2),
-                        icon: Icon(
-                          _obscure2 ? Icons.visibility_off : Icons.visibility,
-                        ),
+                        icon: Icon(_obscure2 ? Icons.visibility_off : Icons.visibility),
                       ),
                     ),
                   ),
                 ),
 
-                const Spacer(),
+                const SizedBox(height: 22),
 
                 PrimaryButton(
                   text: _loading ? 'Creating...' : 'Create account',
@@ -250,7 +247,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 18),
+                const SizedBox(height: 12),
               ],
             ),
           ),

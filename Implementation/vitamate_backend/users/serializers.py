@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile
+from users.services.user_profile_service import UserProfileService
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -34,24 +34,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         fields = ['first_name', 'last_name', 'email', 'weight', 'height', 'activity_level', 'goal', 'daily_step_goal', 'gender']
 
     def update(self, instance, validated_data):
-        # 1. تحديث بيانات المستخدم الأساسية (User)
         profile_data = validated_data.pop('userprofile', {})
-        
-        instance.first_name = validated_data.get('first_name', instance.first_name)
-        instance.last_name = validated_data.get('last_name', instance.last_name)
-        instance.email = validated_data.get('email', instance.email)
-        instance.save()
-
-        # 2. تحديث بيانات الملف الشخصي (UserProfile)
-        profile = instance.userprofile
-        profile.weight = profile_data.get('weight', profile.weight)
-        profile.height = profile_data.get('height', profile.height)
-        profile.activity_level = profile_data.get('activity_level', profile.activity_level)
-        profile.goal = profile_data.get('goal', profile.goal)
-        profile.daily_step_goal = profile_data.get('daily_step_goal', profile.daily_step_goal)
-        
-        # إعادة حساب المعدلات الحيوية بعد التعديل (FR-24)
-        profile.calculate_metrics()
-        profile.save()
-
-        return instance
+        return UserProfileService.update_user_and_profile(
+            user=instance,
+            user_data=validated_data,
+            profile_data=profile_data,
+        )

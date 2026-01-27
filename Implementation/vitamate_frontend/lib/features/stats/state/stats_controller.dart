@@ -1,0 +1,99 @@
+import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
+
+import '../data/stats_api.dart';
+import '../models/day_stat.dart';
+
+class StatsController extends ChangeNotifier {
+  StatsController({StatsApi? api}) : _api = api ?? StatsApi();
+
+  final StatsApi _api;
+
+  bool loading = false;
+  String? error;
+
+  // Dashboard snapshot
+  int pointsTotal = 0;
+  int level = 1;
+  double waterTarget = 0;
+  double waterCurrent = 0;
+  double sleepGoalHours = 0;
+  double sleepLoggedHours = 0;
+  int caloriesTarget = 0;
+  int caloriesConsumed = 0;
+  int caloriesRemaining = 0;
+  int burnTarget = 0;
+  int burnCurrent = 0;
+  int stepsTarget = 0;
+  int stepsCurrent = 0;
+
+  // History
+  List<DayStat> history = [];
+
+  Future<void> load() async {
+    loading = true;
+    error = null;
+    notifyListeners();
+
+    try {
+      final dashboard = await _api.getDashboard();
+      _parseDashboard(dashboard);
+
+      final hist = await _api.getHistory();
+      history = hist.map((e) => DayStat.fromJson(_asMap(e))).toList();
+    } catch (_) {
+      error = 'Failed to load progress data';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  void _parseDashboard(Map<String, dynamic> d) {
+    final summary = _asMap(d['summary']);
+    final hydration = _asMap(d['hydration']);
+    final sleep = _asMap(d['sleep']);
+    final activity = _asMap(d['activity']);
+    final gamification = _asMap(d['gamification']);
+
+    caloriesTarget = _toInt(summary['calories_target']);
+    caloriesConsumed = _toInt(summary['calories_consumed']);
+    caloriesRemaining = _toInt(summary['calories_remaining']);
+    burnCurrent = _toInt(summary['calories_burned']);
+    burnTarget = _toInt(summary['burn_target']);
+
+    waterTarget = _toDouble(hydration['target']);
+    waterCurrent = _toDouble(hydration['current']);
+
+    sleepGoalHours = _toDouble(sleep['recommended_sleep_hours']);
+    sleepLoggedHours = _toDouble(sleep['logged_hours_today']);
+
+    stepsTarget = _toInt(activity['steps_target']);
+    stepsCurrent = _toInt(activity['steps']);
+
+    pointsTotal = _toInt(gamification['points']);
+    level = _toInt(gamification['level']);
+  }
+
+  String formatDate(DateTime d) => DateFormat.MMMd().format(d);
+
+  Map<String, dynamic> _asMap(dynamic v) {
+    if (v is Map<String, dynamic>) return v;
+    if (v is Map) return v.cast<String, dynamic>();
+    return <String, dynamic>{};
+  }
+
+  int _toInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is double) return v.round();
+    return int.tryParse(v.toString()) ?? 0;
+  }
+
+  double _toDouble(dynamic v) {
+    if (v == null) return 0;
+    if (v is double) return v;
+    if (v is int) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0;
+  }
+}

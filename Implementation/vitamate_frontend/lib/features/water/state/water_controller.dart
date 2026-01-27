@@ -14,6 +14,7 @@ class WaterController extends ChangeNotifier {
 
   int targetMl = 0; // from backend (dashboard) converted to ml
   int consumedMl = 0;
+  int waterPointsToday = 0;
 
   int get remainingMl => (targetMl - consumedMl).clamp(0, targetMl);
   double get progress => targetMl == 0 ? 0 : (consumedMl / targetMl).clamp(0, 1);
@@ -28,6 +29,7 @@ class WaterController extends ChangeNotifier {
 
       logs = await _api.getTodayLogs();
       consumedMl = logs.fold<int>(0, (sum, e) => sum + e.amountMl);
+      waterPointsToday = logs.length * 5; // backend awards 5 pts per log
 
       loading = false;
       notifyListeners();

@@ -22,7 +22,7 @@ class DrinkIconTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(18),
       onTap: onTap,
       child: Ink(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
@@ -30,13 +30,13 @@ class DrinkIconTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 46,
-              height: 46,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: cs.primary.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: cs.primary),
+              child: Icon(icon, color: cs.primary, size: 22),
             ),
             const SizedBox(width: 10),
             Expanded(
