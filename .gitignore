@@ -49,3 +49,5 @@ build/
 # Node (if any)
 # ======================
 node_modules/
+Implementation/vitamate_backend/.venv/
+VitaMate/
