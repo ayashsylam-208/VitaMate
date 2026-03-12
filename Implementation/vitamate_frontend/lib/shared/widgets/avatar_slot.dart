@@ -26,7 +26,7 @@ class AvatarSlot extends StatelessWidget {
         // ✅ ظل خفيف (أحلى)
         boxShadow: [
           BoxShadow(
-            color: primary.withOpacity(0.18),
+            color: primary.withValues(alpha: 0.18),
             blurRadius: 14,
             spreadRadius: 1,
             offset: const Offset(0, 6),

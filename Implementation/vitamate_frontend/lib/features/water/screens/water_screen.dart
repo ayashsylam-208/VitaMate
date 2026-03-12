@@ -113,7 +113,7 @@ class _WaterScreenState extends State<WaterScreen> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                             side: BorderSide(
-                              color: cs.outlineVariant.withOpacity(0.45),
+                              color: cs.outlineVariant.withValues(alpha: 0.45),
                             ),
                           ),
                           child: ListTile(
@@ -144,7 +144,7 @@ class _WaterScreenState extends State<WaterScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(
-          color: cs.outlineVariant.withOpacity(0.45),
+          color: cs.outlineVariant.withValues(alpha: 0.45),
         ),
       ),
       child: Padding(
@@ -184,7 +184,7 @@ class _WaterScreenState extends State<WaterScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: cs.primary.withOpacity(0.1),
+                color: cs.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -214,7 +214,7 @@ class _WaterScreenState extends State<WaterScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(
-          color: cs.outlineVariant.withOpacity(0.45),
+          color: cs.outlineVariant.withValues(alpha: 0.45),
         ),
       ),
       child: Padding(

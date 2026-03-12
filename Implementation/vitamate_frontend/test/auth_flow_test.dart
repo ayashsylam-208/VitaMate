@@ -8,7 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vitamate/auth/screens/login_screen.dart';
 import 'package:vitamate/core/network/http_client.dart';
 import 'package:vitamate/core/routing/routes.dart';
-import 'package:vitamate/core/storage/secure_storage.dart';
 
 /// Simple fake adapter for Dio to avoid real HTTP.
 class FakeAdapter implements HttpClientAdapter {
