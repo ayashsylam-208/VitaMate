@@ -111,7 +111,7 @@ class _StatsScreenState extends State<StatsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -135,7 +135,7 @@ class _StatsScreenState extends State<StatsScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: cs.primary.withOpacity(0.1),
+                    color: cs.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -154,7 +154,7 @@ class _StatsScreenState extends State<StatsScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: cs.primary.withOpacity(0.15),
+                          color: cs.primary.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text('Lvl ${controller.level}', style: TextStyle(color: cs.primary)),
@@ -277,7 +277,7 @@ class _StatsScreenState extends State<StatsScreen> {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: cs.outlineVariant.withOpacity(0.4)),
+            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
           ),
           child: Padding(
             padding: const EdgeInsets.all(14),
@@ -303,7 +303,7 @@ class _StatsScreenState extends State<StatsScreen> {
                     value: pct,
                     minHeight: 8,
                     color: over ? cs.error : cs.primary,
-                    backgroundColor: cs.surfaceVariant.withOpacity(0.6),
+                    backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.6),
                   ),
                 ),
                 if (over)
@@ -328,7 +328,7 @@ class _StatsScreenState extends State<StatsScreen> {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+          side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
         ),
         child: const Padding(
           padding: EdgeInsets.all(16),
@@ -344,7 +344,7 @@ class _StatsScreenState extends State<StatsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -385,7 +385,7 @@ class _StatsScreenState extends State<StatsScreen> {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+          side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
         ),
         child: const Padding(
           padding: EdgeInsets.all(16),
@@ -407,7 +407,7 @@ class _StatsScreenState extends State<StatsScreen> {
             child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: controller.history.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            separatorBuilder: (_, index) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               final day = controller.history[index];
               final dateLabel = DateFormat.E().format(day.date);
@@ -420,7 +420,7 @@ class _StatsScreenState extends State<StatsScreen> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+                    side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
@@ -435,7 +435,7 @@ class _StatsScreenState extends State<StatsScreen> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: cs.primary.withOpacity(0.1),
+                                color: cs.primary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text('+${day.pointsEstimate} pts',
@@ -523,7 +523,7 @@ class _StatsScreenState extends State<StatsScreen> {
               value: value,
               minHeight: 8,
               color: warn ? cs.error : cs.primary,
-              backgroundColor: cs.surfaceVariant.withOpacity(0.6),
+              backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.6),
             ),
           ),
           const SizedBox(height: 4),
@@ -584,7 +584,7 @@ class _StatsScreenState extends State<StatsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -655,7 +655,7 @@ class _StatsScreenState extends State<StatsScreen> {
                     },
                   ),
                   DropdownButtonFormField<String>(
-                    value: quality,
+                    initialValue: quality,
                     decoration: const InputDecoration(labelText: 'Quality'),
                     items: const [
                       DropdownMenuItem(value: 'Deep', child: Text('Deep')),
@@ -677,7 +677,7 @@ class _StatsScreenState extends State<StatsScreen> {
                         }
                         try {
                           await _statsApi.logSleep(start: startDt, end: endDt, quality: quality);
-                          if (mounted) Navigator.of(ctx).pop();
+                          if (ctx.mounted) Navigator.of(ctx).pop();
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('Sleep logged successfully')),
@@ -758,7 +758,7 @@ class _StatsScreenState extends State<StatsScreen> {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: cs.outlineVariant.withOpacity(0.4)),
+            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
           ),
           child: Padding(
             padding: const EdgeInsets.all(14),
@@ -791,7 +791,7 @@ class _StatsScreenState extends State<StatsScreen> {
         ],
       ),
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      backgroundColor: cs.surfaceVariant.withOpacity(0.5),
+      backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
     );
   }
 }
@@ -813,7 +813,7 @@ class _LineChartPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     final paintFill = Paint()
-      ..color = color.withOpacity(0.15)
+      ..color = color.withValues(alpha: 0.15)
       ..style = PaintingStyle.fill;
 
     final maxVal = points.reduce((a, b) => a > b ? a : b);

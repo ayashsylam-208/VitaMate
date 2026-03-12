@@ -94,7 +94,7 @@ class _StepsScreenState extends State<StepsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -111,7 +111,7 @@ class _StepsScreenState extends State<StepsScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: cs.primary.withOpacity(0.1),
+                    color: cs.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -191,7 +191,7 @@ class _StepsScreenState extends State<StepsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -249,7 +249,7 @@ class _StepsScreenState extends State<StepsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -295,7 +295,7 @@ class _StepsScreenState extends State<StepsScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -384,8 +384,8 @@ class _StepsScreenState extends State<StepsScreen> {
     return Chip(
       avatar: Icon(icon, size: 18, color: cs.primary),
       label: Text(label),
-      backgroundColor: cs.surfaceVariant.withOpacity(0.5),
-      side: BorderSide(color: cs.outlineVariant.withOpacity(0.4)),
+      backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+      side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
     );
   }
 
