@@ -21,13 +21,14 @@ jobs:
 
       - name: Install Gitleaks
         run: |
+          mkdir -p /tmp/gitleaks
           GITLEAKS_VERSION="8.24.2"
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
-          tar -xzf gitleaks.tar.gz
-          chmod +x gitleaks
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks/gitleaks.tar.gz -C /tmp/gitleaks
+          chmod +x /tmp/gitleaks/gitleaks
 
       - name: Run Gitleaks scan
-        run: ./gitleaks detect --source . --config .gitleaks.toml --no-git --redact --verbose
+        run: /tmp/gitleaks/gitleaks detect --source . --config .gitleaks.toml --no-git --redact --verbose
 
   pre-commit:
     name: Quality (pre-commit)
