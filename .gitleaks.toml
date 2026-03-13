@@ -1,0 +1,4 @@
+title = "VitaMate Gitleaks Config"
+
+[extend]
+useDefault = true
