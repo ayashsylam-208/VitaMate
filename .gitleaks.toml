@@ -2,3 +2,8 @@ title = "VitaMate Gitleaks Config"
 
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "Ignore known Sidekiq env-var example false positive in docs"
+paths = ['''(?i)^README\.md$''']
+regexes = ['''BUNDLE_ENTERPRISE__CONTRIBSYS__COM''']
