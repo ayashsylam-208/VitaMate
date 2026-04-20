@@ -9,13 +9,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vitamate/app.dart';
 import 'package:vitamate/auth/screens/login_screen.dart';
+import 'package:vitamate/core/network/http_client.dart';
 
 void main() {
+  setUpAll(() {
+    HttpClient.initForTesting();
+  });
+
   testWidgets('App starts on login screen', (WidgetTester tester) async {
     await tester.pumpWidget(const VitaMateApp());
 
     expect(find.byType(LoginScreen), findsOneWidget);
-    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('Sign In'), findsOneWidget);
     expect(find.text('Username'), findsOneWidget);
   });
 }

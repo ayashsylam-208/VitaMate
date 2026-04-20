@@ -1,143 +1,153 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 
-import '../../../../../core/routing/routes.dart';
-import '../../../../../core/network/http_client.dart';
-import '../../../../../core/config/api_endpoints.dart';
-import '../../../../../shared/widgets/primary_button.dart';
 import '../onboarding_state.dart';
+import '../widgets/wizard_step_container.dart';
 
-class Step05Summary extends StatefulWidget {
+class Step04Summary extends StatelessWidget {
   final OnboardingState state;
-  final VoidCallback onBack;
+  final bool compact;
 
-  const Step05Summary({super.key, required this.state, required this.onBack});
+  const Step04Summary({super.key, required this.state, required this.compact});
 
-  @override
-  State<Step05Summary> createState() => _Step05SummaryState();
-}
-
-class _Step05SummaryState extends State<Step05Summary> {
-  bool _loading = false;
-
-  String _genderLabel(String v) => v == 'M' ? 'Male' : 'Female';
-
-  String _activityLabel(double v) {
-    if (v == 1.2) return 'Sedentary';
-    if (v == 1.375) return 'Lightly active';
-    if (v == 1.55) return 'Moderately active';
-    if (v == 1.725) return 'Very active';
-    if (v == 1.9) return 'Extremely active';
-    return v.toString();
-  }
-
-  String _goalLabel(String v) {
-    switch (v) {
-      case 'lose':
-        return 'Lose weight';
-      case 'maintain':
-        return 'Maintain weight';
-      case 'gain':
-        return 'Gain weight';
-      case 'muscle':
-        return 'Build muscle';
+  String _genderLabel(String? value) {
+    switch (value) {
+      case 'M':
+        return 'Male';
+      case 'F':
+        return 'Female';
       default:
-        return v;
+        return '-';
     }
   }
 
-  Future<void> _finish() async {
-    setState(() => _loading = true);
+  String _activityLabel(double? value) {
+    switch (value) {
+      case 1.2:
+        return 'Sedentary';
+      case 1.375:
+        return 'Lightly Active';
+      case 1.55:
+        return 'Moderately Active';
+      case 1.725:
+        return 'Very Active';
+      case 1.9:
+        return 'Extremely Active';
+      default:
+        return '-';
+    }
+  }
 
-    try {
-      final payload = {
-        'gender': widget.state.gender, // 'M'/'F'
-        'age': widget.state.age,
-        'height':
-            widget.state.heightCm, // if backend expects height_cm change key
-        'weight':
-            widget.state.weightKg, // if backend expects weight_kg change key
-        'activity_level': widget.state.activityLevel, // double choice
-        'goal': widget.state.goal, // lose/maintain/gain/muscle
-      };
-
-      await HttpClient.dio.patch(ApiEndpoints.me, data: payload);
-
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, Routes.home);
-    } on DioException catch (e) {
-      String msg = 'Failed to save your profile. Please try again.';
-
-      final data = e.response?.data;
-      if (data is Map && data.values.isNotEmpty) {
-        final v = data.values.first;
-        if (v is List && v.isNotEmpty)
-          msg = v.first.toString();
-        else
-          msg = v.toString();
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unexpected error occurred')),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
+  String _goalLabel(String? value) {
+    switch (value) {
+      case 'lose':
+        return 'Lose Weight';
+      case 'maintain':
+        return 'Maintain Weight';
+      case 'gain':
+        return 'Gain Weight';
+      case 'muscle':
+        return 'Build Muscle';
+      default:
+        return '-';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.state;
+    return WizardStepContainer(
+      icon: Icons.check_rounded,
+      title: 'All Set!',
+      subtitle: 'Review your profile details',
+      compact: compact,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.88),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: wizardStrokePurple),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1257369A),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            _SummaryRow(label: 'Gender', value: _genderLabel(state.gender)),
+            _SummaryRow(
+              label: 'Age',
+              value: state.age == null ? '-' : '${state.age} years',
+            ),
+            _SummaryRow(
+              label: 'Measurements',
+              value: state.heightCm == null || state.weightKg == null
+                  ? '-'
+                  : '${state.heightCm!.round()} cm, ${state.weightKg!.round()} kg',
+            ),
+            _SummaryRow(
+              label: 'Activity',
+              value: _activityLabel(state.activityLevel),
+            ),
+            _SummaryRow(
+              label: 'Goal',
+              value: _goalLabel(state.goal),
+              last: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-    return Padding(
-      padding: const EdgeInsets.all(22),
-      child: Column(
+class _SummaryRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool last;
+
+  const _SummaryRow({
+    required this.label,
+    required this.value,
+    this.last = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        border: last
+            ? null
+            : const Border(bottom: BorderSide(color: Color(0xFFF1E5FF))),
+      ),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 18),
-          const Text(
-            'Summary',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 14),
-
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Gender: ${_genderLabel(s.gender)}'),
-                  Text('Age: ${s.age}'),
-                  Text('Height: ${s.heightCm.round()} cm'),
-                  Text('Weight: ${s.weightKg.round()} kg'),
-                  Text('Activity Level: ${_activityLabel(s.activityLevel)}'),
-                  Text('Goal: ${_goalLabel(s.goal)}'),
-                ],
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: wizardDeepPurple.withValues(alpha: 0.58),
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-
-          const Spacer(),
-
-          Row(
-            children: [
-              TextButton(onPressed: widget.onBack, child: const Text('Back')),
-              const SizedBox(width: 12),
-              Expanded(
-                child: PrimaryButton(
-                  text: _loading ? 'Saving...' : 'Finish',
-                  onPressed: _loading ? null : _finish,
-                ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                color: wizardDeepPurple,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+                height: 1.3,
               ),
-            ],
+            ),
           ),
-
-          const SizedBox(height: 18),
         ],
       ),
     );

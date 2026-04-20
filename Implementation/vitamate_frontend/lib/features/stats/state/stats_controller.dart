@@ -22,10 +22,21 @@ class StatsController extends ChangeNotifier {
   int caloriesTarget = 0;
   int caloriesConsumed = 0;
   int caloriesRemaining = 0;
+  double proteinG = 0;
+  double carbsG = 0;
+  double fatG = 0;
+  double sugarsG = 0;
+  double fiberG = 0;
+  double caffeineMg = 0;
   int burnTarget = 0;
   int burnCurrent = 0;
   int stepsTarget = 0;
   int stepsCurrent = 0;
+  int chronicConditionCount = 0;
+  int chronicPendingDoses = 0;
+  double chronicAdherencePercent = 0;
+  List<String> chronicSummaries = const [];
+  String chronicDisclaimer = '';
 
   // History
   List<DayStat> history = [];
@@ -55,10 +66,17 @@ class StatsController extends ChangeNotifier {
     final sleep = _asMap(d['sleep']);
     final activity = _asMap(d['activity']);
     final gamification = _asMap(d['gamification']);
+    final chronic = _asMap(d['chronic_conditions']);
 
     caloriesTarget = _toInt(summary['calories_target']);
     caloriesConsumed = _toInt(summary['calories_consumed']);
     caloriesRemaining = _toInt(summary['calories_remaining']);
+    proteinG = _toDouble(summary['protein_g']);
+    carbsG = _toDouble(summary['carbs_g']);
+    fatG = _toDouble(summary['fat_g']);
+    sugarsG = _toDouble(summary['sugars_g']);
+    fiberG = _toDouble(summary['fiber_g']);
+    caffeineMg = _toDouble(summary['caffeine_mg']);
     burnCurrent = _toInt(summary['calories_burned']);
     burnTarget = _toInt(summary['burn_target']);
 
@@ -73,6 +91,12 @@ class StatsController extends ChangeNotifier {
 
     pointsTotal = _toInt(gamification['points']);
     level = _toInt(gamification['level']);
+
+    chronicConditionCount = _toInt(chronic['count']);
+    chronicPendingDoses = _toInt(chronic['pending_doses_today']);
+    chronicAdherencePercent = _toDouble(chronic['adherence_percent']);
+    chronicSummaries = _asStringList(chronic['applied_summaries']);
+    chronicDisclaimer = (chronic['disclaimer'] ?? '').toString();
   }
 
   String formatDate(DateTime d) => DateFormat.MMMd().format(d);
@@ -81,6 +105,13 @@ class StatsController extends ChangeNotifier {
     if (v is Map<String, dynamic>) return v;
     if (v is Map) return v.cast<String, dynamic>();
     return <String, dynamic>{};
+  }
+
+  List<String> _asStringList(dynamic value) {
+    if (value is List) {
+      return value.map((item) => item.toString()).toList();
+    }
+    return const <String>[];
   }
 
   int _toInt(dynamic v) {

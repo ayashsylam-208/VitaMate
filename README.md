@@ -1,124 +1,103 @@
-# VitaMate – Smart Health & Lifestyle Assistant
+# VitaMate
 
-VitaMate is a smart mobile health and lifestyle tracking application developed as a Junior Project for the Faculty of Software Engineering at Syrian Private University.
+VitaMate is a mobile health and lifestyle tracking project built with a Django REST backend and a Flutter frontend.
 
-The application helps users adopt and maintain a healthy lifestyle by tracking daily habits such as nutrition, water intake, physical activity, sleep, and unhealthy habits, while providing reminders, reports, and a motivational reward system.
+## Academic Info
+- University: Syrian Private University
+- Faculty: Software Engineering
+- Academic Year: 2025-2026
+- Project Type: Junior Project
 
----
-
-## Academic Information
-- **University**: Syrian Private University
-- **Faculty**: Software Engineering
-- **Academic Year**: 2025 – 2026
-- **Project Type**: Junior Project
-
-### Team Members
+## Team
 - Salam Mohammed Al-Ayash
 - Amenah Ayman Zaitoun
 
-### Supervisor
-- Eng. Raghad Al-Hossny
+Supervisor: Eng. Raghad Al-Hossny
 
----
+## Repository Layout
+- `Implementation/vitamate_backend`: Django backend
+- `Implementation/vitamate_frontend`: Flutter frontend
+- `.github/workflows/ci.yml`: GitHub Actions pipeline
+- `.pre-commit-config.yaml`: local quality and secrets checks
+- `.gitleaks.toml`: repository gitleaks rules
+- `.gitleaksignore`: exact fingerprints ignored after manual review
 
-## Project Objectives
-- Track daily nutrition and caloric intake
-- Monitor water consumption and hydration levels
-- Track physical activity and workouts
-- Monitor sleep duration and quality
-- Assist users in breaking unhealthy habits
-- Provide weekly and monthly health reports
-- Encourage healthy behavior using a points-based reward system
-
----
-
-## System Scope
-- Secure user authentication and profile management
-- Health tracking (nutrition, water, activity, sleep, habits)
-- Notifications and reminders
-- Reports and analytics dashboards
-- PostgreSQL database for persistent storage
-- RESTful API backend
-
----
-
-## Technology Stack
+## Local Development
 
 ### Backend
-- Django
-- Django REST Framework
-- PostgreSQL
-- JWT Authentication
+```bash
+cd Implementation/vitamate_backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver
+```
 
 ### Frontend
-- Flutter (Android & iOS)
-
-### Tools
-- Git & GitHub
-- Visual Studio Code
-- Postman
-
----
-
-## Project Structure
-vitamate/
-|_docs/VitaMate Report.docx
-|_README.md
-|_.gitignore
-|_implementation/
-                |_Vitamate_backend/
-                |_vitamate_frontend/
-
----
-
-## Running the Backend (Django)
-
-### 1) Go to backend directory
 ```bash
-cd implementation/Vitamate_backend
-2) Create virtual environment
-
-Windows:
-
-python -m venv venv
-
-
-Mac/Linux:
-
-python3 -m venv venv
-
-3) Activate virtual environment
-
-Windows:
-
-venv\Scripts\activate
-
-
-Mac/Linux:
-
-source venv/bin/activate
-
-4) Install dependencies
-pip install -r requirements.txt
-
-5) Apply database migrations
-python manage.py migrate
-
-6) Run the development server
-python manage.py runserver
-
-
-The backend server will start at:
-
-http://127.0.0.1:8000/
-
-## Running the Frontend (Flutter)
-
-1) Go to frontend directory
-cd implementation/vitamate_frontend
-
-2) Install Flutter packages
+cd Implementation/vitamate_frontend
 flutter pub get
-
-3) Run the application
 flutter run
+```
+
+## Local Quality Checks
+
+### Backend tests
+```bash
+cd Implementation/vitamate_backend
+python manage.py makemigrations --check --dry-run
+python manage.py test users core gamification --verbosity 1
+```
+
+### Frontend checks
+```bash
+cd Implementation/vitamate_frontend
+flutter analyze
+flutter test
+```
+
+### Pre-commit with secrets scanning
+Install `pre-commit` and make sure the `gitleaks` CLI is available on your `PATH`.
+
+```bash
+pip install pre-commit
+pre-commit install
+git add -A
+pre-commit run --all-files --show-diff-on-failure
+```
+
+The local `pre-commit` flow includes:
+- YAML validation
+- JSON validation
+- merge-conflict detection
+- private-key detection
+- staged secrets scanning with `gitleaks`
+
+## CI Pipeline
+
+The GitHub Actions workflow lives in [.github/workflows/ci.yml](/c:/Users/Salam%20Ayash/Desktop/VitaMate/.github/workflows/ci.yml) and is split into five explicit jobs:
+- `gitleaks`: stages the repository snapshot and scans it for hardcoded secrets using `.gitleaks.toml` and `.gitleaksignore`
+- `pre-commit`: runs repository-wide quality checks and the local gitleaks hook
+- `backend-tests`: starts a PostgreSQL 17 service, runs `makemigrations --check --dry-run`, applies migrations, then runs Django tests
+- `flutter-analyze`: runs `flutter analyze`
+- `flutter-test`: runs `flutter test`
+
+## How To Read CI Results
+- If `gitleaks` fails, there is a secrets leak or a false positive that must be handled in `.gitleaks.toml` or `.gitleaksignore`.
+- If `pre-commit` fails, a local quality gate is failing and should be reproducible with `pre-commit run --all-files`.
+- If `backend-tests` fails, inspect the Postgres-backed Django steps in this order: migration check, migrate, then test output.
+- If `flutter-analyze` fails, there is a static-analysis issue in the Flutter app.
+- If `flutter-test` fails, there is a unit or widget regression in the Flutter app.
+
+## CI Database Contract
+The backend CI job does not depend on any local database or machine-specific `.env` file. It receives these values directly from the workflow:
+- `DJANGO_ENV=dev`
+- `DJANGO_SECRET_KEY`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_HOST=127.0.0.1`
+- `POSTGRES_PORT=5432`
+
+This keeps the GitHub Actions environment reproducible and self-contained.

@@ -7,3 +7,12 @@ useDefault = true
 description = "Ignore known Sidekiq env-var example false positive in docs"
 paths = ['''(?i)^README\.md$''']
 regexes = ['''BUNDLE_ENTERPRISE__CONTRIBSYS__COM''']
+
+[[allowlists]]
+description = "Ignore local temporary gitleaks binaries downloaded only for validation"
+paths = ['''(?i)^Implementation/tmp_gitleaks/''']
+
+[[allowlists]]
+description = "Ignore static chronic condition seed migration false positives"
+paths = ['''(?i)^Implementation/vitamate_backend/core/migrations/0005_seed_chronic_condition_catalog\.py$''']
+stopwords = ['''activity_minutes_7d''']

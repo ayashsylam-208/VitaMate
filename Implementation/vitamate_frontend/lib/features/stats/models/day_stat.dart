@@ -8,11 +8,19 @@ class DayStat {
   final int caloriesIn;
   final int caloriesTarget;
   final int caloriesBurned;
+  final double proteinG;
+  final double carbsG;
+  final double fatG;
+  final double sugarsG;
+  final double fiberG;
+  final double caffeineMg;
   final int burnTarget;
   final double sleepHours;
   final double sleepTarget;
   final int exerciseMinutes;
   final int pointsEstimate;
+  final double conditionAdherencePercent;
+  final int pendingConditionDoses;
 
   DayStat({
     required this.date,
@@ -24,11 +32,19 @@ class DayStat {
     required this.caloriesIn,
     required this.caloriesTarget,
     required this.caloriesBurned,
+    required this.proteinG,
+    required this.carbsG,
+    required this.fatG,
+    required this.sugarsG,
+    required this.fiberG,
+    required this.caffeineMg,
     required this.burnTarget,
     required this.sleepHours,
     required this.sleepTarget,
     required this.exerciseMinutes,
     required this.pointsEstimate,
+    required this.conditionAdherencePercent,
+    required this.pendingConditionDoses,
   });
 
   factory DayStat.fromJson(Map<String, dynamic> json) {
@@ -42,11 +58,19 @@ class DayStat {
       caloriesIn: _toInt(json['calories_in']),
       caloriesTarget: _toInt(json['calories_target']),
       caloriesBurned: _toInt(json['calories_burned']),
+      proteinG: _toDouble(json['protein_g']),
+      carbsG: _toDouble(json['carbs_g']),
+      fatG: _toDouble(json['fat_g']),
+      sugarsG: _toDouble(json['sugars_g']),
+      fiberG: _toDouble(json['fiber_g']),
+      caffeineMg: _toDouble(json['caffeine_mg']),
       burnTarget: _toInt(json['burn_target']),
       sleepHours: _toDouble(json['sleep_hours']),
       sleepTarget: _toDouble(json['sleep_target']),
       exerciseMinutes: _toInt(json['exercise_minutes']),
       pointsEstimate: _toInt(json['points_estimate']),
+      conditionAdherencePercent: _toDouble(json['condition_adherence_percent']),
+      pendingConditionDoses: _toInt(json['pending_condition_doses']),
     );
   }
 

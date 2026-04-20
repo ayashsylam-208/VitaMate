@@ -20,9 +20,9 @@ class SleepSettingsController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final me = await _authRepo.getMeRaw();
-      settings = SleepSettings.fromMe(me);
-      notificationsEnabled = me['enable_sleep_improvement'] == true;
+      final user = await _authRepo.getMe();
+      settings = SleepSettings.fromUser(user);
+      notificationsEnabled = user.profile.enableSleepImprovement;
     } catch (_) {
       error = 'Failed to load sleep settings';
     } finally {

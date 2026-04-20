@@ -59,6 +59,7 @@ void main() {
     );
 
     // Use fake dio adapter to avoid network.
+    HttpClient.initForTesting();
     HttpClient.dio.httpClientAdapter = FakeAdapter();
   });
 

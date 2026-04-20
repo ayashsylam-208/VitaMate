@@ -1,0 +1,626 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+
+from django.db import transaction
+from django.db.models import Sum
+from django.utils import timezone
+
+from core.models import (
+    ActivityLog,
+    ConditionAlert,
+    ConditionDailyEvaluation,
+    ConditionMedication,
+    ConditionMedicationLog,
+    ConditionMedicationSchedule,
+    HealthRestriction,
+    HealthTarget,
+    MealLog,
+    UserCondition,
+    WaterLog,
+)
+from core.repositories.hydration.water_log_repository import HydrationRepository
+from core.services.condition_catalog_service import ConditionCatalogService
+from core.services.condition_constraint_engine import ConditionConstraintEngine
+from core.services.condition_indicator_service import ConditionIndicatorService
+from core.services.condition_medication_service import ConditionMedicationService
+from core.services.condition_points_evaluator import ConditionPointsEvaluator
+from core.services.nutrition_service import NutritionService
+
+
+@dataclass(frozen=True)
+class NutritionTotals:
+    calories: float = 0
+    protein_g: float = 0
+    carbs_g: float = 0
+    fat_g: float = 0
+    fiber_g: float = 0
+    sugar_g: float = 0
+    added_sugars_g: float = 0
+    sodium_mg: float = 0
+    saturated_fat_g: float = 0
+    trans_fat_g: float = 0
+    potassium_mg: float = 0
+    cholesterol_mg: float = 0
+    vitamin_c_mg: float = 0
+    caffeine_mg: float = 0
+
+
+class ChronicConditionService:
+    DISCLAIMER = (
+        "VitaMate supports day-to-day chronic-condition self-management and does not replace medical care."
+    )
+
+    @staticmethod
+    def _system_local_now() -> datetime:
+        return timezone.localtime()
+
+    @staticmethod
+    def _priority_for_source_type(source_type: str) -> int:
+        return {
+            HealthTarget.SOURCE_PHYSICIAN_OVERRIDE: 1,
+            HealthTarget.SOURCE_DYNAMIC_CONDITION: 2,
+            HealthTarget.SOURCE_USER_CUSTOM: 2,
+            HealthTarget.SOURCE_COMPUTED_RULE: 3,
+        }.get(source_type, 3)
+
+    @classmethod
+    def effective_targets_for_condition(cls, *, user_condition: UserCondition) -> list[HealthTarget]:
+        selected: dict[str, HealthTarget] = {}
+        for target in user_condition.targets.order_by("priority", "-id"):
+            existing = selected.get(target.target_key)
+            if existing is None or target.priority < existing.priority:
+                selected[target.target_key] = target
+        return list(selected.values())
+
+    @classmethod
+    def apply_target_overrides(
+        cls,
+        *,
+        user_condition: UserCondition,
+        overrides: list[dict] | None,
+    ) -> None:
+        if overrides is None:
+            return
+
+        user_condition.targets.filter(
+            source_type__in=(
+                HealthTarget.SOURCE_PHYSICIAN_OVERRIDE,
+                HealthTarget.SOURCE_USER_CUSTOM,
+            )
+        ).delete()
+
+        computed_targets = {
+            target.target_key: target
+            for target in user_condition.targets.filter(
+                source_type=HealthTarget.SOURCE_COMPUTED_RULE
+            )
+        }
+
+        for override in overrides:
+            target_key = override["target_key"]
+            base_target = computed_targets.get(target_key)
+            source_type = override.get(
+                "source_type",
+                HealthTarget.SOURCE_PHYSICIAN_OVERRIDE,
+            )
+            HealthTarget.objects.create(
+                user_condition=user_condition,
+                source_restriction=base_target.source_restriction if base_target else None,
+                target_key=target_key,
+                target_name=override.get("target_name")
+                or (base_target.target_name if base_target else target_key.replace("_", " ").title()),
+                category=override.get("category")
+                or (base_target.category if base_target else HealthRestriction.CATEGORY_MONITORING),
+                metric_key=override.get("metric_key")
+                or (base_target.metric_key if base_target else target_key),
+                evaluation_mode=override.get("evaluation_mode")
+                or (base_target.evaluation_mode if base_target else "latest_indicator"),
+                unit=override.get("unit") or (base_target.unit if base_target else ""),
+                min_value=override.get("min_value"),
+                max_value=override.get("max_value"),
+                source_type=source_type,
+                priority=cls._priority_for_source_type(source_type),
+                is_scored=override.get(
+                    "is_scored",
+                    base_target.is_scored if base_target else False,
+                ),
+                guidance=override.get("guidance")
+                or (base_target.guidance if base_target else ""),
+                evidence_source=override.get("evidence_source")
+                or (base_target.evidence_source if base_target else "Clinician or approved user override"),
+                is_inference=override.get(
+                    "is_inference",
+                    base_target.is_inference if base_target else False,
+                ),
+            )
+
+    @staticmethod
+    @transaction.atomic
+    def rebuild_targets_for_condition(user_condition: UserCondition) -> list[HealthTarget]:
+        user_condition.targets.filter(
+            source_type=HealthTarget.SOURCE_COMPUTED_RULE
+        ).delete()
+
+        restrictions = HealthRestriction.objects.filter(
+            condition_type=user_condition.condition_type
+        ).filter(severity_code__in=("", user_condition.severity_code))
+
+        profile = getattr(user_condition.user, "userprofile", None)
+        targets: list[HealthTarget] = []
+        for restriction in restrictions:
+            min_value = restriction.min_required_value
+            max_value = restriction.max_allowed_value
+
+            if restriction.metric_key == "water_liters" and profile is not None and min_value is None:
+                min_value = float(profile.daily_water_target)
+
+            target = HealthTarget.objects.create(
+                user_condition=user_condition,
+                source_restriction=restriction,
+                target_key=restriction.restriction_key,
+                target_name=restriction.title,
+                category=restriction.category,
+                metric_key=restriction.metric_key,
+                evaluation_mode=restriction.evaluation_mode,
+                unit=restriction.unit,
+                min_value=min_value,
+                max_value=max_value,
+                source_type=HealthTarget.SOURCE_COMPUTED_RULE,
+                priority=ChronicConditionService._priority_for_source_type(
+                    HealthTarget.SOURCE_COMPUTED_RULE
+                ),
+                is_scored=restriction.is_scored,
+                guidance=restriction.guidance,
+                evidence_source=restriction.evidence_source,
+                is_inference=restriction.is_inference,
+            )
+            targets.append(target)
+
+        return targets
+
+    @staticmethod
+    def nutrition_totals_for_day(*, user, on_date: date) -> NutritionTotals:
+        totals: dict[str, float] = {
+            "calories": 0.0,
+            "protein_g": 0.0,
+            "carbs_g": 0.0,
+            "fat_g": 0.0,
+            "fiber_g": 0.0,
+            "sugar_g": 0.0,
+            "sodium_mg": 0.0,
+            "saturated_fat_g": 0.0,
+            "trans_fat_g": 0.0,
+            "potassium_mg": 0.0,
+            "cholesterol_mg": 0.0,
+            "vitamin_c_mg": 0.0,
+            "caffeine_mg": 0.0,
+        }
+        service_totals = NutritionService.nutrition_totals_for_day(user=user, on_date=on_date)
+        totals["calories"] = service_totals["calories_kcal"]
+        totals["protein_g"] = service_totals["protein_g"]
+        totals["carbs_g"] = service_totals["carbs_g"]
+        totals["fat_g"] = service_totals["fat_g"]
+        totals["fiber_g"] = service_totals["fiber_g"]
+        totals["sugar_g"] = service_totals["sugars_g"]
+        totals["added_sugars_g"] = service_totals.get("added_sugars_g", 0.0)
+        totals["sodium_mg"] = service_totals["sodium_mg"]
+        totals["saturated_fat_g"] = service_totals["saturated_fat_g"]
+        totals["trans_fat_g"] = service_totals["trans_fat_g"]
+        totals["potassium_mg"] = service_totals["potassium_mg"]
+        totals["cholesterol_mg"] = service_totals["cholesterol_mg"]
+        totals["vitamin_c_mg"] = service_totals["vitamin_c_mg"]
+        totals["caffeine_mg"] = service_totals["caffeine_mg"]
+        return NutritionTotals(**totals)
+
+    @staticmethod
+    def metric_context(*, user, on_date: date) -> dict[str, float | None]:
+        nutrition = ChronicConditionService.nutrition_totals_for_day(user=user, on_date=on_date)
+        water_liters = HydrationRepository.total_hydration_for_user_on_date(user, on_date)
+        week_start = on_date - timedelta(days=6)
+        activity_minutes_7d = (
+            ActivityLog.objects.filter(user=user, date__gte=week_start, date__lte=on_date).aggregate(
+                Sum("duration_minutes")
+            )["duration_minutes__sum"]
+            or 0
+        )
+        calories = float(nutrition.calories)
+        saturated_fat_pct_kcal = None
+        if calories > 0:
+            saturated_fat_pct_kcal = round(((nutrition.saturated_fat_g * 9) / calories) * 100, 2)
+        fiber_per_1000_kcal = None
+        if calories > 0:
+            fiber_per_1000_kcal = round((nutrition.fiber_g / calories) * 1000, 2)
+
+        return {
+            "activity_minutes_7d": float(activity_minutes_7d),
+            "water_liters": float(water_liters),
+            "calories": calories,
+            "protein_g": nutrition.protein_g,
+            "carbs_g": nutrition.carbs_g,
+            "fat_g": nutrition.fat_g,
+            "fiber_g": nutrition.fiber_g,
+            "sugar_g": nutrition.sugar_g,
+            "added_sugars_g": nutrition.added_sugars_g,
+            "sodium_mg": nutrition.sodium_mg,
+            "saturated_fat_g": nutrition.saturated_fat_g,
+            "saturated_fat_pct_kcal": saturated_fat_pct_kcal,
+            "trans_fat_g": nutrition.trans_fat_g,
+            "potassium_mg": nutrition.potassium_mg,
+            "cholesterol_mg": nutrition.cholesterol_mg,
+            "vitamin_c_mg": nutrition.vitamin_c_mg,
+            "caffeine_mg": nutrition.caffeine_mg,
+            "fiber_per_1000_kcal": fiber_per_1000_kcal,
+        }
+
+    @staticmethod
+    def _latest_indicator_value(*, user_condition: UserCondition, indicator_name: str) -> float | None:
+        return ConditionIndicatorService.latest_metric_value(
+            user_condition=user_condition,
+            metric_key=indicator_name,
+        )
+
+    @staticmethod
+    def _evaluate_target_value(*, target: HealthTarget, context: dict[str, float | None]) -> float | None:
+        if target.evaluation_mode in {"daily_total", "rolling_7d_total", "daily_ratio"}:
+            raw = context.get(target.metric_key)
+            return None if raw is None else float(raw)
+
+        if target.evaluation_mode == "latest_indicator":
+            return ChronicConditionService._latest_indicator_value(
+                user_condition=target.user_condition,
+                indicator_name=target.metric_key,
+            )
+
+        return None
+
+    @staticmethod
+    def _is_within_target(*, target: HealthTarget, value: float | None) -> bool | None:
+        if value is None:
+            return None
+        if target.min_value is not None and value < target.min_value:
+            return False
+        if target.max_value is not None and value > target.max_value:
+            return False
+        return True
+
+    @staticmethod
+    def _ensure_alert(*, user_condition: UserCondition, alert_type: str, message: str, on_date: date) -> None:
+        existing = user_condition.alerts.filter(
+            alert_type=alert_type,
+            message=message,
+            created_at__date=on_date,
+        ).exists()
+        if not existing:
+            ConditionAlert.objects.create(
+                user_condition=user_condition,
+                alert_type=alert_type,
+                message=message,
+            )
+
+    @staticmethod
+    @transaction.atomic
+    def ensure_today_medication_logs(*, user_condition: UserCondition, now: datetime | None = None) -> None:
+        ConditionMedicationService.ensure_today_medication_logs(
+            user_condition=user_condition,
+            now=now,
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def mark_medication_taken(*, schedule: ConditionMedicationSchedule, now: datetime | None = None) -> ConditionMedicationLog:
+        result = ConditionMedicationService.mark_taken(schedule=schedule, now=now)
+        return result.log
+
+    @staticmethod
+    def _medication_adherence_percent(
+        *,
+        user_condition: UserCondition,
+        on_date: date,
+        now: datetime | None = None,
+    ) -> float:
+        now = now or ChronicConditionService._system_local_now()
+        total = 0
+        taken = 0
+        for schedule in ConditionMedicationSchedule.objects.filter(
+            medication__user_condition=user_condition,
+            medication__is_active=True,
+        ).select_related("medication"):
+            if not ConditionMedicationService._schedule_is_active_for_date(
+                schedule=schedule,
+                target_date=on_date,
+            ):
+                continue
+            if schedule.time_of_day > now.time() and on_date == now.date():
+                continue
+            total += 1
+            log = schedule.logs.filter(scheduled_date=on_date).first()
+            if log and log.status in {
+                ConditionMedicationLog.STATUS_TAKEN,
+                ConditionMedicationLog.STATUS_TAKEN_ON_TIME,
+                ConditionMedicationLog.STATUS_TAKEN_LATE,
+            }:
+                taken += 1
+        if total == 0:
+            return 100.0
+        return round((taken / total) * 100, 2)
+
+    @staticmethod
+    @transaction.atomic
+    def evaluate_condition(*, user_condition: UserCondition, on_date: date | None = None) -> dict:
+        on_date = on_date or ChronicConditionService._system_local_now().date()
+        if not user_condition.targets.exists():
+            ChronicConditionService.rebuild_targets_for_condition(user_condition)
+        ChronicConditionService.ensure_today_medication_logs(user_condition=user_condition)
+
+        context = ChronicConditionService.metric_context(user=user_condition.user, on_date=on_date)
+        target_results = []
+        scored_count = 0
+        scored_success = 0
+
+        for target in ChronicConditionService.effective_targets_for_condition(
+            user_condition=user_condition
+        ):
+            value = ChronicConditionService._evaluate_target_value(target=target, context=context)
+            within = ChronicConditionService._is_within_target(target=target, value=value)
+            if within is None:
+                target.status = HealthTarget.STATUS_NOT_EVALUATED
+            elif within:
+                target.status = HealthTarget.STATUS_WITHIN_TARGET
+            else:
+                target.status = HealthTarget.STATUS_OUT_OF_RANGE
+
+            target.last_evaluated_value = value
+            target.last_evaluated_at = timezone.now()
+            target.save(
+                update_fields=[
+                    "status",
+                    "last_evaluated_value",
+                    "last_evaluated_at",
+                ]
+            )
+
+            if target.is_scored and within is not None:
+                scored_count += 1
+                if within:
+                    scored_success += 1
+                else:
+                    ChronicConditionService._ensure_alert(
+                        user_condition=user_condition,
+                        alert_type=ConditionAlert.TYPE_RESTRICTION,
+                        message=f"Target out of range: {target.target_name}",
+                        on_date=on_date,
+                    )
+
+            target_results.append(
+                {
+                    "id": target.id,
+                    "target_key": target.target_key,
+                    "target_name": target.target_name,
+                    "category": target.category,
+                    "metric_key": target.metric_key,
+                    "evaluation_mode": target.evaluation_mode,
+                    "unit": target.unit,
+                    "min_value": target.min_value,
+                    "max_value": target.max_value,
+                    "status": target.status,
+                    "current_value": value,
+                    "source_type": target.source_type,
+                    "priority": target.priority,
+                    "guidance": target.guidance,
+                    "evidence_source": target.evidence_source,
+                    "is_inference": target.is_inference,
+                    "is_scored": target.is_scored,
+                }
+            )
+
+        restriction_adherence_percent = (
+            round((scored_success / scored_count) * 100, 2) if scored_count else 0.0
+        )
+        medication_adherence_percent = ChronicConditionService._medication_adherence_percent(
+            user_condition=user_condition,
+            on_date=on_date,
+            now=ChronicConditionService._system_local_now(),
+        )
+
+        desired_points_delta = 0
+        evaluation, created = ConditionDailyEvaluation.objects.get_or_create(
+            user_condition=user_condition,
+            evaluation_date=on_date,
+            defaults={
+                "status": ConditionDailyEvaluation.STATUS_STABLE,
+                "risk_flags": [],
+                "recommendations_payload": [],
+                "tracker_impacts_payload": [],
+                "medication_adherence_percent": medication_adherence_percent,
+                "restriction_adherence_percent": restriction_adherence_percent,
+                "points_delta": 0,
+            },
+        )
+        desired_points_delta = ConditionPointsEvaluator.apply_daily_evaluation_points(
+            user_condition=user_condition,
+            evaluation=evaluation,
+            adherence_percent=restriction_adherence_percent,
+            target_results=target_results,
+        )
+
+        evaluation.medication_adherence_percent = medication_adherence_percent
+        evaluation.restriction_adherence_percent = restriction_adherence_percent
+        evaluation.points_delta = desired_points_delta
+        evaluation.notes = "Auto-evaluated from today's medication and lifestyle data."
+        if not evaluation.status:
+            evaluation.status = ConditionDailyEvaluation.STATUS_STABLE
+        evaluation.save(
+            update_fields=[
+                "medication_adherence_percent",
+                "restriction_adherence_percent",
+                "points_delta",
+                "notes",
+                "status",
+                "updated_at",
+            ]
+        )
+
+        streak_bonus = ConditionPointsEvaluator.apply_streak_bonus(
+            user_condition=user_condition,
+            on_date=on_date,
+        )
+
+        return {
+            "evaluation_date": str(on_date),
+            "status": evaluation.status,
+            "risk_flags": list(evaluation.risk_flags or []),
+            "medication_adherence_percent": medication_adherence_percent,
+            "restriction_adherence_percent": restriction_adherence_percent,
+            "points_delta": desired_points_delta,
+            "streak_bonus": streak_bonus,
+            "recommendations": list(evaluation.recommendations_payload or []),
+            "tracker_impacts": list(evaluation.tracker_impacts_payload or []),
+            "latest_recorded_at": evaluation.latest_recorded_at.isoformat()
+            if evaluation.latest_recorded_at
+            else None,
+            "targets": target_results,
+        }
+
+    @staticmethod
+    def readings_timeline(*, user_condition: UserCondition) -> list[dict]:
+        return ConditionIndicatorService.serialize_timeline(user_condition=user_condition)
+
+    @staticmethod
+    def condition_summary(
+        *,
+        user_condition: UserCondition,
+        on_date: date | None = None,
+        evaluation: dict | None = None,
+    ) -> dict:
+        on_date = on_date or ChronicConditionService._system_local_now().date()
+        evaluation = evaluation or ChronicConditionService.evaluate_condition(
+            user_condition=user_condition,
+            on_date=on_date,
+        )
+        latest_reading = user_condition.indicator_records.order_by("-recorded_at", "-id").first()
+        return {
+            "condition_id": user_condition.id,
+            "status": evaluation["status"],
+            "risk_flags": evaluation["risk_flags"],
+            "latest_recorded_at": evaluation["latest_recorded_at"],
+            "recommendations": evaluation["recommendations"],
+            "tracker_impacts": evaluation["tracker_impacts"],
+            "latest_reading": ConditionIndicatorService.serialize_record(latest_reading) if latest_reading else None,
+            "alerts": [
+                {
+                    "id": alert.id,
+                    "code": alert.code,
+                    "level": alert.level,
+                    "message": alert.message,
+                    "status": alert.status,
+                    "created_at": alert.created_at.isoformat(),
+                }
+                for alert in user_condition.alerts.all()[:10]
+            ],
+            "targets": evaluation["targets"],
+        }
+
+    @staticmethod
+    def condition_overview(*, user_condition: UserCondition, on_date: date | None = None) -> dict:
+        on_date = on_date or ChronicConditionService._system_local_now().date()
+        evaluation = ChronicConditionService.evaluate_condition(
+            user_condition=user_condition,
+            on_date=on_date,
+        )
+        profile = getattr(user_condition.user, "userprofile", None)
+        effective_constraints = None
+        if profile is not None:
+            effective_constraints = ConditionConstraintEngine.build_effective_constraints(
+                user=user_condition.user,
+                profile=profile,
+                on_date=on_date,
+            )
+        medications = []
+        for medication in user_condition.medications.filter(is_active=True).prefetch_related("schedules__logs"):
+            schedules = []
+            for schedule in medication.schedules.all():
+                schedules.append(
+                    ConditionMedicationService.dose_display_for_today(
+                        schedule=schedule,
+                        today=on_date,
+                    )
+                )
+            medications.append(
+                {
+                    "id": medication.id,
+                    "name": medication.name,
+                    "scientific_name": medication.scientific_name,
+                    "dosage": medication.dosage,
+                    "dosage_amount": medication.dosage_amount,
+                    "dosage_unit": medication.dosage_unit,
+                    "instructions": medication.instructions,
+                    "relation_to_meal": medication.relation_to_meal,
+                    "recurrence_pattern": medication.recurrence_pattern,
+                    "start_date": str(medication.start_date) if medication.start_date else None,
+                    "end_date": str(medication.end_date) if medication.end_date else None,
+                    "is_active": medication.is_active,
+                    "reminder_enabled": medication.reminder_enabled,
+                    "reminder_lead_minutes": medication.reminder_lead_minutes,
+                    "schedules": schedules,
+                }
+            )
+
+        indicators = ChronicConditionService.readings_timeline(user_condition=user_condition)[:10]
+        alerts = [
+            {
+                "id": alert.id,
+                "code": alert.code,
+                "level": alert.level,
+                "message": alert.message,
+                "alert_type": alert.alert_type,
+                "status": alert.status,
+                "created_at": alert.created_at.isoformat(),
+            }
+            for alert in user_condition.alerts.all()[:5]
+        ]
+
+        return {
+            "id": user_condition.id,
+            "condition_type": {
+                "id": user_condition.condition_type.id,
+                "code": user_condition.condition_type.code,
+                "name": user_condition.condition_type.name,
+                "slug": user_condition.condition_type.slug,
+                "display_name": ConditionCatalogService.display_name(user_condition.condition_type),
+                "description": user_condition.condition_type.description,
+                "is_supported": user_condition.condition_type.is_supported,
+                "setup_schema": user_condition.condition_type.setup_schema,
+                "severity_options": user_condition.condition_type.severity_options,
+            },
+            "diagnosis_date": str(user_condition.diagnosis_date) if user_condition.diagnosis_date else None,
+            "status": user_condition.status,
+            "condition_status": user_condition.status,
+            "severity_code": user_condition.severity_code,
+            "severity": user_condition.severity_code,
+            "profile_data": dict(user_condition.profile_data or {}),
+            "notes": user_condition.notes,
+            "is_active": user_condition.is_active,
+            "targets": evaluation["targets"],
+            "evaluation": evaluation,
+            "medications": medications,
+            "indicator_records": indicators,
+            "alerts": alerts,
+            "summary": ChronicConditionService.condition_summary(
+                user_condition=user_condition,
+                on_date=on_date,
+                evaluation=evaluation,
+            ),
+            "constraint_summary": list(effective_constraints.applied_summaries)
+            if effective_constraints
+            else [],
+            "daily_medication_count": len(medications),
+            "daily_pending_doses": sum(
+                1
+                for medication in medications
+                for schedule in medication["schedules"]
+                if schedule["today_status"] in {"pending", ConditionMedicationLog.STATUS_SNOOZED}
+            ),
+            "disclaimer": ChronicConditionService.DISCLAIMER,
+        }

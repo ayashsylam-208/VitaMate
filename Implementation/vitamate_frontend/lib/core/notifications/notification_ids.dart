@@ -16,6 +16,13 @@ class NotificationIds {
   static const activityDaily = 4100;
   static const stepsDaily = 4200;
 
+  // Chronic medication reminders
+  static const chronicMedicationBase = 500000;
+  static const chronicMedicationRangeEnd = 799999;
+  static const chronicMedicationSnoozeBase = 800000;
+  static const chronicMedicationSnoozeRangeEnd = 899999;
+  static const diabetesSugarWarning = 9050;
+
   // Welcome
   static const welcomeBack = 9001;
   static const welcomeNew = 9002;

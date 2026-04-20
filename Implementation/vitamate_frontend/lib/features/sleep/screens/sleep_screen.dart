@@ -3,8 +3,9 @@ import 'package:intl/intl.dart';
 
 import '../../../auth/data/auth_api.dart';
 import '../../../auth/data/auth_repository.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../models/sleep_log.dart';
+import '../models/sleep_summary.dart';
 import '../state/sleep_controller.dart';
 import '../state/sleep_settings_controller.dart';
 
@@ -65,6 +66,7 @@ class _SleepScreenState extends State<SleepScreen> {
         final progress = (summary.progressPercent.clamp(0, 100)) / 100;
 
         return Scaffold(
+          bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
           body: Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -117,7 +119,11 @@ class _SleepScreenState extends State<SleepScreen> {
     );
   }
 
-  Widget _summaryCard(double progress, summary, int sleepPointsToday) {
+  Widget _summaryCard(
+    double progress,
+    SleepSummary summary,
+    int sleepPointsToday,
+  ) {
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,7 +167,7 @@ class _SleepScreenState extends State<SleepScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
+                  color: Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
@@ -271,7 +277,7 @@ class _SleepScreenState extends State<SleepScreen> {
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                backgroundColor: Colors.white.withOpacity(0.1),
+                backgroundColor: Colors.white.withValues(alpha: 0.1),
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -366,7 +372,7 @@ class _SleepScreenState extends State<SleepScreen> {
   Widget _card({required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
+        color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white12),
       ),
@@ -432,7 +438,7 @@ class _SleepScreenState extends State<SleepScreen> {
                     },
                   ),
                   DropdownButtonFormField<String>(
-                    value: quality,
+                    initialValue: quality,
                     dropdownColor: const Color(0xFF1B2340),
                     decoration: const InputDecoration(
                       labelText: 'Quality',
@@ -466,8 +472,9 @@ class _SleepScreenState extends State<SleepScreen> {
                           endTime: endDt,
                           quality: quality,
                         );
-                        if (!mounted) return;
+                        if (!ctx.mounted) return;
                         Navigator.of(ctx).pop();
+                        if (!mounted) return;
                         if (sleepController.error == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Sleep logged successfully')),
@@ -493,6 +500,7 @@ class _SleepScreenState extends State<SleepScreen> {
   @override
   void dispose() {
     sleepController.dispose();
+    settingsController.dispose();
     super.dispose();
   }
 }

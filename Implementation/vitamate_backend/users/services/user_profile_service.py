@@ -1,9 +1,14 @@
+from datetime import date
+
+from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
+from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
 from users.repositories.user_profile_repository import UserProfileRepository
+from users.services.profile_metrics_calculator import ProfileMetricsCalculator
 
 
 class UserProfileService:
     DEFAULT_PROFILE = {
-        "birth_date": "2000-01-01",
+        "birth_date": date(2000, 1, 1),
         "gender": "M",
         "height": 170,
         "weight": 70,
@@ -11,11 +16,25 @@ class UserProfileService:
 
     @staticmethod
     def ensure_profile(user):
-        profile, _ = UserProfileRepository.get_or_create_for_user(
+        profile, created = UserProfileRepository.get_or_create_for_user(
             user=user,
             defaults=UserProfileService.DEFAULT_PROFILE,
         )
+        if created:
+            ProfileMetricsCalculator.apply(profile, persist=True)
         return profile
+
+    @staticmethod
+    def birth_date_from_age(age, *, reference_date=None):
+        if reference_date is None:
+            reference_date = date.today()
+        age = int(age)
+        target_year = reference_date.year - age
+        try:
+            return reference_date.replace(year=target_year)
+        except ValueError:
+            # Handle leap day conversion on non-leap years.
+            return reference_date.replace(year=target_year, day=28)
 
     @staticmethod
     def update_user_and_profile(user, user_data, profile_data):
@@ -28,14 +47,44 @@ class UserProfileService:
         # Ensure profile exists before updating.
         profile = UserProfileService.ensure_profile(user)
 
-        # Update profile fields.
-        profile.weight = profile_data.get("weight", profile.weight)
-        profile.height = profile_data.get("height", profile.height)
-        profile.activity_level = profile_data.get("activity_level", profile.activity_level)
-        profile.goal = profile_data.get("goal", profile.goal)
-        profile.daily_step_goal = profile_data.get("daily_step_goal", profile.daily_step_goal)
+        # Update profile fields from any supported PATCH payload.
+        fields_to_update = [
+            "birth_date",
+            "weight",
+            "height",
+            "activity_level",
+            "goal",
+            "daily_step_goal",
+            "recommended_sleep_hours",
+            "target_wake_time",
+            "target_bed_time",
+            "enable_sleep_improvement",
+            "preferred_activity_type",
+            "enable_activity_reminders",
+            "activity_reminder_interval_hours",
+            "enable_water_reminders",
+            "water_reminder_interval_minutes",
+        ]
+        for field_name in fields_to_update:
+            if field_name in profile_data:
+                setattr(profile, field_name, profile_data[field_name])
 
         # Recalculate derived metrics and persist.
-        profile.calculate_metrics()
+        UserProfileService.recalculate_profile(profile)
 
         return user
+
+    @staticmethod
+    def recalculate_profile(profile):
+        ProfileMetricsCalculator.apply(profile, persist=False)
+        profile.save()
+        HealthStateEventPublisher.publish_on_commit(
+            user=profile.user,
+            trigger_type=HealthStateTriggers.USER_PROFILE_UPDATED,
+            payload={
+                "trigger_reference": str(profile.id),
+                "source_id": profile.id,
+                "event_dates": [date.today()],
+            },
+        )
+        return profile

@@ -21,16 +21,58 @@ class NotificationChannels {
   static const activityName = 'Activity';
   static const activityDesc = 'Activity reminders';
 
+  static const chronicMedicationId = 'chronic_medication_channel';
+  static const chronicMedicationName = 'Chronic medication';
+  static const chronicMedicationDesc =
+      'Medication reminders for chronic-condition care plans';
+
+  static const chronicAlertsId = 'chronic_alerts_channel';
+  static const chronicAlertsName = 'Condition alerts';
+  static const chronicAlertsDesc =
+      'Warning notifications for chronic-condition safety limits';
+
   static const all = <AndroidNotificationChannel>[
-    AndroidNotificationChannel(debugId, debugName,
-        description: debugDesc, importance: Importance.max),
-    AndroidNotificationChannel(sleepId, sleepName,
-        description: sleepDesc, importance: Importance.max),
-    AndroidNotificationChannel(waterId, waterName,
-        description: waterDesc, importance: Importance.max),
-    AndroidNotificationChannel(mealsId, mealsName,
-        description: mealsDesc, importance: Importance.max),
-    AndroidNotificationChannel(activityId, activityName,
-        description: activityDesc, importance: Importance.max),
+    AndroidNotificationChannel(
+      debugId,
+      debugName,
+      description: debugDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      sleepId,
+      sleepName,
+      description: sleepDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      waterId,
+      waterName,
+      description: waterDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      mealsId,
+      mealsName,
+      description: mealsDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      activityId,
+      activityName,
+      description: activityDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      chronicMedicationId,
+      chronicMedicationName,
+      description: chronicMedicationDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      chronicAlertsId,
+      chronicAlertsName,
+      description: chronicAlertsDesc,
+      importance: Importance.max,
+    ),
   ];
 }

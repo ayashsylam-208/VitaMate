@@ -19,34 +19,34 @@ class SleepSummary {
     );
 
   factory SleepSummary.fromDashboard(Map<String, dynamic> d) {
-    Map<String, dynamic> _asMap(dynamic v) {
+    Map<String, dynamic> asMap(dynamic v) {
       if (v is Map<String, dynamic>) return v;
       if (v is Map) return v.cast<String, dynamic>();
       return <String, dynamic>{};
     }
 
-    double _toDouble(dynamic v) {
+    double toDouble(dynamic v) {
       if (v == null) return 0;
       if (v is double) return v;
       if (v is int) return v.toDouble();
       return double.tryParse(v.toString()) ?? 0;
     }
 
-    int _toInt(dynamic v) {
+    int toInt(dynamic v) {
       if (v == null) return 0;
       if (v is int) return v;
       if (v is double) return v.round();
       return int.tryParse(v.toString()) ?? 0;
     }
 
-    final sleep = _asMap(d['sleep']);
-    final gamification = _asMap(d['gamification']);
+    final sleep = asMap(d['sleep']);
+    final gamification = asMap(d['gamification']);
 
     return SleepSummary(
-      goalHours: _toDouble(sleep['recommended_sleep_hours']),
-      loggedHoursToday: _toDouble(sleep['logged_hours_today']),
-      progressPercent: _toInt(sleep['progress_percent']),
-      sleepPoints: _toInt(d['sleep_points'] ?? d['points'] ?? gamification['points']),
+      goalHours: toDouble(sleep['recommended_sleep_hours']),
+      loggedHoursToday: toDouble(sleep['logged_hours_today']),
+      progressPercent: toInt(sleep['progress_percent']),
+      sleepPoints: toInt(d['sleep_points'] ?? d['points'] ?? gamification['points']),
     );
   }
 }

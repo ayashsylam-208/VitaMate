@@ -1,11 +1,1 @@
-from core.models import ActivityLog
-
-
-class ActivityLogRepository:
-    @staticmethod
-    def create_for_user(user, exercise, duration_minutes):
-        return ActivityLog.objects.create(
-            user=user,
-            exercise=exercise,
-            duration_minutes=duration_minutes,
-        )
+from core.repositories.tracking.activity_log_repository import *  # noqa: F401,F403

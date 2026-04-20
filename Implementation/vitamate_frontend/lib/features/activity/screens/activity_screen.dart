@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/notifications/notifications_service.dart';
+import '../../../core/theme/vitamate_theme.dart';
+import '../../../shared/widgets/chronic_guide_card.dart';
+import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../state/activity_controller.dart';
 import '../models/exercise.dart';
 
@@ -36,6 +39,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
+      backgroundColor: VitaMateTheme.background,
+      bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
       appBar: AppBar(title: const Text('Activity')),
       body: SafeArea(
         child: AnimatedBuilder(
@@ -50,7 +55,9 @@ class _ActivityScreenState extends State<ActivityScreen> {
 
             final exercises = controller.exercises;
             if (_selectedExercise != null) {
-              final match = exercises.where((e) => e.id == _selectedExercise!.id).toList();
+              final match = exercises
+                  .where((e) => e.id == _selectedExercise!.id)
+                  .toList();
               _selectedExercise = match.isNotEmpty ? match.first : null;
             }
 
@@ -85,7 +92,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -105,7 +112,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: cs.primary.withOpacity(0.08),
+                color: cs.primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -115,11 +122,33 @@ class _ActivityScreenState extends State<ActivityScreen> {
                   const SizedBox(width: 8),
                   Text(
                     '${controller.activityPointsToday} pts (activity)',
-                    style: TextStyle(color: cs.primary, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      color: cs.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
             ),
+            if (controller.chronicActivityGuides.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Text(
+                'Condition goals and limits',
+                style: TextStyle(
+                  color: VitaMateTheme.primaryDeep,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: controller.chronicActivityGuides
+                    .take(3)
+                    .map((item) => ChronicGuideCard(item: item, compact: true))
+                    .toList(),
+              ),
+            ],
           ],
         ),
       ),
@@ -131,9 +160,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(
-          color: cs.outlineVariant.withOpacity(0.45),
-        ),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -151,7 +178,13 @@ class _ActivityScreenState extends State<ActivityScreen> {
                 setState(() => remindersEnabled = v);
                 if (v) {
                   await NotificationsService.scheduleDailyActivityReminder(
-                    time: DateTime(2000, 1, 1, reminderTime.hour, reminderTime.minute),
+                    time: DateTime(
+                      2000,
+                      1,
+                      1,
+                      reminderTime.hour,
+                      reminderTime.minute,
+                    ),
                   );
                   _showSnack('Activity reminder scheduled');
                 } else {
@@ -194,23 +227,28 @@ class _ActivityScreenState extends State<ActivityScreen> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Log activity', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const Text(
+              'Log activity',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
             const SizedBox(height: 12),
             DropdownButtonFormField<Exercise>(
               isExpanded: true,
-              value: _selectedExercise,
+              initialValue: _selectedExercise,
               items: exercises
-                  .map((e) => DropdownMenuItem(
-                        value: e,
-                        child: Text('${e.name} (MET ${e.metValue})'),
-                      ))
+                  .map(
+                    (e) => DropdownMenuItem(
+                      value: e,
+                      child: Text('${e.name} (MET ${e.metValue})'),
+                    ),
+                  )
                   .toList(),
               onChanged: (v) => setState(() => _selectedExercise = v),
               decoration: const InputDecoration(
@@ -257,10 +295,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
 
   Widget _logsList(ColorScheme cs) {
     if (controller.logs.isEmpty) {
-      return Text(
-        'No activities yet.',
-        style: TextStyle(color: cs.outline),
-      );
+      return Text('No activities yet.', style: TextStyle(color: cs.outline));
     }
     return Column(
       children: controller.logs.map((log) {
@@ -268,12 +303,17 @@ class _ActivityScreenState extends State<ActivityScreen> {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
           ),
           child: ListTile(
             leading: Icon(Icons.fitness_center, color: cs.primary),
-            title: Text(log.exerciseName, style: const TextStyle(fontWeight: FontWeight.w800)),
-            subtitle: Text('${log.durationMinutes} min • ${log.caloriesBurned} kcal'),
+            title: Text(
+              log.exerciseName,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              '${log.durationMinutes} min • ${log.caloriesBurned} kcal',
+            ),
             trailing: Text(log.date.toIso8601String().split('T').first),
           ),
         );

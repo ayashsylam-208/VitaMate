@@ -1,13 +1,19 @@
 import 'package:flutter/foundation.dart';
+
+import '../../core/network/network_error_mapper.dart';
 import '../data/auth_api.dart';
 import '../data/auth_repository.dart';
+import '../models/user.dart';
 
 class AuthController extends ChangeNotifier {
-  final AuthRepository _repo = AuthRepository(AuthApi());
+  AuthController({AuthRepository? repo})
+    : _repo = repo ?? AuthRepository(AuthApi());
+
+  final AuthRepository _repo;
 
   bool isLoading = false;
   String? error;
-  Map<String, dynamic>? me;
+  AuthUser? me;
 
   Future<bool> login(String username, String password) async {
     isLoading = true;
@@ -16,11 +22,14 @@ class AuthController extends ChangeNotifier {
 
     try {
       await _repo.login(username: username, password: password);
-      me = await _repo.getMeRaw();
+      me = await _repo.getMe();
       return true;
     } catch (e) {
-      error =
-          'Login failed. Please check your credentials and network connection.';
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Login failed. Please check your credentials.',
+        statusMessages: const {401: 'Invalid username or password.'},
+      );
       return false;
     } finally {
       isLoading = false;
@@ -49,8 +58,10 @@ class AuthController extends ChangeNotifier {
       );
       return true;
     } catch (e) {
-      error =
-          'Registration failed. The username or email may already be in use.';
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Registration failed. Please try again.',
+      );
       return false;
     } finally {
       isLoading = false;
@@ -70,10 +81,30 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _repo.updateMe(data);
-      me = await _repo.getMeRaw();
+      me = await _repo.updateMe(data);
     } catch (e) {
-      error = 'Profile update failed. Please try again.';
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Profile update failed. Please try again.',
+      );
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMe() async {
+    isLoading = true;
+    error = null;
+    notifyListeners();
+
+    try {
+      me = await _repo.getMe();
+    } catch (e) {
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Failed to load your profile.',
+      );
     } finally {
       isLoading = false;
       notifyListeners();

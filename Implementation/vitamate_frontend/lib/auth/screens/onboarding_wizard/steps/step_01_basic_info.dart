@@ -1,119 +1,176 @@
 import 'package:flutter/material.dart';
-import '../../../../../shared/widgets/primary_button.dart';
+
 import '../onboarding_state.dart';
+import '../widgets/wizard_step_container.dart';
 
-class Step02BasicInfo extends StatefulWidget {
-  final VoidCallback onNext;
+class Step01BasicInfo extends StatelessWidget {
   final OnboardingState state;
+  final TextEditingController ageController;
+  final TextEditingController heightController;
+  final TextEditingController weightController;
+  final ValueChanged<String> onGenderChanged;
+  final bool compact;
 
-  const Step02BasicInfo({super.key, required this.onNext, required this.state});
-
-  @override
-  State<Step02BasicInfo> createState() => _Step02BasicInfoState();
-}
-
-class _Step02BasicInfoState extends State<Step02BasicInfo> {
-  late String gender; // 'F' / 'M'
-  late int age;
-  late double height;
-  late double weight;
-
-  @override
-  void initState() {
-    super.initState();
-    gender = widget.state.gender;
-    age = widget.state.age;
-    height = widget.state.heightCm;
-    weight = widget.state.weightKg;
-  }
+  const Step01BasicInfo({
+    super.key,
+    required this.state,
+    required this.ageController,
+    required this.heightController,
+    required this.weightController,
+    required this.onGenderChanged,
+    required this.compact,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(22),
+    return WizardStepContainer(
+      icon: Icons.person_outline_rounded,
+      title: 'About You',
+      subtitle: "Let's get to know you better",
+      compact: compact,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 18),
-          const Text(
-            'Basic Information',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 10),
-          const Text('Set your personal details.'),
-
-          const SizedBox(height: 22),
-
-          const Text('Gender', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: ChoiceChip(
-                  label: const Text('Female'),
-                  selected: gender == 'F',
-                  onSelected: (_) => setState(() => gender = 'F'),
+                child: _SelectTile(
+                  label: 'Male',
+                  selected: state.gender == 'M',
+                  onTap: () => onGenderChanged('M'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: ChoiceChip(
-                  label: const Text('Male'),
-                  selected: gender == 'M',
-                  onSelected: (_) => setState(() => gender = 'M'),
+                child: _SelectTile(
+                  label: 'Female',
+                  selected: state.gender == 'F',
+                  onTap: () => onGenderChanged('F'),
                 ),
               ),
             ],
           ),
-
-          const SizedBox(height: 18),
-
-          Text('Age: $age'),
-          Slider(
-            value: age.toDouble(),
-            min: 10,
-            max: 90,
-            divisions: 80,
-            onChanged: (v) => setState(() => age = v.round()),
+          SizedBox(height: compact ? 16 : 20),
+          const _FieldLabel(text: 'Age'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: ageController,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.next,
+            decoration: wizardInputDecoration(hintText: 'Years'),
           ),
-
-          const SizedBox(height: 10),
-
-          Text('Height: ${height.round()} cm'),
-          Slider(
-            value: height,
-            min: 120,
-            max: 220,
-            divisions: 100,
-            onChanged: (v) => setState(() => height = v),
+          SizedBox(height: compact ? 16 : 20),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _FieldLabel(text: 'Height'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: heightController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textInputAction: TextInputAction.next,
+                      decoration: wizardInputDecoration(
+                        hintText: 'cm',
+                        suffixText: 'cm',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _FieldLabel(text: 'Weight'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: weightController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textInputAction: TextInputAction.done,
+                      decoration: wizardInputDecoration(
+                        hintText: 'kg',
+                        suffixText: 'kg',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-
-          const SizedBox(height: 10),
-
-          Text('Weight: ${weight.round()} kg'),
-          Slider(
-            value: weight,
-            min: 30,
-            max: 180,
-            divisions: 150,
-            onChanged: (v) => setState(() => weight = v),
-          ),
-
-          const Spacer(),
-
-          PrimaryButton(
-            text: 'Next',
-            onPressed: () {
-              widget.state.gender = gender;
-              widget.state.age = age;
-              widget.state.heightCm = height;
-              widget.state.weightKg = weight;
-              widget.onNext();
-            },
-          ),
-
-          const SizedBox(height: 18),
         ],
+      ),
+    );
+  }
+}
+
+class _FieldLabel extends StatelessWidget {
+  final String text;
+
+  const _FieldLabel({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: wizardDeepPurple,
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _SelectTile extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SelectTile({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFFF4EAFF)
+                : Colors.white.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: selected ? wizardMidPurple : wizardStrokePurple,
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? wizardMidPurple : wizardDeepPurple,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

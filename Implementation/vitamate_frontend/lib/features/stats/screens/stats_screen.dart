@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/sync/health_sync_bus.dart';
 import '../../activity/screens/activity_screen.dart';
 import '../../nutrition/screens/nutrition_screen.dart';
 import '../../sleep/screens/sleep_screen.dart';
 import '../../steps/screens/steps_screen.dart';
 import '../../water/screens/water_screen.dart';
+import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../state/stats_controller.dart';
 import '../data/stats_api.dart';
 
@@ -24,12 +26,18 @@ class _StatsScreenState extends State<StatsScreen> {
   void initState() {
     super.initState();
     controller = StatsController()..load();
+    HealthSyncBus.instance.addListener(_handleTrackerRefresh);
   }
 
   @override
   void dispose() {
+    HealthSyncBus.instance.removeListener(_handleTrackerRefresh);
     controller.dispose();
     super.dispose();
+  }
+
+  void _handleTrackerRefresh() {
+    controller.load();
   }
 
   @override
@@ -38,6 +46,7 @@ class _StatsScreenState extends State<StatsScreen> {
     final fmt = NumberFormat.decimalPattern();
 
     return Scaffold(
+      bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
       appBar: AppBar(
         title: const Text('Progress'),
         actions: [
@@ -70,7 +79,7 @@ class _StatsScreenState extends State<StatsScreen> {
                       OutlinedButton(
                         onPressed: () => controller.load(),
                         child: const Text('Try again'),
-                      )
+                      ),
                     ],
                   ),
                 ),
@@ -81,13 +90,17 @@ class _StatsScreenState extends State<StatsScreen> {
               onRefresh: controller.load,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 112),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _todayCard(cs, fmt),
                     const SizedBox(height: 14),
                     _grid(cs, fmt),
+                    if (controller.chronicConditionCount > 0) ...[
+                      const SizedBox(height: 18),
+                      _chronicSection(cs),
+                    ],
                     const SizedBox(height: 18),
                     _progressChart(cs),
                     const SizedBox(height: 18),
@@ -124,7 +137,13 @@ class _StatsScreenState extends State<StatsScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Today', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                    const Text(
+                      'Today',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     Text(
                       DateFormat.MMMMEEEEd().format(DateTime.now()),
@@ -133,7 +152,10 @@ class _StatsScreenState extends State<StatsScreen> {
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: cs.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
@@ -152,12 +174,18 @@ class _StatsScreenState extends State<StatsScreen> {
                       ),
                       const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: cs.primary.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Text('Lvl ${controller.level}', style: TextStyle(color: cs.primary)),
+                        child: Text(
+                          'Lvl ${controller.level}',
+                          style: TextStyle(color: cs.primary),
+                        ),
                       ),
                     ],
                   ),
@@ -169,16 +197,36 @@ class _StatsScreenState extends State<StatsScreen> {
               spacing: 12,
               runSpacing: 8,
               children: [
-                _chip(cs, Icons.local_fire_department, 'Calories rem.',
-                    '${fmt.format(controller.caloriesRemaining)} kcal'),
-                _chip(cs, Icons.local_fire_department, 'Burn',
-                    '${fmt.format(controller.burnCurrent)} / ${fmt.format(controller.burnTarget)} kcal'),
-                _chip(cs, Icons.water_drop, 'Water',
-                    '${controller.waterCurrent.toStringAsFixed(2)} / ${controller.waterTarget.toStringAsFixed(2)} L'),
-                _chip(cs, Icons.directions_walk, 'Steps',
-                    '${fmt.format(controller.stepsCurrent)} / ${fmt.format(controller.stepsTarget)}'),
-                _chip(cs, Icons.bedtime, 'Sleep',
-                    '${controller.sleepLoggedHours.toStringAsFixed(1)} / ${controller.sleepGoalHours.toStringAsFixed(1)} h'),
+                _chip(
+                  cs,
+                  Icons.local_fire_department,
+                  'Calories rem.',
+                  '${fmt.format(controller.caloriesRemaining)} kcal',
+                ),
+                _chip(
+                  cs,
+                  Icons.local_fire_department,
+                  'Burn',
+                  '${fmt.format(controller.burnCurrent)} / ${fmt.format(controller.burnTarget)} kcal',
+                ),
+                _chip(
+                  cs,
+                  Icons.water_drop,
+                  'Water',
+                  '${controller.waterCurrent.toStringAsFixed(2)} / ${controller.waterTarget.toStringAsFixed(2)} L',
+                ),
+                _chip(
+                  cs,
+                  Icons.directions_walk,
+                  'Steps',
+                  '${fmt.format(controller.stepsCurrent)} / ${fmt.format(controller.stepsTarget)}',
+                ),
+                _chip(
+                  cs,
+                  Icons.bedtime,
+                  'Sleep',
+                  '${controller.sleepLoggedHours.toStringAsFixed(1)} / ${controller.sleepGoalHours.toStringAsFixed(1)} h',
+                ),
               ],
             ),
           ],
@@ -196,12 +244,14 @@ class _StatsScreenState extends State<StatsScreen> {
         current: controller.waterCurrent,
         target: controller.waterTarget,
         unit: 'L',
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => WaterScreen(
-            targetValueFromBackend: controller.waterTarget,
-            targetIsLiters: true,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => WaterScreen(
+              targetValueFromBackend: controller.waterTarget,
+              targetIsLiters: true,
+            ),
           ),
-        )),
+        ),
       ),
       _metricCard(
         cs,
@@ -210,7 +260,9 @@ class _StatsScreenState extends State<StatsScreen> {
         current: controller.sleepLoggedHours,
         target: controller.sleepGoalHours,
         unit: 'h',
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SleepScreen())),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SleepScreen())),
       ),
       _metricCard(
         cs,
@@ -220,7 +272,9 @@ class _StatsScreenState extends State<StatsScreen> {
         target: controller.caloriesTarget.toDouble(),
         unit: 'kcal',
         warnIfOver: true,
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NutritionScreen())),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const NutritionScreen())),
       ),
       _metricCard(
         cs,
@@ -229,7 +283,9 @@ class _StatsScreenState extends State<StatsScreen> {
         current: controller.burnCurrent.toDouble(),
         target: controller.burnTarget.toDouble(),
         unit: 'kcal',
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ActivityScreen())),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ActivityScreen())),
       ),
       _metricCard(
         cs,
@@ -238,15 +294,13 @@ class _StatsScreenState extends State<StatsScreen> {
         current: controller.stepsCurrent.toDouble(),
         target: controller.stepsTarget.toDouble(),
         unit: 'steps',
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StepsScreen())),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const StepsScreen())),
       ),
     ];
 
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: items,
-    );
+    return Wrap(spacing: 12, runSpacing: 12, children: items);
   }
 
   Widget _metricCard(
@@ -288,7 +342,10 @@ class _StatsScreenState extends State<StatsScreen> {
                   children: [
                     Icon(icon, color: cs.primary),
                     const SizedBox(width: 8),
-                    Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+                    Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -303,7 +360,9 @@ class _StatsScreenState extends State<StatsScreen> {
                     value: pct,
                     minHeight: 8,
                     color: over ? cs.error : cs.primary,
-                    backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+                    backgroundColor: cs.surfaceContainerHighest.withValues(
+                      alpha: 0.6,
+                    ),
                   ),
                 ),
                 if (over)
@@ -337,8 +396,12 @@ class _StatsScreenState extends State<StatsScreen> {
       );
     }
 
-    final points = controller.history.map((e) => e.pointsEstimate.toDouble()).toList();
-    final dates = controller.history.map((e) => DateFormat.E().format(e.date)).toList();
+    final points = controller.history
+        .map((e) => e.pointsEstimate.toDouble())
+        .toList();
+    final dates = controller.history
+        .map((e) => DateFormat.E().format(e.date))
+        .toList();
 
     return Card(
       elevation: 0,
@@ -351,7 +414,10 @@ class _StatsScreenState extends State<StatsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Points trend (7 days)', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const Text(
+              'Points trend (7 days)',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
             const SizedBox(height: 10),
             SizedBox(
               height: 140,
@@ -364,15 +430,106 @@ class _StatsScreenState extends State<StatsScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Low: ${points.reduce((a, b) => a < b ? a : b)} pts', style: TextStyle(color: cs.outline)),
-                Text('High: ${points.reduce((a, b) => a > b ? a : b)} pts', style: TextStyle(color: cs.outline)),
+                Text(
+                  'Low: ${points.reduce((a, b) => a < b ? a : b)} pts',
+                  style: TextStyle(color: cs.outline),
+                ),
+                Text(
+                  'High: ${points.reduce((a, b) => a > b ? a : b)} pts',
+                  style: TextStyle(color: cs.outline),
+                ),
               ],
             ),
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: dates.map((d) => Expanded(child: Text(d, textAlign: TextAlign.center, style: TextStyle(color: cs.outline, fontSize: 12)))).toList(),
+              children: dates
+                  .map(
+                    (d) => Expanded(
+                      child: Text(
+                        d,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: cs.outline, fontSize: 12),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chronicSection(ColorScheme cs) {
+    final latest = controller.history.isNotEmpty
+        ? controller.history.last
+        : null;
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Chronic condition adherence',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                _chip(
+                  cs,
+                  Icons.health_and_safety_outlined,
+                  'Active plans',
+                  '${controller.chronicConditionCount}',
+                ),
+                _chip(
+                  cs,
+                  Icons.task_alt_outlined,
+                  'Adherence',
+                  '${controller.chronicAdherencePercent.toStringAsFixed(0)}%',
+                ),
+                _chip(
+                  cs,
+                  Icons.schedule_outlined,
+                  'Pending doses',
+                  '${controller.chronicPendingDoses}',
+                ),
+                if (latest != null)
+                  _chip(
+                    cs,
+                    Icons.insights_outlined,
+                    'Latest history',
+                    '${latest.conditionAdherencePercent.toStringAsFixed(0)}%',
+                  ),
+              ],
+            ),
+            if (controller.chronicSummaries.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ...controller.chronicSummaries
+                  .take(3)
+                  .map(
+                    (summary) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(summary),
+                    ),
+                  ),
+            ],
+            if (controller.chronicDisclaimer.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                controller.chronicDisclaimer,
+                style: TextStyle(color: cs.outline),
+              ),
+            ],
           ],
         ),
       ),
@@ -389,7 +546,9 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         child: const Padding(
           padding: EdgeInsets.all(16),
-          child: Text('No history yet. Log water, meals, sleep, or steps to start.'),
+          child: Text(
+            'No history yet. Log water, meals, sleep, or steps to start.',
+          ),
         ),
       );
     }
@@ -401,10 +560,10 @@ class _StatsScreenState extends State<StatsScreen> {
           '7-day timeline',
           style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
         ),
-          const SizedBox(height: 8),
-          SizedBox(
+        const SizedBox(height: 8),
+        SizedBox(
           height: 360,
-            child: ListView.separated(
+          child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: controller.history.length,
             separatorBuilder: (_, index) => const SizedBox(width: 12),
@@ -412,7 +571,8 @@ class _StatsScreenState extends State<StatsScreen> {
               final day = controller.history[index];
               final dateLabel = DateFormat.E().format(day.date);
               final dayNum = day.date.day;
-              final kcalLabel = '${fmt.format(day.caloriesIn)} / ${fmt.format(day.caloriesTarget)}';
+              final kcalLabel =
+                  '${fmt.format(day.caloriesIn)} / ${fmt.format(day.caloriesTarget)}';
               return SizedBox(
                 width: 220,
                 height: double.infinity,
@@ -420,7 +580,9 @@ class _StatsScreenState extends State<StatsScreen> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+                    side: BorderSide(
+                      color: cs.outlineVariant.withValues(alpha: 0.45),
+                    ),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
@@ -430,16 +592,25 @@ class _StatsScreenState extends State<StatsScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('$dateLabel $dayNum',
-                                style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text(
+                              '$dateLabel $dayNum',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
                               decoration: BoxDecoration(
                                 color: cs.primary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Text('+${day.pointsEstimate} pts',
-                                  style: TextStyle(color: cs.primary)),
+                              child: Text(
+                                '+${day.pointsEstimate} pts',
+                                style: TextStyle(color: cs.primary),
+                              ),
                             ),
                           ],
                         ),
@@ -461,9 +632,13 @@ class _StatsScreenState extends State<StatsScreen> {
                                   cs,
                                   'Calories',
                                   Icons.restaurant,
-                                  day.caloriesProgress.clamp(0.0, 1.0).toDouble(),
+                                  day.caloriesProgress
+                                      .clamp(0.0, 1.0)
+                                      .toDouble(),
                                   '$kcalLabel kcal',
-                                  warn: day.caloriesTarget > 0 && day.caloriesIn > day.caloriesTarget,
+                                  warn:
+                                      day.caloriesTarget > 0 &&
+                                      day.caloriesIn > day.caloriesTarget,
                                 ),
                                 _timelineBar(
                                   cs,
@@ -502,8 +677,14 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _timelineBar(ColorScheme cs, String title, IconData icon, double value, String subtitle,
-      {bool warn = false}) {
+  Widget _timelineBar(
+    ColorScheme cs,
+    String title,
+    IconData icon,
+    double value,
+    String subtitle, {
+    bool warn = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Column(
@@ -523,7 +704,9 @@ class _StatsScreenState extends State<StatsScreen> {
               value: value,
               minHeight: 8,
               color: warn ? cs.error : cs.primary,
-              backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+              backgroundColor: cs.surfaceContainerHighest.withValues(
+                alpha: 0.6,
+              ),
             ),
           ),
           const SizedBox(height: 4),
@@ -539,16 +722,21 @@ class _StatsScreenState extends State<StatsScreen> {
       return const SizedBox.shrink();
     }
 
-    final waterSeries =
-        controller.history.map((e) => e.waterProgress.clamp(0.0, 1.5).toDouble()).toList();
-    final caloriesSeries =
-        controller.history.map((e) => e.caloriesProgress.clamp(0.0, 2.0).toDouble()).toList();
-    final stepsSeries =
-        controller.history.map((e) => e.stepsProgress.clamp(0.0, 2.0).toDouble()).toList();
-    final sleepSeries =
-        controller.history.map((e) => e.sleepProgress.clamp(0.0, 1.5).toDouble()).toList();
-    final burnSeries =
-        controller.history.map((e) => e.burnProgress.clamp(0.0, 2.0).toDouble()).toList();
+    final waterSeries = controller.history
+        .map((e) => e.waterProgress.clamp(0.0, 1.5).toDouble())
+        .toList();
+    final caloriesSeries = controller.history
+        .map((e) => e.caloriesProgress.clamp(0.0, 2.0).toDouble())
+        .toList();
+    final stepsSeries = controller.history
+        .map((e) => e.stepsProgress.clamp(0.0, 2.0).toDouble())
+        .toList();
+    final sleepSeries = controller.history
+        .map((e) => e.sleepProgress.clamp(0.0, 1.5).toDouble())
+        .toList();
+    final burnSeries = controller.history
+        .map((e) => e.burnProgress.clamp(0.0, 2.0).toDouble())
+        .toList();
 
     List<Widget> cards = [
       _miniChart(cs, 'Water progress', waterSeries, cs.primary),
@@ -561,7 +749,10 @@ class _StatsScreenState extends State<StatsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Tracker charts', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+        const Text(
+          'Tracker charts',
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+        ),
         const SizedBox(height: 10),
         Wrap(
           spacing: 12,
@@ -579,7 +770,12 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _miniChart(ColorScheme cs, String title, List<double> series, Color color) {
+  Widget _miniChart(
+    ColorScheme cs,
+    String title,
+    List<double> series,
+    Color color,
+  ) {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -632,7 +828,10 @@ class _StatsScreenState extends State<StatsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Log sleep', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                  const Text(
+                    'Log sleep',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
                   const SizedBox(height: 12),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -640,7 +839,10 @@ class _StatsScreenState extends State<StatsScreen> {
                     title: const Text('Start time'),
                     subtitle: Text(start.format(ctx)),
                     onTap: () async {
-                      final picked = await showTimePicker(context: ctx, initialTime: start);
+                      final picked = await showTimePicker(
+                        context: ctx,
+                        initialTime: start,
+                      );
                       if (picked != null) setState(() => start = picked);
                     },
                   ),
@@ -650,7 +852,10 @@ class _StatsScreenState extends State<StatsScreen> {
                     title: const Text('End time'),
                     subtitle: Text(end.format(ctx)),
                     onTap: () async {
-                      final picked = await showTimePicker(context: ctx, initialTime: end);
+                      final picked = await showTimePicker(
+                        context: ctx,
+                        initialTime: end,
+                      );
                       if (picked != null) setState(() => end = picked);
                     },
                   ),
@@ -660,7 +865,10 @@ class _StatsScreenState extends State<StatsScreen> {
                     items: const [
                       DropdownMenuItem(value: 'Deep', child: Text('Deep')),
                       DropdownMenuItem(value: 'Light', child: Text('Light')),
-                      DropdownMenuItem(value: 'Interrupted', child: Text('Interrupted')),
+                      DropdownMenuItem(
+                        value: 'Interrupted',
+                        child: Text('Interrupted'),
+                      ),
                     ],
                     onChanged: (v) => setState(() => quality = v ?? 'Deep'),
                   ),
@@ -670,24 +878,44 @@ class _StatsScreenState extends State<StatsScreen> {
                     child: ElevatedButton(
                       onPressed: () async {
                         final now = DateTime.now();
-                        var startDt = DateTime(now.year, now.month, now.day, start.hour, start.minute);
-                        var endDt = DateTime(now.year, now.month, now.day, end.hour, end.minute);
+                        var startDt = DateTime(
+                          now.year,
+                          now.month,
+                          now.day,
+                          start.hour,
+                          start.minute,
+                        );
+                        var endDt = DateTime(
+                          now.year,
+                          now.month,
+                          now.day,
+                          end.hour,
+                          end.minute,
+                        );
                         if (endDt.isBefore(startDt)) {
                           endDt = endDt.add(const Duration(days: 1));
                         }
                         try {
-                          await _statsApi.logSleep(start: startDt, end: endDt, quality: quality);
+                          await _statsApi.logSleep(
+                            start: startDt,
+                            end: endDt,
+                            quality: quality,
+                          );
                           if (ctx.mounted) Navigator.of(ctx).pop();
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Sleep logged successfully')),
+                              const SnackBar(
+                                content: Text('Sleep logged successfully'),
+                              ),
                             );
                             controller.load();
                           }
                         } catch (_) {
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Failed to log sleep')),
+                              const SnackBar(
+                                content: Text('Failed to log sleep'),
+                              ),
                             );
                           }
                         }
@@ -707,27 +935,37 @@ class _StatsScreenState extends State<StatsScreen> {
   Widget _shortcuts(ColorScheme cs) {
     final shortcuts = [
       _shortcutTile(cs, 'Log water', Icons.water_drop, () {
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => WaterScreen(
-            targetValueFromBackend: controller.waterTarget,
-            targetIsLiters: true,
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => WaterScreen(
+              targetValueFromBackend: controller.waterTarget,
+              targetIsLiters: true,
+            ),
           ),
-        ));
+        );
       }),
       _shortcutTile(cs, 'Log meal', Icons.restaurant, () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NutritionScreen()));
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const NutritionScreen()));
       }),
       _shortcutTile(cs, 'Log activity', Icons.fitness_center, () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ActivityScreen()));
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ActivityScreen()));
       }),
       _shortcutTile(cs, 'Log steps', Icons.directions_walk, () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StepsScreen()));
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const StepsScreen()));
       }),
       _shortcutTile(cs, 'Log sleep (manual)', Icons.hotel, () async {
         await _showSleepLogSheet(cs);
       }),
       _shortcutTile(cs, 'Sleep reminders', Icons.bedtime, () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SleepScreen()));
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SleepScreen()));
       }),
     ];
 
@@ -739,16 +977,17 @@ class _StatsScreenState extends State<StatsScreen> {
           style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
         ),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: shortcuts,
-        ),
+        Wrap(spacing: 12, runSpacing: 12, children: shortcuts),
       ],
     );
   }
 
-  Widget _shortcutTile(ColorScheme cs, String title, IconData icon, VoidCallback onTap) {
+  Widget _shortcutTile(
+    ColorScheme cs,
+    String title,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
     return SizedBox(
       width: MediaQuery.of(context).size.width / 2 - 22,
       child: InkWell(
@@ -851,7 +1090,7 @@ class _LineChartPainter extends CustomPainter {
       final norm = (points[i] - minVal) / span;
       final y = size.height - (norm * size.height);
       canvas.drawCircle(Offset(x, y), 3, Paint()..color = color);
-  }
+    }
   }
 
   @override

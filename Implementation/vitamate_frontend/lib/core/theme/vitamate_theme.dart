@@ -1,52 +1,136 @@
 import 'package:flutter/material.dart';
 
 class VitaMateTheme {
-  static const Color background = Color(0xFFEAF4FF);
-  static const Color primary = Color(0xFF4D3BAA);
+  static const Color background = Color(0xFFF5F0FF);
+  static const Color shellBackground = Color(0xFFF8F4FF);
+  static const Color surface = Color(0xFFFFFDFF);
+  static const Color softSurface = Color(0xFFF7EEFF);
+  static const Color primary = Color(0xFF8A33FF);
+  static const Color primaryDeep = Color(0xFF42118B);
+  static const Color accent = Color(0xFFF043C0);
+  static const Color textPrimary = Color(0xFF4B1D7E);
+  static const Color textMuted = Color(0xFF956CC7);
+  static const Color border = Color(0xFFE7D5FF);
+  static const Color borderStrong = Color(0xFFD8B8FF);
+  static const Color success = Color(0xFF3FA26A);
+  static const Color warning = Color(0xFFEC8A2D);
+  static const Color danger = Color(0xFFE35D7A);
+  static const Color shadow = Color(0x1457369A);
 
   static ThemeData light() {
+    const colorScheme = ColorScheme(
+      brightness: Brightness.light,
+      primary: primary,
+      onPrimary: Colors.white,
+      secondary: accent,
+      onSecondary: Colors.white,
+      error: danger,
+      onError: Colors.white,
+      surface: surface,
+      onSurface: textPrimary,
+      surfaceTint: Colors.transparent,
+      outline: borderStrong,
+      outlineVariant: border,
+      onSurfaceVariant: textMuted,
+    );
+
     return ThemeData(
       useMaterial3: true,
       scaffoldBackgroundColor: background,
-      colorScheme: ColorScheme.fromSeed(seedColor: primary),
-
+      colorScheme: colorScheme,
+      textTheme: ThemeData.light().textTheme.apply(
+        bodyColor: textPrimary,
+        displayColor: textPrimary,
+      ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: background,
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        centerTitle: true,
-        iconTheme: IconThemeData(color: primary),
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        iconTheme: IconThemeData(color: primaryDeep),
         titleTextStyle: TextStyle(
-          color: primary,
-          fontSize: 18,
-          fontWeight: FontWeight.w700,
+          color: primaryDeep,
+          fontSize: 20,
+          fontWeight: FontWeight.w900,
         ),
       ),
-
+      cardTheme: CardThemeData(
+        color: surface,
+        elevation: 0,
+        shadowColor: shadow,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: border),
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         isDense: true,
+        filled: true,
+        fillColor: surface,
+        hintStyle: const TextStyle(
+          color: textMuted,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        labelStyle: const TextStyle(
+          color: textPrimary,
+          fontWeight: FontWeight.w700,
+        ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 14,
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: primary, width: 1.6),
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: primary, width: 2.2),
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: primary, width: 1.4),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: danger),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: danger, width: 1.4),
         ),
       ),
-
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: primary,
           foregroundColor: Colors.white,
-          shape: const StadiumBorder(),
           elevation: 0,
           minimumSize: const Size.fromHeight(48),
-          textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: primaryDeep,
+          side: const BorderSide(color: borderStrong),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      dividerColor: border,
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: primaryDeep,
+        contentTextStyle: const TextStyle(color: Colors.white),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }

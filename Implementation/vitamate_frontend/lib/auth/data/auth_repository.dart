@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../core/storage/secure_storage.dart';
 import '../models/auth_token.dart';
+import '../models/user.dart';
 import 'auth_api.dart';
 
 class AuthRepository {
@@ -25,7 +26,7 @@ class AuthRepository {
     );
   }
 
-  Future<void> login({
+  Future<AuthToken> login({
     required String username,
     required String password,
   }) async {
@@ -48,25 +49,23 @@ class AuthRepository {
       access: access,
       refresh: refresh,
     );
+    return token;
   }
 
-  Future<Map<String, dynamic>> getMeRaw() async {
+  Future<AuthUser> getMe() async {
     final res = await _api.me();
-    return _asMap(res.data);
+    return AuthUser.fromJson(_asMap(res.data));
   }
 
-  Future<void> updateMe(Map<String, dynamic> data) async {
-    await _api.updateMe(data);
+  Future<AuthUser> updateMe(Map<String, dynamic> data) async {
+    final res = await _api.updateMe(data);
+    return AuthUser.fromJson(_asMap(res.data));
   }
 
   Future<void> logout() async {
     await SecureStorage.clear();
   }
 
-  /// Accepts:
-  /// - Map<String, dynamic>
-  /// - Map (dynamic keys)
-  /// - String (JSON text)
   static Map<String, dynamic> _asMap(dynamic v) {
     if (v is Map<String, dynamic>) return v;
     if (v is Map) return v.cast<String, dynamic>();

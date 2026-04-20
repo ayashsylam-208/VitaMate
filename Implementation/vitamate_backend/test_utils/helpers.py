@@ -5,6 +5,7 @@ from rest_framework.test import APIClient
 
 from core.models import FoodItem, Exercise, StepLog
 from users.models import UserProfile
+from users.services.user_profile_service import UserProfileService
 
 
 def create_user_with_profile(
@@ -37,7 +38,7 @@ def create_user_with_profile(
     profile, _ = UserProfile.objects.get_or_create(
         user=user,
         defaults={
-            "birth_date": "2000-01-01",
+            "birth_date": date(2000, 1, 1),
             "gender": gender,
             "height": height,
             "weight": weight,
@@ -48,7 +49,7 @@ def create_user_with_profile(
     profile.height = height
     profile.weight = weight
     profile.activity_level = activity_level
-    profile.calculate_metrics()
+    UserProfileService.recalculate_profile(profile)
     return user
 
 

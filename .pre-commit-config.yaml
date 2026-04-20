@@ -6,3 +6,11 @@ repos:
       - id: check-json
       - id: check-merge-conflict
       - id: detect-private-key
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: Detect hardcoded secrets
+        entry: gitleaks git --pre-commit --redact --staged --verbose --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../state/steps_controller.dart';
 
 class StepsScreen extends StatefulWidget {
@@ -34,6 +35,7 @@ class _StepsScreenState extends State<StepsScreen> {
     final fmt = NumberFormat.decimalPattern();
 
     return Scaffold(
+      bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
       appBar: AppBar(
         title: const Text('Steps'),
         actions: [
@@ -68,7 +70,7 @@ class _StepsScreenState extends State<StepsScreen> {
               onRefresh: controller.refresh,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 112),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

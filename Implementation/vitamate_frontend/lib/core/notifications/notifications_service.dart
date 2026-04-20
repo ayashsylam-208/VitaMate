@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -8,19 +9,43 @@ import 'notification_channels.dart';
 import 'notification_ids.dart';
 import 'notification_messages.dart';
 
+part 'notifications_service_sleep.dart';
+part 'notifications_service_hydration.dart';
+part 'notifications_service_meals_activity.dart';
+part 'notifications_service_chronic.dart';
+part 'notifications_service_health_alerts.dart';
+part 'notifications_service_debug.dart';
+
+class ChronicMedicationReminderPlan {
+  final int scheduleId;
+  final String medicationName;
+  final String conditionName;
+  final String dosage;
+  final int hour;
+  final int minute;
+  final int leadMinutes;
+  final List<int> recurrenceDays;
+
+  const ChronicMedicationReminderPlan({
+    required this.scheduleId,
+    required this.medicationName,
+    required this.conditionName,
+    required this.dosage,
+    required this.hour,
+    required this.minute,
+    required this.leadMinutes,
+    required this.recurrenceDays,
+  });
+}
+
 class NotificationsService {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
-  // =========================
-  // Init
-  // =========================
   static Future<void> init() async {
-    // Timezone init (NO flutter_timezone)
     tzdata.initializeTimeZones();
     _setLocalTzFromUtcOffset();
 
-    // Plugin init
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     await _plugin.initialize(
       const InitializationSettings(android: androidInit),
@@ -28,26 +53,23 @@ class NotificationsService {
 
     await ensureExactAlarmPermission();
 
-    // Create channels
     final android = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
 
-    if (android != null) {
-      for (final c in NotificationChannels.all) {
-        await android.createNotificationChannel(c);
-      }
+    if (android == null) {
+      return;
+    }
+
+    for (final channel in NotificationChannels.all) {
+      await android.createNotificationChannel(channel);
     }
   }
 
-  // Sets tz.local using UTC offset -> Etc/GMT±X
-  // Works well for offsets that are whole hours (e.g., +2, +3)
   static void _setLocalTzFromUtcOffset() {
     try {
       final offset = DateTime.now().timeZoneOffset;
-
-      // If not whole-hour offset, fallback to UTC (safe)
       if (offset.inMinutes % 60 != 0) {
         tz.setLocalLocation(tz.UTC);
         debugPrint('Timezone not whole-hour. Using UTC. offset=$offset');
@@ -55,47 +77,45 @@ class NotificationsService {
       }
 
       final hours = offset.inHours;
-
-      // Etc/GMT has reversed sign:
-      // UTC+3 => Etc/GMT-3
-      // UTC-2 => Etc/GMT+2
       final sign = hours >= 0 ? '-' : '+';
       final name = 'Etc/GMT$sign${hours.abs()}';
 
       tz.setLocalLocation(tz.getLocation(name));
       debugPrint('Timezone set to $name (offset=$offset)');
-    } catch (e) {
+    } catch (error) {
       tz.setLocalLocation(tz.UTC);
-      debugPrint('Timezone fallback to UTC: $e');
+      debugPrint('Timezone fallback to UTC: $error');
     }
   }
 
-  // =========================
-  // Permissions (Android 13+)
-  // =========================
   static Future<void> ensurePermission() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid) {
+      return;
+    }
 
     final android = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    if (android == null) return;
+    if (android == null) {
+      return;
+    }
 
     await android.requestNotificationsPermission();
   }
 
-  // =========================
-  // Exact alarms (Android 12+)
-  // =========================
   static Future<void> ensureExactAlarmPermission() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid) {
+      return;
+    }
 
     final android = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    if (android == null) return;
+    if (android == null) {
+      return;
+    }
 
     final canScheduleExact = await android.canScheduleExactNotifications();
     debugPrint('NotificationsService: canScheduleExact=$canScheduleExact');
@@ -105,9 +125,6 @@ class NotificationsService {
     }
   }
 
-  // =========================
-  // Internal helpers
-  // =========================
   static NotificationDetails _details(
     String channelId,
     String channelName, {
@@ -129,427 +146,212 @@ class NotificationsService {
     required int minute,
   }) {
     final now = tz.TZDateTime.now(tz.local);
-    var t = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
-    if (t.isBefore(now)) {
-      t = t.add(const Duration(days: 1));
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+    );
+    if (scheduled.isBefore(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
     }
-    return t;
+    return scheduled;
   }
 
-  // =========================
-  // Sleep (daily bedtime + wake)
-  // =========================
-  static Future<void> scheduleDailyBedtime({required DateTime bedTime}) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-
-    final scheduled = _nextTimeTodayOrTomorrow(
-      hour: bedTime.hour,
-      minute: bedTime.minute,
+  static tz.TZDateTime _nextWeekdayTime({
+    required int weekday,
+    required int hour,
+    required int minute,
+  }) {
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
     );
 
-    await _plugin.zonedSchedule(
-      NotificationIds.sleepBed,
-      '🛌 ${NotificationMessages.sleepBedTitle()}',
-      NotificationMessages.sleepBedBody(),
-      scheduled,
-      _details(
-        NotificationChannels.sleepId,
-        NotificationChannels.sleepName,
-        channelDescription: NotificationChannels.sleepDesc,
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    while (scheduled.weekday != weekday || !scheduled.isAfter(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    return scheduled;
   }
 
-  static Future<void> scheduleDailyWake({required DateTime wakeTime}) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-
-    final scheduled = _nextTimeTodayOrTomorrow(
-      hour: wakeTime.hour,
-      minute: wakeTime.minute,
-    );
-
-    await _plugin.zonedSchedule(
-      NotificationIds.sleepWake,
-      '🌅 ${NotificationMessages.sleepWakeTitle()}',
-      NotificationMessages.sleepWakeBody(),
-      scheduled,
-      _details(
-        NotificationChannels.sleepId,
-        NotificationChannels.sleepName,
-        channelDescription: NotificationChannels.sleepDesc,
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+  static int _chronicRecurringNotificationId({
+    required int scheduleId,
+    required int weekdaySlot,
+    required bool isLeadReminder,
+  }) {
+    return NotificationIds.chronicMedicationBase +
+        (scheduleId * 20) +
+        (weekdaySlot * 2) +
+        (isLeadReminder ? 1 : 0);
   }
 
-  static Future<void> cancelSleep() async {
-    await _plugin.cancel(NotificationIds.sleepBed);
-    await _plugin.cancel(NotificationIds.sleepWake);
+  static int _chronicSnoozeNotificationId(int scheduleId) {
+    return NotificationIds.chronicMedicationSnoozeBase + scheduleId;
   }
 
-  // =========================
-  // Water (interval minutes)
-  // Strategy: schedule ahead for a window (default 24h),
-  // and call again daily or when user opens app.
-  // =========================
+  static String _chronicDoseBody({
+    required String conditionName,
+    required String dosage,
+  }) {
+    final dosageText = dosage.trim();
+    if (dosageText.isEmpty) {
+      return 'Care plan: $conditionName';
+    }
+    return '$dosageText · $conditionName';
+  }
+
+  static String _chronicReminderBody({
+    required String medicationName,
+    required String conditionName,
+    required String dosage,
+    required bool isLeadReminder,
+  }) {
+    final body = _chronicDoseBody(conditionName: conditionName, dosage: dosage);
+    if (isLeadReminder) {
+      return 'Upcoming dose: $medicationName. $body';
+    }
+    return 'Time to take $medicationName. $body';
+  }
+
+  static Future<void> _cancelPendingInRange(int fromId, int toId) async {
+    final pending = await _plugin.pendingNotificationRequests();
+    for (final request in pending) {
+      if (request.id >= fromId && request.id <= toId) {
+        await _plugin.cancel(request.id);
+      }
+    }
+  }
+
+  static Future<void> scheduleDailyBedtime({required DateTime bedTime}) {
+    return _scheduleDailyBedtime(bedTime: bedTime);
+  }
+
+  static Future<void> scheduleDailyWake({required DateTime wakeTime}) {
+    return _scheduleDailyWake(wakeTime: wakeTime);
+  }
+
+  static Future<void> cancelSleep() {
+    return _cancelSleep();
+  }
+
   static Future<void> scheduleWaterInterval({
     required int intervalMinutes,
     int hoursAhead = 24,
-  }) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-    await cancelWater();
-
-    final now = tz.TZDateTime.now(tz.local);
-    final count = ((hoursAhead * 60) / intervalMinutes).floor();
-
-    for (int i = 1; i <= count; i++) {
-      final t = now.add(Duration(minutes: intervalMinutes * i));
-
-      await _plugin.zonedSchedule(
-        NotificationIds.waterBase + i,
-        '💧 ${NotificationMessages.waterTitle()}',
-        NotificationMessages.waterBody(),
-        t,
-        _details(
-          NotificationChannels.waterId,
-          NotificationChannels.waterName,
-          channelDescription: NotificationChannels.waterDesc,
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-      );
-    }
-  }
-
-  static Future<void> showWaterEnabled(int intervalMinutes) async {
-    await ensurePermission();
-    await _plugin.show(
-      778,
-      'Water reminders on',
-      'Hydration alerts every $intervalMinutes minutes are now active.',
-      _details(
-        NotificationChannels.waterId,
-        NotificationChannels.waterName,
-        channelDescription: NotificationChannels.waterDesc,
-      ),
+  }) {
+    return _scheduleWaterInterval(
+      intervalMinutes: intervalMinutes,
+      hoursAhead: hoursAhead,
     );
   }
 
-  static Future<void> cancelWater() async {
-    // cancel a safe range
-    for (int i = 1; i <= 250; i++) {
-      await _plugin.cancel(NotificationIds.waterBase + i);
-    }
+  static Future<void> showWaterEnabled(int intervalMinutes) {
+    return _showWaterEnabled(intervalMinutes);
   }
 
-  // =========================
-  // Meals (daily 3 times)
-  // =========================
+  static Future<void> cancelWater() {
+    return _cancelWater();
+  }
+
   static Future<void> scheduleMeals({
     required DateTime breakfast,
     required DateTime lunch,
     required DateTime dinner,
-  }) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
+  }) {
+    return _scheduleMeals(breakfast: breakfast, lunch: lunch, dinner: dinner);
+  }
 
-    await _scheduleDaily(
-      id: NotificationIds.mealBreakfast,
-      when: breakfast,
-      title: '🍳 ${NotificationMessages.breakfastTitle()}',
-      body: NotificationMessages.breakfastBody(),
-      channelId: NotificationChannels.mealsId,
-      channelName: NotificationChannels.mealsName,
-      channelDesc: NotificationChannels.mealsDesc,
-    );
+  static Future<void> cancelMeals() {
+    return _cancelMeals();
+  }
 
-    await _scheduleDaily(
-      id: NotificationIds.mealLunch,
-      when: lunch,
-      title: '🍲 ${NotificationMessages.lunchTitle()}',
-      body: NotificationMessages.lunchBody(),
-      channelId: NotificationChannels.mealsId,
-      channelName: NotificationChannels.mealsName,
-      channelDesc: NotificationChannels.mealsDesc,
-    );
+  static Future<void> scheduleActivityEveryXHours(int hours) {
+    return _scheduleActivityEveryXHours(hours);
+  }
 
-    await _scheduleDaily(
-      id: NotificationIds.mealDinner,
-      when: dinner,
-      title: '🥗 ${NotificationMessages.dinnerTitle()}',
-      body: NotificationMessages.dinnerBody(),
-      channelId: NotificationChannels.mealsId,
-      channelName: NotificationChannels.mealsName,
-      channelDesc: NotificationChannels.mealsDesc,
-    );
+  static Future<void> cancelActivity() {
+    return _cancelActivity();
+  }
 
-    await _plugin.show(
-      788,
-      'Meal reminders on',
-      'Breakfast, lunch, and dinner reminders have been scheduled.',
-      _details(
-        NotificationChannels.mealsId,
-        NotificationChannels.mealsName,
-        channelDescription: NotificationChannels.mealsDesc,
-      ),
+  static Future<void> scheduleDailyActivityReminder({required DateTime time}) {
+    return _scheduleDailyActivityReminder(time: time);
+  }
+
+  static Future<void> scheduleDailyStepsReminder({required DateTime time}) {
+    return _scheduleDailyStepsReminder(time: time);
+  }
+
+  static Future<void> cancelStepsReminder() {
+    return _cancelStepsReminder();
+  }
+
+  static Future<void> syncChronicMedicationReminders(
+    List<ChronicMedicationReminderPlan> plans,
+  ) {
+    return _syncChronicMedicationReminders(plans);
+  }
+
+  static Future<void> syncMedicationReminders(
+    List<ChronicMedicationReminderPlan> plans,
+  ) {
+    return _syncChronicMedicationReminders(plans);
+  }
+
+  static Future<void> scheduleChronicMedicationSnooze({
+    required int scheduleId,
+    required String medicationName,
+    required String conditionName,
+    required String dosage,
+    required DateTime reminderAt,
+  }) {
+    return _scheduleChronicMedicationSnooze(
+      scheduleId: scheduleId,
+      medicationName: medicationName,
+      conditionName: conditionName,
+      dosage: dosage,
+      reminderAt: reminderAt,
     );
   }
 
-  static Future<void> _scheduleDaily({
-    required int id,
-    required DateTime when,
-    required String title,
-    required String body,
-    required String channelId,
-    required String channelName,
-    required String channelDesc,
-  }) async {
-    final scheduled = _nextTimeTodayOrTomorrow(
-      hour: when.hour,
-      minute: when.minute,
-    );
+  static Future<void> cancelChronicMedicationSnooze(int scheduleId) {
+    return _cancelChronicMedicationSnooze(scheduleId);
+  }
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      scheduled,
-      _details(channelId, channelName, channelDescription: channelDesc),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
+  static Future<void> showDiabetesSugarWarning({
+    required double limitG,
+    required double currentG,
+    required String sourceLabel,
+  }) {
+    return _showDiabetesSugarWarning(
+      limitG: limitG,
+      currentG: currentG,
+      sourceLabel: sourceLabel,
     );
   }
 
-  static Future<void> cancelMeals() async {
-    await _plugin.cancel(NotificationIds.mealBreakfast);
-    await _plugin.cancel(NotificationIds.mealLunch);
-    await _plugin.cancel(NotificationIds.mealDinner);
+  static Future<void> testAfterSeconds(int seconds) {
+    return _testAfterSeconds(seconds);
   }
 
-  // =========================
-  // Activity reminders
-  // Strategy: schedule a few ahead
-  // =========================
-  static Future<void> scheduleActivityEveryXHours(int hours) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-    await cancelActivity();
-
-    final now = tz.TZDateTime.now(tz.local);
-    for (int i = 1; i <= 8; i++) {
-      final t = now.add(Duration(hours: hours * i));
-
-      await _plugin.zonedSchedule(
-        NotificationIds.activityBase + i,
-        '🏃 ${NotificationMessages.activityTitle()}',
-        NotificationMessages.activityBody(),
-        t,
-        _details(
-          NotificationChannels.activityId,
-          NotificationChannels.activityName,
-          channelDescription: NotificationChannels.activityDesc,
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-      );
-    }
+  static Future<void> logPending() {
+    return _logPending();
   }
 
-  static Future<void> cancelActivity() async {
-    for (int i = 1; i <= 100; i++) {
-      await _plugin.cancel(NotificationIds.activityBase + i);
-    }
-    await _plugin.cancel(NotificationIds.activityDaily);
+  static Future<void> showEnabledConfirmation() {
+    return _showEnabledConfirmation();
   }
 
-  static Future<void> scheduleDailyActivityReminder({required DateTime time}) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-    await cancelActivity();
-
-    final scheduled = _nextTimeTodayOrTomorrow(
-      hour: time.hour,
-      minute: time.minute,
-    );
-
-    await _plugin.zonedSchedule(
-      NotificationIds.activityDaily,
-      NotificationMessages.activityTitle(),
-      NotificationMessages.activityBody(),
-      scheduled,
-      _details(
-        NotificationChannels.activityId,
-        NotificationChannels.activityName,
-        channelDescription: NotificationChannels.activityDesc,
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
-
-    await _plugin.show(
-      889,
-      'Activity reminder on',
-      'Daily activity reminder scheduled at ${scheduled.hour.toString().padLeft(2, '0')}:${scheduled.minute.toString().padLeft(2, '0')}',
-      _details(
-        NotificationChannels.activityId,
-        NotificationChannels.activityName,
-        channelDescription: NotificationChannels.activityDesc,
-      ),
-    );
+  static Future<void> showWelcomeBack() {
+    return _showWelcomeBack();
   }
 
-  // =========================
-  // Steps reminder (daily at a fixed time)
-  // =========================
-  static Future<void> scheduleDailyStepsReminder({required DateTime time}) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-
-    // Only replace the steps reminder, not activity ones.
-    await _plugin.cancel(NotificationIds.stepsDaily);
-
-    final scheduled = _nextTimeTodayOrTomorrow(
-      hour: time.hour,
-      minute: time.minute,
-    );
-
-    await _plugin.zonedSchedule(
-      NotificationIds.stepsDaily,
-      NotificationMessages.stepsTitle(),
-      NotificationMessages.stepsBody(),
-      scheduled,
-      _details(
-        NotificationChannels.activityId,
-        NotificationChannels.activityName,
-        channelDescription: NotificationChannels.activityDesc,
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
-
-    final hh = scheduled.hour.toString().padLeft(2, '0');
-    final mm = scheduled.minute.toString().padLeft(2, '0');
-    await _plugin.show(
-      898,
-      'Steps reminder on',
-      'Daily steps reminder scheduled at $hh:$mm',
-      _details(
-        NotificationChannels.activityId,
-        NotificationChannels.activityName,
-        channelDescription: NotificationChannels.activityDesc,
-      ),
-    );
-  }
-
-  static Future<void> cancelStepsReminder() async {
-    await _plugin.cancel(NotificationIds.stepsDaily);
-  }
-
-  // =========================
-  // Debug test
-  // =========================
-  static Future<void> testAfterSeconds(int seconds) async {
-    await ensurePermission();
-    await ensureExactAlarmPermission();
-
-    final scheduledFor =
-        tz.TZDateTime.now(tz.local).add(Duration(seconds: seconds));
-    debugPrint('NotificationsService: scheduling test at $scheduledFor');
-
-    await _plugin.zonedSchedule(
-      999,
-      'Test notification',
-      'If you see this, scheduling works ✅',
-      scheduledFor,
-      _details(
-        NotificationChannels.debugId,
-        NotificationChannels.debugName,
-        channelDescription: NotificationChannels.debugDesc,
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
-  }
-
-  // Debug helper: log pending scheduled notifications
-  static Future<void> logPending() async {
-    final pending = await _plugin.pendingNotificationRequests();
-    debugPrint(
-        'NotificationsService: pending notifications count=${pending.length}');
-    for (final p in pending) {
-      debugPrint('Pending notification -> id=${p.id} title=${p.title}');
-    }
-  }
-
-  // =========================
-  // Instant confirmation notification
-  // =========================
-  static Future<void> showEnabledConfirmation() async {
-    await ensurePermission();
-
-    await _plugin.show(
-      777,
-      'Notifications enabled 🔔',
-      'Sleep reminders are now active.',
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          NotificationChannels.sleepId,
-          NotificationChannels.sleepName,
-          channelDescription: NotificationChannels.sleepDesc,
-          importance: Importance.max,
-          priority: Priority.high,
-        ),
-      ),
-    );
-  }
-
-  // =========================
-  // Welcome notifications
-  // =========================
-  static Future<void> showWelcomeBack() async {
-    await ensurePermission();
-    await _plugin.show(
-      NotificationIds.welcomeBack,
-      'Welcome back!',
-      'Good to see you again. Keep pushing toward your goals.',
-      _details(
-        NotificationChannels.debugId,
-        NotificationChannels.debugName,
-        channelDescription: NotificationChannels.debugDesc,
-      ),
-    );
-  }
-
-  static Future<void> showWelcomeNewUser() async {
-    await ensurePermission();
-    await _plugin.show(
-      NotificationIds.welcomeNew,
-      'Welcome to VitaMate',
-      'Your journey to a better life starts now. Let\'s get moving!',
-      _details(
-        NotificationChannels.debugId,
-        NotificationChannels.debugName,
-        channelDescription: NotificationChannels.debugDesc,
-      ),
-    );
+  static Future<void> showWelcomeNewUser() {
+    return _showWelcomeNewUser();
   }
 }

@@ -14,6 +14,7 @@ __pycache__/
 *.sqlite3
 .env
 .env.*
+!.env.example
 venv/
 *.log
 media/
@@ -50,4 +51,11 @@ build/
 # ======================
 node_modules/
 Implementation/vitamate_backend/.venv/
+Implementation/vitamate_backend/.local/
+Implementation/tmp_gitleaks/
+Implementation/tmp_postgres_install/
+Implementation/tmp_postgres_portable/
+Implementation/food_ai_service/
 VitaMate/
+tmp_video_frames/
+tmp_video_frames_dense/
