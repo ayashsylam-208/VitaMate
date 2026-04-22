@@ -56,10 +56,7 @@ void main() {
     );
     await enterTextByKey(
       tester,
-      AppTestKeys.chronicCreateField(
-        slug: 'hypertension',
-        field: 'pulseField',
-      ),
+      AppTestKeys.chronicCreateField(slug: 'hypertension', field: 'pulseField'),
       '72',
     );
     await tapByKey(tester, AppTestKeys.chronicCreateSaveButton);
@@ -102,9 +99,17 @@ void main() {
       find.byKey(const ValueKey(AppTestKeys.chronicDetailSummaryCard)),
       timeout: const Duration(seconds: 30),
     );
+    final readingsListFinder = find.byKey(
+      const ValueKey(AppTestKeys.chronicDetailReadingsList),
+    );
+    await scrollUntilFinderVisible(
+      tester,
+      readingsListFinder,
+      timeout: const Duration(seconds: 30),
+    );
     await waitForFinder(
       tester,
-      find.byKey(const ValueKey(AppTestKeys.chronicDetailReadingsList)),
+      readingsListFinder,
       timeout: const Duration(seconds: 30),
     );
     await waitForText(tester, 'Attention needed');
