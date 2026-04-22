@@ -14,15 +14,21 @@ void main() {
     await launchIntegrationApp(tester);
     await loginAsChronicUser(tester);
 
-    await waitForText(tester, 'Daily Health Score');
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey(AppTestKeys.homeConditionsCenterAddButton)),
-      250,
-      scrollable: find.byType(Scrollable).first,
+    await waitForHomeScreen(tester);
+
+    final homeAddButtonFinder = find.byKey(
+      const ValueKey(AppTestKeys.homeConditionsCenterAddButton),
     );
-    expect(
-      find.byKey(const ValueKey(AppTestKeys.homeConditionsCenterAddButton)),
-      findsOneWidget,
+    final homeOpenButtonFinder = find.byKey(
+      const ValueKey(AppTestKeys.homeConditionsCenterOpenButton),
     );
+
+    final homeConditionsActionFinder = await scrollUntilAnyFinderVisible(
+      tester,
+      [homeAddButtonFinder, homeOpenButtonFinder],
+      timeout: const Duration(seconds: 30),
+    );
+
+    expect(homeConditionsActionFinder, findsOneWidget);
   });
 }

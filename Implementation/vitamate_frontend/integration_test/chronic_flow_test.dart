@@ -69,18 +69,11 @@ void main() {
       );
       await tapByKey(tester, AppTestKeys.chronicCreateSaveButton);
     } else {
-      final openExistingHypertensionFinder = find.widgetWithText(
-        FilledButton,
-        'View',
-      );
-      await waitForFinder(
+      await tapByKey(
         tester,
-        openExistingHypertensionFinder,
+        AppTestKeys.chronicSupportedOpenButton('hypertension'),
         timeout: const Duration(seconds: 30),
       );
-      await tester.ensureVisible(openExistingHypertensionFinder.first);
-      await tester.tap(openExistingHypertensionFinder.first);
-      await tester.pump();
     }
 
     await waitForFinder(

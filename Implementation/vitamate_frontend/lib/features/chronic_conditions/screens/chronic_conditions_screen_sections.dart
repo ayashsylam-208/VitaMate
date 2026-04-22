@@ -325,6 +325,9 @@ class _SupportedConditionCard extends StatelessWidget {
                     child: const Text('Add'),
                   )
                 : FilledButton.tonal(
+                    key: ValueKey(
+                      AppTestKeys.chronicSupportedOpenButton(type.slug),
+                    ),
                     onPressed: onOpen,
                     style: FilledButton.styleFrom(
                       foregroundColor: VitaMateTheme.primaryDeep,

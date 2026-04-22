@@ -148,7 +148,23 @@ Future<void> loginAsChronicUser(WidgetTester tester) async {
   );
   await enterTextByKey(tester, AppTestKeys.loginUsernameField, 'e2e_chronic');
   await enterTextByKey(tester, AppTestKeys.loginPasswordField, 'Pass123!');
-  await tapByKey(tester, AppTestKeys.loginSubmitButton);
+  await tester.testTextInput.receiveAction(TextInputAction.done);
+  await tester.pump(const Duration(milliseconds: 500));
+
+  final submitFinder = find.byKey(
+    const ValueKey(AppTestKeys.loginSubmitButton),
+  );
+  if (submitFinder.evaluate().isNotEmpty) {
+    final submitButton = tester.widget<ElevatedButton>(submitFinder);
+    final signingInFinder = find.text('Signing In...');
+    if (
+        signingInFinder.evaluate().isEmpty &&
+        submitButton.onPressed != null
+    ) {
+      submitButton.onPressed!.call();
+      await tester.pump();
+    }
+  }
 }
 
 Future<void> waitForHomeScreen(

@@ -25,6 +25,9 @@ class AppTestKeys {
   static String chronicSupportedAddButton(String slug) =>
       'chronic.supported.$slug.addButton';
 
+  static String chronicSupportedOpenButton(String slug) =>
+      'chronic.supported.$slug.openButton';
+
   static String chronicCreateField({
     required String slug,
     required String field,
