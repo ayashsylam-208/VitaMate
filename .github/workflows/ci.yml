@@ -273,10 +273,12 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            set -o pipefail
-            cd Implementation/vitamate_frontend
-            flutter drive --driver=test_driver/integration_test.dart --target=integration_test/smoke_login_home_test.dart -d emulator-5554 --dart-define=API_BASE_URL=${API_BASE_URL} | tee /tmp/vitamate-integration/flutter-smoke.log
-            flutter drive --driver=test_driver/integration_test.dart --target=integration_test/chronic_flow_test.dart -d emulator-5554 --dart-define=API_BASE_URL=${API_BASE_URL} | tee /tmp/vitamate-integration/flutter-chronic.log
+            bash -lc '
+              set -o pipefail
+              cd Implementation/vitamate_frontend
+              flutter drive --driver=test_driver/integration_test.dart --target=integration_test/smoke_login_home_test.dart -d emulator-5554 --dart-define=API_BASE_URL=${API_BASE_URL} | tee /tmp/vitamate-integration/flutter-smoke.log
+              flutter drive --driver=test_driver/integration_test.dart --target=integration_test/chronic_flow_test.dart -d emulator-5554 --dart-define=API_BASE_URL=${API_BASE_URL} | tee /tmp/vitamate-integration/flutter-chronic.log
+            '
 
       - name: Upload integration logs
         if: always()
