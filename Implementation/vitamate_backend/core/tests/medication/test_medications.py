@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -286,6 +286,7 @@ class UnifiedMedicationApiTests(APITestCase):
 
     def test_overdue_condition_schedule_log_generation_avoids_non_atomic_insert(self):
         condition = self._condition()
+        fake_now = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
         medication = ConditionMedication.objects.create(
             user=self.user,
             user_condition=condition,
@@ -295,7 +296,7 @@ class UnifiedMedicationApiTests(APITestCase):
             dosage="500 mg",
         )
         schedule = medication.schedules.create(
-            time_of_day=(timezone.localtime() - timedelta(hours=3)).time().replace(second=0, microsecond=0)
+            time_of_day=(fake_now - timedelta(hours=3)).time().replace(second=0, microsecond=0)
         )
 
         with patch(
@@ -304,12 +305,12 @@ class UnifiedMedicationApiTests(APITestCase):
         ):
             ConditionMedicationService.ensure_today_medication_logs(
                 user_condition=condition,
-                now=timezone.localtime(),
+                now=fake_now,
             )
 
         logs = ConditionMedicationLog.objects.filter(
             schedule=schedule,
-            scheduled_date=timezone.localdate(),
+            scheduled_date=fake_now.date(),
         )
         self.assertEqual(logs.count(), 1)
         self.assertEqual(logs.get().status, ConditionMedicationLog.STATUS_MISSED)
