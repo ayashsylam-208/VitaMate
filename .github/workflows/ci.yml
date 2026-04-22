@@ -274,14 +274,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
           disable-animations: true
           script: |
-            set -e
-            cd Implementation/vitamate_frontend
-
-            flutter drive --driver=test_driver/integration_test.dart --target=integration_test/smoke_login_home_test.dart -d emulator-5554 --dart-define=API_BASE_URL="${API_BASE_URL}" > /tmp/vitamate-integration/flutter-smoke.log 2>&1 || { cat /tmp/vitamate-integration/flutter-smoke.log; exit 1; }
-            cat /tmp/vitamate-integration/flutter-smoke.log
-
-            flutter drive --driver=test_driver/integration_test.dart --target=integration_test/chronic_flow_test.dart -d emulator-5554 --dart-define=API_BASE_URL="${API_BASE_URL}" > /tmp/vitamate-integration/flutter-chronic.log 2>&1 || { cat /tmp/vitamate-integration/flutter-chronic.log; exit 1; }
-            cat /tmp/vitamate-integration/flutter-chronic.log
+            sh ./Implementation/vitamate_frontend/scripts/run_ci_integration.sh
 
       - name: Print integration logs on failure
         if: failure()
