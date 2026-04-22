@@ -51,6 +51,34 @@ Future<Finder> waitForAnyFinder(
   throw TestFailure('Timed out waiting for any finder: $finders');
 }
 
+Future<Finder> scrollUntilAnyFinderVisible(
+  WidgetTester tester,
+  List<Finder> finders, {
+  Finder? scrollable,
+  double delta = 250,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+    for (final finder in finders) {
+      if (finder.evaluate().isNotEmpty) {
+        return finder;
+      }
+    }
+
+    final scrollableFinder = scrollable ?? find.byType(Scrollable).first;
+    if (scrollableFinder.evaluate().isEmpty) {
+      break;
+    }
+
+    await tester.drag(scrollableFinder, Offset(0, -delta), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  throw TestFailure('Timed out scrolling to any finder: $finders');
+}
+
 Future<void> tapByKey(
   WidgetTester tester,
   String key, {

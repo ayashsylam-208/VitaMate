@@ -21,15 +21,12 @@ void main() {
     final homeOpenButtonFinder = find.byKey(
       const ValueKey(AppTestKeys.homeConditionsCenterOpenButton),
     );
-    final homeConditionsCenterFinder = await waitForAnyFinder(tester, [
-      homeAddButtonFinder,
-      homeOpenButtonFinder,
-    ], timeout: const Duration(seconds: 30));
-    await scrollUntilFinderVisible(
+    final homeConditionsCenterFinder = await scrollUntilAnyFinderVisible(
       tester,
-      homeConditionsCenterFinder,
+      [homeAddButtonFinder, homeOpenButtonFinder],
       timeout: const Duration(seconds: 30),
     );
+    await tester.ensureVisible(homeConditionsCenterFinder);
     await tester.tap(homeConditionsCenterFinder);
     await tester.pump();
     await waitForFinder(
