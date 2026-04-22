@@ -59,3 +59,8 @@ Implementation/food_ai_service/
 VitaMate/
 tmp_video_frames/
 tmp_video_frames_dense/
+Implementation/VitaMate_Comprehensive_Testing_Report_*.md
+Implementation/VitaMate_Comprehensive_Testing_Report_*.docx
+Implementation/VitaMate_Testing_File_Index.csv
+Implementation/_VitaMate_Comprehensive_Testing_Report_*.html
+Implementation/generate_testing_report.py
