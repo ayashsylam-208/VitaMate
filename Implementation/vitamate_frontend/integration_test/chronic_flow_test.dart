@@ -26,9 +26,8 @@ void main() {
       [homeAddButtonFinder, homeOpenButtonFinder],
       timeout: const Duration(seconds: 30),
     );
-    await tester.ensureVisible(homeConditionsCenterFinder);
     await tester.tap(homeConditionsCenterFinder);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     await waitForFinder(
       tester,
       find.byKey(const ValueKey(AppTestKeys.chronicScreenHeader)),

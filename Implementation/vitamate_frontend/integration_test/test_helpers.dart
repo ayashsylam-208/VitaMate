@@ -62,8 +62,9 @@ Future<Finder> scrollUntilAnyFinderVisible(
   while (DateTime.now().isBefore(deadline)) {
     await tester.pump(const Duration(milliseconds: 250));
     for (final finder in finders) {
-      if (finder.evaluate().isNotEmpty) {
-        return finder;
+      final hitTestableFinder = finder.hitTestable();
+      if (hitTestableFinder.evaluate().isNotEmpty) {
+        return hitTestableFinder;
       }
     }
 
@@ -87,7 +88,11 @@ Future<void> tapByKey(
   final finder = find.byKey(ValueKey(key));
   await waitForFinder(tester, finder, timeout: timeout);
   await tester.ensureVisible(finder);
-  await tester.tap(finder);
+  await tester.pump(const Duration(milliseconds: 250));
+  final hitTestableFinder = finder.hitTestable();
+  await tester.tap(
+    hitTestableFinder.evaluate().isNotEmpty ? hitTestableFinder : finder,
+  );
   await tester.pump();
 }
 
@@ -100,7 +105,11 @@ Future<void> enterTextByKey(
   final finder = find.byKey(ValueKey(key));
   await waitForFinder(tester, finder, timeout: timeout);
   await tester.ensureVisible(finder);
-  await tester.tap(finder);
+  await tester.pump(const Duration(milliseconds: 250));
+  final hitTestableFinder = finder.hitTestable();
+  await tester.tap(
+    hitTestableFinder.evaluate().isNotEmpty ? hitTestableFinder : finder,
+  );
   await tester.pump();
   await tester.enterText(finder, value);
   await tester.pump();
@@ -116,7 +125,7 @@ Future<void> scrollUntilFinderVisible(
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     await tester.pump(const Duration(milliseconds: 250));
-    if (target.evaluate().isNotEmpty) {
+    if (target.hitTestable().evaluate().isNotEmpty) {
       return;
     }
 
