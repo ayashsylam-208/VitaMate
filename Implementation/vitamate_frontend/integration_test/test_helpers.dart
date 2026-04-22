@@ -33,6 +33,24 @@ Future<void> waitForText(
   await waitForFinder(tester, find.text(text), timeout: timeout);
 }
 
+Future<Finder> waitForAnyFinder(
+  WidgetTester tester,
+  List<Finder> finders, {
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+    for (final finder in finders) {
+      if (finder.evaluate().isNotEmpty) {
+        return finder;
+      }
+    }
+  }
+
+  throw TestFailure('Timed out waiting for any finder: $finders');
+}
+
 Future<void> tapByKey(
   WidgetTester tester,
   String key, {

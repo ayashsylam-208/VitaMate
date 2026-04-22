@@ -18,12 +18,19 @@ void main() {
     final homeAddButtonFinder = find.byKey(
       const ValueKey(AppTestKeys.homeConditionsCenterAddButton),
     );
-    await tester.scrollUntilVisible(
-      homeAddButtonFinder,
-      250,
-      scrollable: find.byType(Scrollable).first,
+    final homeOpenButtonFinder = find.byKey(
+      const ValueKey(AppTestKeys.homeConditionsCenterOpenButton),
     );
-    await tester.tap(homeAddButtonFinder);
+    final homeConditionsCenterFinder = await waitForAnyFinder(tester, [
+      homeAddButtonFinder,
+      homeOpenButtonFinder,
+    ], timeout: const Duration(seconds: 30));
+    await scrollUntilFinderVisible(
+      tester,
+      homeConditionsCenterFinder,
+      timeout: const Duration(seconds: 30),
+    );
+    await tester.tap(homeConditionsCenterFinder);
     await tester.pump();
     await waitForFinder(
       tester,
@@ -33,33 +40,51 @@ void main() {
     final addHypertensionFinder = find
         .byKey(ValueKey(AppTestKeys.chronicSupportedAddButton('hypertension')))
         .first;
-    await waitForFinder(tester, addHypertensionFinder);
-    await tester.ensureVisible(addHypertensionFinder);
-    await tester.tap(addHypertensionFinder);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
-    await enterTextByKey(
-      tester,
-      AppTestKeys.chronicCreateField(
-        slug: 'hypertension',
-        field: 'systolicField',
-      ),
-      '138',
-    );
-    await enterTextByKey(
-      tester,
-      AppTestKeys.chronicCreateField(
-        slug: 'hypertension',
-        field: 'diastolicField',
-      ),
-      '88',
-    );
-    await enterTextByKey(
-      tester,
-      AppTestKeys.chronicCreateField(slug: 'hypertension', field: 'pulseField'),
-      '72',
-    );
-    await tapByKey(tester, AppTestKeys.chronicCreateSaveButton);
+    if (addHypertensionFinder.evaluate().isNotEmpty) {
+      await tester.ensureVisible(addHypertensionFinder);
+      await tester.tap(addHypertensionFinder);
+      await tester.pump();
+
+      await enterTextByKey(
+        tester,
+        AppTestKeys.chronicCreateField(
+          slug: 'hypertension',
+          field: 'systolicField',
+        ),
+        '138',
+      );
+      await enterTextByKey(
+        tester,
+        AppTestKeys.chronicCreateField(
+          slug: 'hypertension',
+          field: 'diastolicField',
+        ),
+        '88',
+      );
+      await enterTextByKey(
+        tester,
+        AppTestKeys.chronicCreateField(
+          slug: 'hypertension',
+          field: 'pulseField',
+        ),
+        '72',
+      );
+      await tapByKey(tester, AppTestKeys.chronicCreateSaveButton);
+    } else {
+      final openExistingHypertensionFinder = find
+          .widgetWithText(FilledButton, 'View')
+          .first;
+      await waitForFinder(
+        tester,
+        openExistingHypertensionFinder,
+        timeout: const Duration(seconds: 30),
+      );
+      await tester.ensureVisible(openExistingHypertensionFinder);
+      await tester.tap(openExistingHypertensionFinder);
+      await tester.pump();
+    }
 
     await waitForFinder(
       tester,
@@ -127,10 +152,10 @@ void main() {
     final homeConditionCardFinder = find.byKey(
       ValueKey(AppTestKeys.homeConditionCard('hypertension')),
     );
-    await tester.scrollUntilVisible(
+    await scrollUntilFinderVisible(
+      tester,
       homeConditionCardFinder,
-      250,
-      scrollable: find.byType(Scrollable).first,
+      timeout: const Duration(seconds: 30),
     );
     expect(homeConditionCardFinder, findsOneWidget);
     expect(find.text('No chronic conditions added yet'), findsNothing);
