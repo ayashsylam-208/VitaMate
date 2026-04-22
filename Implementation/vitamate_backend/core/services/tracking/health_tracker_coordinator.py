@@ -75,6 +75,9 @@ class HealthTrackerCoordinator:
                 end_date=today,
             )
         }
+        prepared_context = self._projection_service.prepare_context(user=user)
+        if prepared_context is None:
+            return None
 
         history = []
         for offset in range(days):
@@ -86,15 +89,14 @@ class HealthTrackerCoordinator:
                     history.append(entry)
                     continue
 
-            fallback = self._projection_service.build_projection(
+            fallback = self._projection_service.build_history_entry(
                 user=user,
                 state_date=state_date,
-                window_kind="daily",
-                trigger_metadata={"source": "history_read_fallback"},
+                prepared_context=prepared_context,
             )
             if fallback is None:
                 return None
-            history.append(dict(fallback.get("progress_summary", {}).get("history_entry") or {}))
+            history.append(dict(fallback))
 
         return history
 

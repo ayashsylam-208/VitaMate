@@ -19,9 +19,19 @@ class _ConditionDraft {
 }
 
 class _ConditionDraftSheet extends StatefulWidget {
-  const _ConditionDraftSheet({required this.presetType});
+  const _ConditionDraftSheet({
+    required this.presetType,
+    this.systolicFieldKey,
+    this.diastolicFieldKey,
+    this.pulseFieldKey,
+    this.saveButtonKey,
+  });
 
   final ChronicConditionType presetType;
+  final String? systolicFieldKey;
+  final String? diastolicFieldKey;
+  final String? pulseFieldKey;
+  final String? saveButtonKey;
 
   @override
   State<_ConditionDraftSheet> createState() => _ConditionDraftSheetState();
@@ -206,6 +216,9 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
+                    key: widget.saveButtonKey == null
+                        ? null
+                        : ValueKey(widget.saveButtonKey!),
                     onPressed: _saveDraft,
                     child: const Text('Save condition'),
                   ),
@@ -288,6 +301,9 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                   children: [
                     Expanded(
                       child: TextField(
+                        key: widget.systolicFieldKey == null
+                            ? null
+                            : ValueKey(widget.systolicFieldKey!),
                         controller: systolicController,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
@@ -299,6 +315,9 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: TextField(
+                        key: widget.diastolicFieldKey == null
+                            ? null
+                            : ValueKey(widget.diastolicFieldKey!),
                         controller: diastolicController,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
@@ -311,6 +330,9 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                 ),
                 const SizedBox(height: 12),
                 TextField(
+                  key: widget.pulseFieldKey == null
+                      ? null
+                      : ValueKey(widget.pulseFieldKey!),
                   controller: pulseController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(

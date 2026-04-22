@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from collections import defaultdict
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 
 from core.domain.trackers import (
@@ -24,6 +25,12 @@ from gamification.models import UserScore
 from users.models import UserProfile
 
 
+@dataclass(frozen=True)
+class ActiveConstraintBundle:
+    summary: dict[str, list[dict]]
+    metric_lookup: dict[tuple[str, str], list]
+
+
 class HealthStateProjectionService:
     def __init__(
         self,
@@ -42,65 +49,68 @@ class HealthStateProjectionService:
         window_kind: str,
         affected_trackers=None,
         trigger_metadata=None,
+        prepared_context: dict | None = None,
     ) -> dict | None:
-        try:
-            profile = DashboardReadRepository.get_profile(user)
-        except UserProfile.DoesNotExist:
+        context = prepared_context or self.prepare_context(user=user)
+        if context is None:
             return None
+        profile = context["profile"]
+        constraint_bundle = context["constraint_bundle"]
 
         effective_constraints = self._condition_constraint_engine.build_effective_constraints(
             user=user,
             profile=profile,
             on_date=state_date,
+            prepared_context=context["condition_context"],
         )
-        active_constraints = ConstraintReadService.active_summary_for_user(user=user)
+        active_constraints = constraint_bundle.summary
 
         calories_target = int(
-            self._effective_numeric_constraint(
-                user=user,
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
                 tracker_type="nutrition",
                 metric_key="calories_kcal",
                 fallback=effective_constraints.calories_target,
             )
         )
         water_target_liters = float(
-            self._effective_numeric_constraint(
-                user=user,
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
                 tracker_type="hydration",
                 metric_key="daily_water_liters",
                 fallback=effective_constraints.water_target_liters,
             )
         )
         steps_target = int(
-            self._effective_numeric_constraint(
-                user=user,
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
                 tracker_type="steps",
                 metric_key="steps_count",
                 fallback=effective_constraints.step_target,
             )
         )
         burn_target = int(
-            self._effective_numeric_constraint(
-                user=user,
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
                 tracker_type="activity",
                 metric_key="calories_burned",
                 fallback=effective_constraints.burn_target,
             )
         )
         sleep_goal_hours = float(
-            self._effective_numeric_constraint(
-                user=user,
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
                 tracker_type="sleep",
                 metric_key="sleep_hours",
                 fallback=profile.recommended_sleep_hours,
             )
         )
 
-        meals = DashboardReadRepository.meal_logs_on_date(user=user, log_date=state_date)
+        meals = list(DashboardReadRepository.meal_logs_on_date(user=user, log_date=state_date))
         nutrition_totals = NutritionService.summarize_meal_logs(meals)
         calories_in = int(round(nutrition_totals["calories_kcal"]))
 
-        activities = DashboardReadRepository.activity_logs_on_date(user=user, log_date=state_date)
+        activities = list(DashboardReadRepository.activity_logs_on_date(user=user, log_date=state_date))
         exercise_burn = sum(activity.calories_burned for activity in activities)
         exercise_minutes = sum(activity.duration_minutes for activity in activities)
 
@@ -113,7 +123,7 @@ class HealthStateProjectionService:
             steps_burn_rate = round(steps_burn / steps_log.distance_km, 1)
         total_burned = exercise_burn + steps_burn
 
-        sleep_logs = DashboardReadRepository.sleep_logs_on_date(user=user, log_date=state_date)
+        sleep_logs = list(DashboardReadRepository.sleep_logs_on_date(user=user, log_date=state_date))
         sleep_hours = sum(log.duration_hours for log in sleep_logs)
         sleep_progress = self._constraint_engine.sleep_progress_percent(
             logged_hours_today=sleep_hours,
@@ -181,7 +191,7 @@ class HealthStateProjectionService:
             burn_target=burn_target,
             total_burned=total_burned,
             exercise_minutes=exercise_minutes,
-            exercise_count=activities.count(),
+            exercise_count=len(activities),
             medication_summary=medication_summary,
             active_constraints=active_constraints,
             warnings=warnings,
@@ -212,7 +222,7 @@ class HealthStateProjectionService:
             "points_estimate": self._constraint_engine.estimate_day_points(
                 water_sum=water_current,
                 steps=steps_log.steps_count,
-                has_activities=activities.exists(),
+                has_activities=len(activities) > 0,
                 calories_in=calories_in,
                 calories_target=calories_target,
                 sleep_hours=sleep_hours,
@@ -303,21 +313,169 @@ class HealthStateProjectionService:
             "trigger_metadata": dict(trigger_metadata or {}),
         }
 
-    def _effective_numeric_constraint(
+    def build_history_entry(
         self,
         *,
         user,
+        state_date: date,
+        prepared_context: dict | None = None,
+    ) -> dict | None:
+        context = prepared_context or self.prepare_context(user=user)
+        if context is None:
+            return None
+        profile = context["profile"]
+        constraint_bundle = context["constraint_bundle"]
+
+        effective_constraints = self._condition_constraint_engine.build_effective_constraints(
+            user=user,
+            profile=profile,
+            on_date=state_date,
+            prepared_context=context["condition_context"],
+        )
+        calories_target = int(
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
+                tracker_type="nutrition",
+                metric_key="calories_kcal",
+                fallback=effective_constraints.calories_target,
+            )
+        )
+        water_target_liters = float(
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
+                tracker_type="hydration",
+                metric_key="daily_water_liters",
+                fallback=effective_constraints.water_target_liters,
+            )
+        )
+        steps_target = int(
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
+                tracker_type="steps",
+                metric_key="steps_count",
+                fallback=effective_constraints.step_target,
+            )
+        )
+        burn_target = int(
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
+                tracker_type="activity",
+                metric_key="calories_burned",
+                fallback=effective_constraints.burn_target,
+            )
+        )
+        sleep_goal_hours = float(
+            self._effective_numeric_constraint_from_bundle(
+                constraint_bundle=constraint_bundle,
+                tracker_type="sleep",
+                metric_key="sleep_hours",
+                fallback=profile.recommended_sleep_hours,
+            )
+        )
+
+        meals = list(DashboardReadRepository.meal_logs_on_date(user=user, log_date=state_date))
+        nutrition_totals = NutritionService.summarize_meal_logs(meals)
+        calories_in = int(round(nutrition_totals["calories_kcal"]))
+
+        activities = list(DashboardReadRepository.activity_logs_on_date(user=user, log_date=state_date))
+        exercise_burn = sum(activity.calories_burned for activity in activities)
+        exercise_minutes = sum(activity.duration_minutes for activity in activities)
+        exercise_count = len(activities)
+
+        steps_log = DashboardReadRepository.step_log_on_date(user=user, log_date=state_date)
+        if steps_log is None:
+            steps_log = StepLog(user=user, date=state_date, steps_count=0, distance_km=0)
+        steps_burn = int((steps_log.steps_count or 0) * 0.04)
+        steps_burn_rate = 0
+        if steps_log.distance_km:
+            steps_burn_rate = round(steps_burn / steps_log.distance_km, 1)
+        total_burned = exercise_burn + steps_burn
+
+        sleep_logs = list(DashboardReadRepository.sleep_logs_on_date(user=user, log_date=state_date))
+        sleep_hours = sum(log.duration_hours for log in sleep_logs)
+        water_current = DashboardReadRepository.water_total_on_date(user=user, log_date=state_date)
+        medication_summary = self._history_medication_summary(user=user, target_date=state_date)
+
+        return {
+            "date": str(state_date),
+            "water_current": round(water_current, 3),
+            "water_target": water_target_liters,
+            "steps": steps_log.steps_count,
+            "steps_target": steps_target,
+            "distance_km": steps_log.distance_km,
+            "steps_burned": steps_burn,
+            "steps_burn_rate": steps_burn_rate,
+            "calories_in": calories_in,
+            "calories_target": calories_target,
+            "calories_burned": total_burned,
+            "protein_g": round(nutrition_totals["protein_g"], 2),
+            "carbs_g": round(nutrition_totals["carbs_g"], 2),
+            "fat_g": round(nutrition_totals["fat_g"], 2),
+            "sugars_g": round(nutrition_totals["sugars_g"], 2),
+            "added_sugars_g": round(nutrition_totals.get("added_sugars_g", 0), 2),
+            "fiber_g": round(nutrition_totals["fiber_g"], 2),
+            "caffeine_mg": round(nutrition_totals["caffeine_mg"], 2),
+            "sleep_hours": round(sleep_hours, 2),
+            "sleep_target": sleep_goal_hours,
+            "exercise_minutes": exercise_minutes,
+            "points_estimate": self._constraint_engine.estimate_day_points(
+                water_sum=water_current,
+                steps=steps_log.steps_count,
+                has_activities=exercise_count > 0,
+                calories_in=calories_in,
+                calories_target=calories_target,
+                sleep_hours=sleep_hours,
+                sleep_target=sleep_goal_hours,
+            ),
+            "burn_target": burn_target,
+            "burn_current": total_burned,
+            "condition_adherence_percent": effective_constraints.adherence_percent,
+            "pending_condition_doses": effective_constraints.pending_doses_today,
+            "medication_adherence_percent": medication_summary["adherence_7d"],
+            "medication_total_doses": medication_summary["today_total_doses"],
+            "medication_taken_today": medication_summary["taken_today"],
+            "medication_pending_today": medication_summary["pending_today"],
+            "medication_missed_today": medication_summary["missed_today"],
+            "medication_overdue_today": medication_summary["overdue_today"],
+        }
+
+    def prepare_context(self, *, user) -> dict | None:
+        try:
+            profile = DashboardReadRepository.get_profile(user)
+        except UserProfile.DoesNotExist:
+            return None
+        return {
+            "profile": profile,
+            "constraint_bundle": self._build_constraint_bundle(user=user),
+            "condition_context": self._condition_constraint_engine.prepare_context(user=user),
+        }
+
+    def _effective_numeric_constraint_from_bundle(
+        self,
+        *,
+        constraint_bundle: ActiveConstraintBundle,
         tracker_type: str,
         metric_key: str,
         fallback,
     ):
-        value = ConstraintReadService.effective_numeric_value(
-            user=user,
-            tracker_type=tracker_type,
-            metric_key=metric_key,
+        value = ConstraintReadService.effective_numeric_value_from_constraints(
+            constraints=constraint_bundle.metric_lookup.get((tracker_type, metric_key), []),
             fallback=fallback,
         )
         return fallback if value is None else value
+
+    def _build_constraint_bundle(self, *, user) -> ActiveConstraintBundle:
+        grouped_summary: dict[str, list[dict]] = defaultdict(list)
+        metric_lookup: dict[tuple[str, str], list] = defaultdict(list)
+        for constraint in ConstraintReadService.active_for_user(user=user):
+            grouped_summary[constraint.tracker_type].append(
+                ConstraintReadService.serialize_constraint(constraint)
+            )
+            metric_lookup[(constraint.tracker_type, constraint.metric_key)].append(constraint)
+        return ActiveConstraintBundle(
+            summary=dict(grouped_summary),
+            metric_lookup=dict(metric_lookup),
+        )
 
     def _warnings(self, *, user, state_date: date, window_kind: str, medication_summary: dict) -> list[dict]:
         warnings: list[dict] = []
@@ -440,6 +598,21 @@ class HealthStateProjectionService:
             "active_medications": active_medications,
             **counts,
             "next_due": next_due.scheduled_for.isoformat() if next_due and next_due.scheduled_for else None,
+            "adherence_7d": seven_day.adherence_percent,
+        }
+
+    def _history_medication_summary(self, *, user, target_date: date) -> dict:
+        counts = MedicationAdherenceService.counts_for_day(
+            user=user,
+            target_date=target_date,
+        )
+        seven_day = MedicationAdherenceService.get_user_adherence(
+            user=user,
+            start_date=target_date - timedelta(days=6),
+            end_date=target_date,
+        )
+        return {
+            **counts,
             "adherence_7d": seven_day.adherence_percent,
         }
 

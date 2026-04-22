@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from core.models import ConditionRuleProfile, UserCondition
+from core.models import ConditionDailyEvaluation, ConditionRuleProfile, UserCondition
 from core.services.condition_catalog_service import ConditionCatalogService
 from core.services.condition_medication_service import ConditionMedicationService
 
@@ -64,32 +64,40 @@ class ConditionConstraintEngine:
                     UserCondition.STATUS_CONTROLLED,
                     UserCondition.STATUS_NEEDS_ATTENTION,
                 ),
-            ).select_related("condition_type")
+            )
+            .select_related("condition_type")
+            .prefetch_related("targets")
         )
 
     @staticmethod
-    def _latest_adherence_percent(*, user, on_date: date) -> float:
-        condition_evaluations = []
-        for condition in ConditionConstraintEngine._active_conditions(user):
-            evaluation = condition.daily_evaluations.filter(evaluation_date=on_date).first()
-            if evaluation:
-                condition_evaluations.append(
-                    (evaluation.medication_adherence_percent + evaluation.restriction_adherence_percent) / 2
-                )
+    def _latest_adherence_percent(*, on_date: date, conditions: list[UserCondition]) -> float:
+        if not conditions:
+            return 0.0
+        condition_ids = [condition.id for condition in conditions]
+        condition_evaluations = [
+            (medication + restriction) / 2
+            for medication, restriction in ConditionDailyEvaluation.objects.filter(
+                user_condition_id__in=condition_ids,
+                evaluation_date=on_date,
+            ).values_list("medication_adherence_percent", "restriction_adherence_percent")
+        ]
         if not condition_evaluations:
             return 0.0
         return round(sum(condition_evaluations) / len(condition_evaluations), 2)
 
     @staticmethod
     def _rule_profiles_for_conditions(conditions: list[UserCondition]) -> list[ConditionRuleProfile]:
-        profiles = []
-        for condition in conditions:
-            profiles.extend(
-                ConditionRuleProfile.objects.filter(condition_type=condition.condition_type).filter(
-                    severity_code__in=("", condition.severity_code)
-                )
+        if not conditions:
+            return []
+        condition_type_ids = {condition.condition_type_id for condition in conditions}
+        severity_codes = {""}
+        severity_codes.update(condition.severity_code for condition in conditions if condition.severity_code)
+        return list(
+            ConditionRuleProfile.objects.filter(
+                condition_type_id__in=condition_type_ids,
+                severity_code__in=severity_codes,
             )
-        return profiles
+        )
 
     @staticmethod
     def _rule_float_map(rule_profiles: list[ConditionRuleProfile], rule_key: str) -> list[float]:
@@ -106,11 +114,20 @@ class ConditionConstraintEngine:
     @staticmethod
     def _effective_target_map(condition: UserCondition) -> dict[str, object]:
         selected = {}
-        for target in condition.targets.order_by("priority", "-id"):
+        for target in sorted(condition.targets.all(), key=lambda item: (item.priority, -item.id)):
             existing = selected.get(target.target_key)
             if existing is None or target.priority < existing.priority:
                 selected[target.target_key] = target
         return selected
+
+    @classmethod
+    def prepare_context(cls, *, user) -> dict:
+        conditions = cls._active_conditions(user)
+        return {
+            "conditions": conditions,
+            "rule_profiles": cls._rule_profiles_for_conditions(conditions),
+            "effective_targets": [cls._effective_target_map(condition) for condition in conditions],
+        }
 
     @classmethod
     def build_effective_constraints(
@@ -119,9 +136,13 @@ class ConditionConstraintEngine:
         user,
         profile,
         on_date: date | None = None,
+        prepared_context: dict | None = None,
     ) -> EffectiveConditionConstraints:
         on_date = on_date or date.today()
-        conditions = cls._active_conditions(user)
+        prepared_context = prepared_context or {}
+        conditions = prepared_context.get("conditions")
+        if conditions is None:
+            conditions = cls._active_conditions(user)
         if not conditions:
             return EffectiveConditionConstraints(
                 calories_target=profile.daily_calorie_target,
@@ -137,13 +158,17 @@ class ConditionConstraintEngine:
             )
 
         severity_rank = max(cls._severity_rank(condition) for condition in conditions)
-        rule_profiles = cls._rule_profiles_for_conditions(conditions)
+        rule_profiles = prepared_context.get("rule_profiles")
+        if rule_profiles is None:
+            rule_profiles = cls._rule_profiles_for_conditions(conditions)
         condition_slugs = {
             ConditionCatalogService.canonical_slug(condition.condition_type)
             for condition in conditions
         }
         labels = tuple(ConditionCatalogService.display_name(condition.condition_type) for condition in conditions)
-        effective_targets = [cls._effective_target_map(condition) for condition in conditions]
+        effective_targets = prepared_context.get("effective_targets")
+        if effective_targets is None:
+            effective_targets = [cls._effective_target_map(condition) for condition in conditions]
 
         effective_steps = profile.daily_step_goal
         effective_burn = profile.daily_burn_goal
@@ -204,6 +229,11 @@ class ConditionConstraintEngine:
         if exercise_mode != "standard":
             summaries.append("Activity targets were adjusted to a safer level for your condition mix.")
 
+        medication_count_today, pending_doses_today = ConditionMedicationService.today_dose_counts(
+            user=user,
+            on_date=on_date,
+        )
+
         return EffectiveConditionConstraints(
             calories_target=calories_target,
             water_target_liters=round(water_target, 2),
@@ -212,15 +242,12 @@ class ConditionConstraintEngine:
             exercise_intensity_mode=exercise_mode,
             applied_summaries=tuple(dict.fromkeys(summaries)),
             active_condition_labels=labels,
-            medication_count_today=ConditionMedicationService.active_medication_count_for_today(
-                user=user,
+            medication_count_today=medication_count_today,
+            pending_doses_today=pending_doses_today,
+            adherence_percent=cls._latest_adherence_percent(
                 on_date=on_date,
+                conditions=conditions,
             ),
-            pending_doses_today=ConditionMedicationService.pending_dose_count_for_today(
-                user=user,
-                on_date=on_date,
-            ),
-            adherence_percent=cls._latest_adherence_percent(user=user, on_date=on_date),
             sodium_limit_mg=min(sodium_values) if sodium_values else None,
             fasting_glucose_min=max(fasting_min_values) if fasting_min_values else None,
             fasting_glucose_max=min(fasting_max_values) if fasting_max_values else None,

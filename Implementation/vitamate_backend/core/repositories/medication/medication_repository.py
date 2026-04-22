@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 
 from core.models import ConditionMedication, ConditionMedicationLog, ConditionMedicationSchedule
@@ -81,6 +81,26 @@ class MedicationRepository:
             )
             .select_related("medication", "medication__user_condition", "medication__user_condition__condition_type")
             .prefetch_related("logs")
+            .order_by("time_of_day", "id")
+        )
+
+    @staticmethod
+    def schedules_for_user_on_date(*, user, target_date: date):
+        return (
+            ConditionMedicationSchedule.objects.filter(
+                medication__user_condition__user=user,
+                medication__user_condition__is_active=True,
+                medication__is_active=True,
+            )
+            .select_related("medication", "medication__user_condition", "medication__user_condition__condition_type")
+            .prefetch_related(
+                Prefetch(
+                    "logs",
+                    queryset=ConditionMedicationLog.objects.filter(
+                        scheduled_date=target_date,
+                    ).order_by("-id"),
+                )
+            )
             .order_by("time_of_day", "id")
         )
 

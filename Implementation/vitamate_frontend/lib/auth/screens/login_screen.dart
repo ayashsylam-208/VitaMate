@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/notifications/notifications_service.dart';
+import '../../core/runtime/app_runtime.dart';
 import '../../core/routing/routes.dart';
+import '../../core/testing/app_test_keys.dart';
 import '../../shared/utils/validators.dart';
 import '../state/auth_controller.dart';
 
@@ -76,10 +78,12 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      try {
-        await NotificationsService.showWelcomeBack();
-      } catch (error) {
-        debugPrint('LoginScreen: welcome notification failed: $error');
+      if (AppRuntime.notificationsEnabled) {
+        try {
+          await NotificationsService.showWelcomeBack();
+        } catch (error) {
+          debugPrint('LoginScreen: welcome notification failed: $error');
+        }
       }
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.home);
@@ -258,6 +262,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                       const SizedBox(height: 10),
                                       TextFormField(
+                                        key: const ValueKey(
+                                          AppTestKeys.loginUsernameField,
+                                        ),
                                         controller: _usernameCtrl,
                                         textInputAction: TextInputAction.next,
                                         autofillHints: const [
@@ -286,6 +293,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                       const SizedBox(height: 10),
                                       TextFormField(
+                                        key: const ValueKey(
+                                          AppTestKeys.loginPasswordField,
+                                        ),
                                         controller: _passwordCtrl,
                                         obscureText: _obscure,
                                         textInputAction: TextInputAction.done,
@@ -345,6 +355,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                             ],
                                           ),
                                           child: ElevatedButton(
+                                            key: const ValueKey(
+                                              AppTestKeys.loginSubmitButton,
+                                            ),
                                             onPressed: _loading
                                                 ? null
                                                 : _submit,

@@ -89,6 +89,18 @@ class ConstraintReadService:
                 metric_keys=[metric_key],
             )
         )
+        return cls.effective_numeric_value_from_constraints(
+            constraints=constraints,
+            fallback=fallback,
+        )
+
+    @classmethod
+    def effective_numeric_value_from_constraints(
+        cls,
+        *,
+        constraints: list[ResolvedTrackerConstraint],
+        fallback: float | int | None = None,
+    ) -> float | int | None:
         if not constraints:
             return fallback
 

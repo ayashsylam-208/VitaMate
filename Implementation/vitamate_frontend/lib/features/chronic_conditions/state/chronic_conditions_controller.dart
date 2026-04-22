@@ -2,11 +2,14 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/network/network_error_mapper.dart';
 import '../../../core/notifications/notifications_service.dart';
+import '../../../core/runtime/app_runtime.dart';
 import '../data/chronic_conditions_api.dart';
 import '../models/chronic_condition.dart';
 
 typedef ReminderSync =
     Future<void> Function(List<ChronicMedicationReminderPlan> plans);
+
+Future<void> _noopReminderSync(List<ChronicMedicationReminderPlan> _) async {}
 
 class ChronicConditionsController extends ChangeNotifier {
   ChronicConditionsController({
@@ -14,7 +17,10 @@ class ChronicConditionsController extends ChangeNotifier {
     ReminderSync? reminderSync,
   }) : _api = api ?? const ChronicConditionsApi(),
        _reminderSync =
-           reminderSync ?? NotificationsService.syncChronicMedicationReminders;
+           reminderSync ??
+           (AppRuntime.notificationsEnabled
+               ? NotificationsService.syncChronicMedicationReminders
+               : _noopReminderSync);
 
   final ChronicConditionsApi _api;
   final ReminderSync _reminderSync;

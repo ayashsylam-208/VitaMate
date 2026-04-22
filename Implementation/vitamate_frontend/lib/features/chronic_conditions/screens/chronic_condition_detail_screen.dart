@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/health/chronic_target_guide.dart';
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../../medications/models/medication_adherence_summary.dart';
@@ -42,7 +43,14 @@ class _ChronicConditionDetailScreenState
       return Scaffold(
         backgroundColor: VitaMateTheme.background,
         bottomNavigationBar: const VitaMateBottomNav(currentIndex: -1),
-        appBar: AppBar(title: const Text('Condition details')),
+        appBar: AppBar(
+          leading: IconButton(
+            key: const ValueKey(AppTestKeys.chronicDetailBackButton),
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          ),
+          title: const Text('Condition details'),
+        ),
         body: const Center(
           child: Text('This condition is no longer available.'),
         ),
@@ -53,6 +61,11 @@ class _ChronicConditionDetailScreenState
       backgroundColor: VitaMateTheme.background,
       bottomNavigationBar: const VitaMateBottomNav(currentIndex: -1),
       appBar: AppBar(
+        leading: IconButton(
+          key: const ValueKey(AppTestKeys.chronicDetailBackButton),
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+        ),
         title: Text(item.uiLabel),
         actions: [
           PopupMenuButton<String>(
@@ -90,6 +103,9 @@ class _ChronicConditionDetailScreenState
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
+                        key: const ValueKey(
+                          AppTestKeys.chronicDetailAddReadingButton,
+                        ),
                         onPressed: () => _openReadingSheet(current),
                         icon: Icon(
                           current.conditionType.slug == 'dyslipidemia'
@@ -139,18 +155,23 @@ class _ChronicConditionDetailScreenState
                 const SizedBox(height: 8),
                 if (current.indicatorRecords.isEmpty)
                   const _MessageCard(
+                    key: ValueKey(AppTestKeys.chronicDetailReadingsList),
                     message:
                         'No reading has been logged for this condition yet.',
                   )
                 else
-                  ...current.indicatorRecords
-                      .take(8)
-                      .map(
-                        (record) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: _ReadingCard(record: record),
-                        ),
-                      ),
+                  Column(
+                    key: const ValueKey(AppTestKeys.chronicDetailReadingsList),
+                    children: current.indicatorRecords
+                        .take(8)
+                        .map(
+                          (record) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _ReadingCard(record: record),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 const SizedBox(height: 16),
                 const _Title('Applied care limits'),
                 const SizedBox(height: 8),
@@ -308,7 +329,28 @@ class _ChronicConditionDetailScreenState
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
       ),
-      builder: (_) => _ConditionReadingSheet(condition: item),
+      builder: (_) => _ConditionReadingSheet(
+        condition: item,
+        systolicFieldKey: item.conditionType.slug == 'hypertension'
+            ? AppTestKeys.chronicReadingField(
+                slug: 'hypertension',
+                field: 'systolicField',
+              )
+            : null,
+        diastolicFieldKey: item.conditionType.slug == 'hypertension'
+            ? AppTestKeys.chronicReadingField(
+                slug: 'hypertension',
+                field: 'diastolicField',
+              )
+            : null,
+        pulseFieldKey: item.conditionType.slug == 'hypertension'
+            ? AppTestKeys.chronicReadingField(
+                slug: 'hypertension',
+                field: 'pulseField',
+              )
+            : null,
+        saveButtonKey: AppTestKeys.chronicReadingSaveButton,
+      ),
     );
     if (draft == null) {
       return;

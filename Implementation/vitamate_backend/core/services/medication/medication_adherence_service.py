@@ -159,19 +159,39 @@ class MedicationAdherenceService:
 
     @classmethod
     def counts_for_day(cls, *, user, target_date: date) -> dict:
-        logs = MedicationRepository.logs_for_user_on_date(user=user, target_date=target_date)
+        logs = list(
+            MedicationRepository.logs_for_user_on_date(
+                user=user,
+                target_date=target_date,
+            ).only("status")
+        )
+        total = len(logs)
+        taken = 0
+        pending = 0
+        missed = 0
+        overdue = 0
+        skipped = 0
+        for log in logs:
+            if log.status in cls.TAKEN_STATUSES:
+                taken += 1
+            elif log.status in {
+                ConditionMedicationLog.STATUS_PENDING,
+                ConditionMedicationLog.STATUS_SNOOZED,
+            }:
+                pending += 1
+            elif log.status == ConditionMedicationLog.STATUS_MISSED:
+                missed += 1
+            elif log.status == ConditionMedicationLog.STATUS_OVERDUE:
+                overdue += 1
+            elif log.status == ConditionMedicationLog.STATUS_SKIPPED:
+                skipped += 1
         return {
-            "today_total_doses": logs.count(),
-            "taken_today": logs.filter(status__in=cls.TAKEN_STATUSES).count(),
-            "pending_today": logs.filter(
-                status__in=[
-                    ConditionMedicationLog.STATUS_PENDING,
-                    ConditionMedicationLog.STATUS_SNOOZED,
-                ]
-            ).count(),
-            "missed_today": logs.filter(status=ConditionMedicationLog.STATUS_MISSED).count(),
-            "overdue_today": logs.filter(status=ConditionMedicationLog.STATUS_OVERDUE).count(),
-            "skipped_today": logs.filter(status=ConditionMedicationLog.STATUS_SKIPPED).count(),
+            "today_total_doses": total,
+            "taken_today": taken,
+            "pending_today": pending,
+            "missed_today": missed,
+            "overdue_today": overdue,
+            "skipped_today": skipped,
         }
 
     @classmethod

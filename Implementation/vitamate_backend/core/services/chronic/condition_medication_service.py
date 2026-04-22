@@ -159,6 +159,11 @@ class ConditionMedicationService:
                 message=message,
             )
 
+    @staticmethod
+    def _prefetched_schedule_log_for_day(*, schedule: ConditionMedicationSchedule):
+        prefetched_logs = list(schedule.logs.all())
+        return prefetched_logs[0] if prefetched_logs else None
+
     @classmethod
     @transaction.atomic
     def mark_taken(
@@ -332,12 +337,29 @@ class ConditionMedicationService:
     @classmethod
     def today_dose_list(cls, *, user, on_date: date | None = None) -> list[dict]:
         on_date = on_date or cls._system_local_now().date()
-        schedules = MedicationRepository.schedules_for_user(user=user)
+        schedules = MedicationRepository.schedules_for_user_on_date(user=user, target_date=on_date)
         results = []
         for schedule in schedules:
             if not cls._schedule_is_active_for_date(schedule=schedule, target_date=on_date):
                 continue
-            schedule_payload = cls.dose_display_for_today(schedule=schedule, today=on_date)
+            log = cls._prefetched_schedule_log_for_day(schedule=schedule)
+            scheduled_for = (
+                log.scheduled_for
+                if log and log.scheduled_for
+                else cls.scheduled_datetime_for(schedule=schedule, target_date=on_date)
+            )
+            schedule_payload = {
+                "id": schedule.id,
+                "time_of_day": schedule.time_of_day.strftime("%H:%M"),
+                "scheduled_for": scheduled_for.isoformat() if scheduled_for else None,
+                "today_status": log.status if log else "pending",
+                "taken_at": log.taken_at.isoformat() if log and log.taken_at else None,
+                "skip_reason": log.skip_reason if log else "",
+                "reminder_enabled": schedule.medication.reminder_enabled,
+                "reminder_lead_minutes": schedule.medication.reminder_lead_minutes,
+                "recurrence_days": schedule.recurrence_days,
+                "is_scheduled_today": True,
+            }
             medication = schedule.medication
             results.append(
                 {
@@ -362,18 +384,34 @@ class ConditionMedicationService:
         return sorted(results, key=lambda item: item["schedule"]["time_of_day"])
 
     @classmethod
+    def today_dose_counts(cls, *, user, on_date: date | None = None) -> tuple[int, int]:
+        on_date = on_date or cls._system_local_now().date()
+        schedules = MedicationRepository.schedules_for_user_on_date(user=user, target_date=on_date)
+        total = 0
+        pending = 0
+        for schedule in schedules:
+            if not cls._schedule_is_active_for_date(schedule=schedule, target_date=on_date):
+                continue
+            total += 1
+            log = cls._prefetched_schedule_log_for_day(schedule=schedule)
+            if log is None or log.status in {
+                ConditionMedicationLog.STATUS_PENDING,
+                ConditionMedicationLog.STATUS_SNOOZED,
+            }:
+                pending += 1
+        return total, pending
+
+    @classmethod
     def active_medication_count_for_today(cls, *, user, on_date: date | None = None) -> int:
         on_date = on_date or cls._system_local_now().date()
-        return len(cls.today_dose_list(user=user, on_date=on_date))
+        total, _ = cls.today_dose_counts(user=user, on_date=on_date)
+        return total
 
     @classmethod
     def pending_dose_count_for_today(cls, *, user, on_date: date | None = None) -> int:
         on_date = on_date or cls._system_local_now().date()
-        return sum(
-            1
-            for item in cls.today_dose_list(user=user, on_date=on_date)
-            if item["schedule"]["today_status"] in {"pending", ConditionMedicationLog.STATUS_SNOOZED}
-        )
+        _, pending = cls.today_dose_counts(user=user, on_date=on_date)
+        return pending
 
     @staticmethod
     def _publish_adherence_event(log: ConditionMedicationLog) -> None:

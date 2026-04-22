@@ -5,6 +5,7 @@ import '../../../auth/data/auth_api.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/sync/health_sync_bus.dart';
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../../chronic_conditions/models/chronic_condition.dart';
@@ -664,6 +665,7 @@ class _ConditionsHomeSection extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             FilledButton.tonal(
+              key: const ValueKey(AppTestKeys.homeConditionsCenterAddButton),
               onPressed: onAddCondition,
               style: FilledButton.styleFrom(
                 foregroundColor: VitaMateTheme.primary,
@@ -697,6 +699,7 @@ class _ConditionsHomeSection extends StatelessWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: OutlinedButton.icon(
+            key: const ValueKey(AppTestKeys.homeConditionsCenterOpenButton),
             onPressed: () {
               onOpenCenter();
             },
@@ -720,6 +723,9 @@ class _ConditionSummaryCard extends StatelessWidget {
     final statusColor = _statusColor(condition.summaryStatusLabel);
 
     return _SurfaceCard(
+      key: ValueKey(
+        AppTestKeys.homeConditionCard(condition.conditionType.slug),
+      ),
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -805,7 +811,11 @@ class _ConditionSummaryCard extends StatelessWidget {
 }
 
 class _SurfaceCard extends StatelessWidget {
-  const _SurfaceCard({required this.child, required this.padding});
+  const _SurfaceCard({
+    super.key,
+    required this.child,
+    required this.padding,
+  });
 
   final Widget child;
   final EdgeInsetsGeometry padding;

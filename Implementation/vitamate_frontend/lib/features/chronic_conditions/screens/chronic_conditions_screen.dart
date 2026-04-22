@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/health/chronic_target_guide.dart';
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/chronic_guide_card.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
@@ -35,7 +36,12 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
   void initState() {
     super.initState();
     controller = widget.controller ?? ChronicConditionsController();
-    controller.load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      controller.load();
+    });
   }
 
   @override
@@ -154,6 +160,13 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
     }
   }
 
+  String _createFieldKey(String field) {
+    return AppTestKeys.chronicCreateField(
+      slug: 'hypertension',
+      field: field,
+    );
+  }
+
   Future<void> _openDetails(int conditionId) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -188,7 +201,19 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ConditionDraftSheet(presetType: type),
+      builder: (_) => _ConditionDraftSheet(
+        presetType: type,
+        systolicFieldKey: type.slug == 'hypertension'
+            ? _createFieldKey('systolicField')
+            : null,
+        diastolicFieldKey: type.slug == 'hypertension'
+            ? _createFieldKey('diastolicField')
+            : null,
+        pulseFieldKey: type.slug == 'hypertension'
+            ? _createFieldKey('pulseField')
+            : null,
+        saveButtonKey: AppTestKeys.chronicCreateSaveButton,
+      ),
     );
 
     if (result == null) {

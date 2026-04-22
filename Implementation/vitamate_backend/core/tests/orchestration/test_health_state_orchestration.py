@@ -188,6 +188,28 @@ class HealthTrackerCoordinatorReadTests(TestCase):
         sync_mock.assert_not_called()
         recompute_mock.assert_not_called()
 
+    def test_history_fallback_uses_lightweight_history_builder(self):
+        today = date.today()
+        start = today - timedelta(days=6)
+        history_entries = [
+            {"date": str(start + timedelta(days=offset)), "water_current": float(offset)}
+            for offset in range(7)
+        ]
+
+        with patch(
+            "core.services.tracking.health_tracker_coordinator.HealthStateProjectionService.build_history_entry",
+            side_effect=history_entries,
+        ) as history_entry_mock, patch(
+            "core.services.tracking.health_tracker_coordinator.HealthStateProjectionService.build_projection"
+        ) as projection_mock:
+            history = self.coordinator.build_history(user=self.user, today=today, days=7)
+
+        self.assertEqual(len(history), 7)
+        self.assertEqual(history[0]["date"], str(start))
+        self.assertEqual(history[-1]["water_current"], 6.0)
+        self.assertEqual(history_entry_mock.call_count, 7)
+        projection_mock.assert_not_called()
+
 
 class HealthStateWriteFlowTests(TestCase):
     def setUp(self):

@@ -8,6 +8,7 @@ class _ConditionsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
+      key: const ValueKey(AppTestKeys.chronicScreenHeader),
       height: 48,
       child: Stack(
         children: [
@@ -312,6 +313,9 @@ class _SupportedConditionCard extends StatelessWidget {
             width: double.infinity,
             child: current == null
                 ? FilledButton.tonal(
+                    key: ValueKey(
+                      AppTestKeys.chronicSupportedAddButton(type.slug),
+                    ),
                     onPressed: onAdd,
                     style: FilledButton.styleFrom(
                       foregroundColor: VitaMateTheme.primary,

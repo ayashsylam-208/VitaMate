@@ -362,9 +362,19 @@ class _EditConditionSheetState extends State<_EditConditionSheet> {
 }
 
 class _ConditionReadingSheet extends StatefulWidget {
-  const _ConditionReadingSheet({required this.condition});
+  const _ConditionReadingSheet({
+    required this.condition,
+    this.systolicFieldKey,
+    this.diastolicFieldKey,
+    this.pulseFieldKey,
+    this.saveButtonKey,
+  });
 
   final ChronicCondition condition;
+  final String? systolicFieldKey;
+  final String? diastolicFieldKey;
+  final String? pulseFieldKey;
+  final String? saveButtonKey;
 
   @override
   State<_ConditionReadingSheet> createState() => _ConditionReadingSheetState();
@@ -428,6 +438,9 @@ class _ConditionReadingSheetState extends State<_ConditionReadingSheet> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
+                key: widget.saveButtonKey == null
+                    ? null
+                    : ValueKey(widget.saveButtonKey!),
                 onPressed: () => Navigator.of(context).pop(_buildPayload()),
                 child: const Text('Save reading'),
               ),
@@ -467,18 +480,27 @@ class _ConditionReadingSheetState extends State<_ConditionReadingSheet> {
       case 'hypertension':
         return [
           TextField(
+            key: widget.systolicFieldKey == null
+                ? null
+                : ValueKey(widget.systolicFieldKey!),
             controller: systolicController,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Systolic'),
           ),
           const SizedBox(height: 8),
           TextField(
+            key: widget.diastolicFieldKey == null
+                ? null
+                : ValueKey(widget.diastolicFieldKey!),
             controller: diastolicController,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Diastolic'),
           ),
           const SizedBox(height: 8),
           TextField(
+            key: widget.pulseFieldKey == null
+                ? null
+                : ValueKey(widget.pulseFieldKey!),
             controller: pulseController,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Pulse (optional)'),

@@ -125,6 +125,7 @@ class _ConditionSummaryCard extends StatelessWidget {
     final statusLabel = _statusLabel(summary?.status ?? evaluation.status);
 
     return Card(
+      key: const ValueKey(AppTestKeys.chronicDetailSummaryCard),
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
@@ -812,7 +813,7 @@ class _InfoTag extends StatelessWidget {
 }
 
 class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.message});
+  const _MessageCard({super.key, required this.message});
 
   final String message;
 
