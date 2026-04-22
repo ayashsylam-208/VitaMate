@@ -99,6 +99,7 @@ void main() {
       find.byKey(const ValueKey(AppTestKeys.chronicDetailSummaryCard)),
       timeout: const Duration(seconds: 30),
     );
+    await waitForText(tester, 'High');
     final readingsListFinder = find.byKey(
       const ValueKey(AppTestKeys.chronicDetailReadingsList),
     );
@@ -112,7 +113,6 @@ void main() {
       readingsListFinder,
       timeout: const Duration(seconds: 30),
     );
-    await waitForText(tester, 'Attention needed');
     await waitForFinder(tester, find.textContaining('145/92'));
 
     await tapByKey(tester, AppTestKeys.chronicDetailBackButton);
