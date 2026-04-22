@@ -33,14 +33,14 @@ void main() {
       find.byKey(const ValueKey(AppTestKeys.chronicScreenHeader)),
     );
 
-    final addHypertensionFinder = find
-        .byKey(ValueKey(AppTestKeys.chronicSupportedAddButton('hypertension')))
-        .first;
+    final addHypertensionFinder = find.byKey(
+      ValueKey(AppTestKeys.chronicSupportedAddButton('hypertension')),
+    );
     await tester.pump(const Duration(milliseconds: 500));
 
     if (addHypertensionFinder.evaluate().isNotEmpty) {
-      await tester.ensureVisible(addHypertensionFinder);
-      await tester.tap(addHypertensionFinder);
+      await tester.ensureVisible(addHypertensionFinder.first);
+      await tester.tap(addHypertensionFinder.first);
       await tester.pump();
 
       await enterTextByKey(
@@ -69,16 +69,17 @@ void main() {
       );
       await tapByKey(tester, AppTestKeys.chronicCreateSaveButton);
     } else {
-      final openExistingHypertensionFinder = find
-          .widgetWithText(FilledButton, 'View')
-          .first;
+      final openExistingHypertensionFinder = find.widgetWithText(
+        FilledButton,
+        'View',
+      );
       await waitForFinder(
         tester,
         openExistingHypertensionFinder,
         timeout: const Duration(seconds: 30),
       );
-      await tester.ensureVisible(openExistingHypertensionFinder);
-      await tester.tap(openExistingHypertensionFinder);
+      await tester.ensureVisible(openExistingHypertensionFinder.first);
+      await tester.tap(openExistingHypertensionFinder.first);
       await tester.pump();
     }
 
