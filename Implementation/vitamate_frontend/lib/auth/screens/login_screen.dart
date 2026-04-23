@@ -201,6 +201,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ? 72
                                       : 84,
                                   fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Icon(
+                                        Icons.health_and_safety_rounded,
+                                        color: _deepPurple,
+                                        size: isVeryCompact
+                                            ? 48
+                                            : isCompact
+                                            ? 60
+                                            : 72,
+                                      ),
                                 ),
                               ),
                               SizedBox(height: isVeryCompact ? 18 : 26),

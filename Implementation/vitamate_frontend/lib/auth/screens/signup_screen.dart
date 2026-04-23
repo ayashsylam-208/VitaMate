@@ -238,6 +238,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                       ? 72
                                       : 84,
                                   fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Icon(
+                                        Icons.health_and_safety_rounded,
+                                        color: _deepPurple,
+                                        size: isVeryCompact
+                                            ? 48
+                                            : isCompact
+                                            ? 60
+                                            : 72,
+                                      ),
                                 ),
                               ),
                               SizedBox(height: isVeryCompact ? 18 : 28),
