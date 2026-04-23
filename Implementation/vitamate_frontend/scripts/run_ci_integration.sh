@@ -4,8 +4,10 @@ set -euo pipefail
 LOG_DIR="/tmp/vitamate-integration"
 SMOKE_LOG="$LOG_DIR/flutter-smoke.log"
 CHRONIC_LOG="$LOG_DIR/flutter-chronic.log"
-SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-900}"
-CHRONIC_TIMEOUT_SECONDS="${CHRONIC_TIMEOUT_SECONDS:-1200}"
+# The timeout wraps Gradle build + APK install + test execution. Cold GitHub
+# runners can spend 10+ minutes installing Android toolchain pieces alone.
+SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-2400}"
+CHRONIC_TIMEOUT_SECONDS="${CHRONIC_TIMEOUT_SECONDS:-2400}"
 
 mkdir -p "$LOG_DIR"
 cd "$(dirname "$0")/.."
