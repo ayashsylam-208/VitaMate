@@ -39,9 +39,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     if (addHypertensionFinder.evaluate().isNotEmpty) {
-      await tester.ensureVisible(addHypertensionFinder.first);
-      await tester.tap(addHypertensionFinder.first);
-      await tester.pump();
+      await tapVisibleByKey(
+        tester,
+        AppTestKeys.chronicSupportedAddButton('hypertension'),
+        timeout: const Duration(seconds: 30),
+      );
 
       await enterTextByKey(
         tester,

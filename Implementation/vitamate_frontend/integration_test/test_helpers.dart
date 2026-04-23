@@ -96,6 +96,23 @@ Future<void> tapByKey(
   await tester.pump();
 }
 
+Future<void> tapVisibleByKey(
+  WidgetTester tester,
+  String key, {
+  Finder? scrollable,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final finder = find.byKey(ValueKey(key));
+  await scrollUntilFinderVisible(
+    tester,
+    finder,
+    scrollable: scrollable,
+    timeout: timeout,
+  );
+  await tester.tap(finder.hitTestable());
+  await tester.pump();
+}
+
 Future<void> enterTextByKey(
   WidgetTester tester,
   String key,
@@ -157,10 +174,7 @@ Future<void> loginAsChronicUser(WidgetTester tester) async {
   if (submitFinder.evaluate().isNotEmpty) {
     final submitButton = tester.widget<ElevatedButton>(submitFinder);
     final signingInFinder = find.text('Signing In...');
-    if (
-        signingInFinder.evaluate().isEmpty &&
-        submitButton.onPressed != null
-    ) {
+    if (signingInFinder.evaluate().isEmpty && submitButton.onPressed != null) {
       submitButton.onPressed!.call();
       await tester.pump();
     }
