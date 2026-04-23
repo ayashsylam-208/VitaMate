@@ -144,14 +144,12 @@ void main() {
     );
     await waitForFinder(tester, find.textContaining('145/92'));
 
-    await tester.pageBack();
-    await tester.pump(const Duration(milliseconds: 500));
+    await popRoute(tester);
     await waitForFinder(
       tester,
       find.byKey(const ValueKey(AppTestKeys.chronicScreenHeader)),
     );
-    await tester.pageBack();
-    await tester.pump();
+    await popRoute(tester);
     await waitForHomeScreen(tester);
 
     final homeConditionCardFinder = find.byKey(

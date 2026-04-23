@@ -113,6 +113,14 @@ Future<void> tapVisibleByKey(
   await tester.pump();
 }
 
+Future<void> popRoute(
+  WidgetTester tester, {
+  Duration settle = const Duration(milliseconds: 500),
+}) async {
+  await tester.binding.handlePopRoute();
+  await tester.pump(settle);
+}
+
 Future<void> enterTextByKey(
   WidgetTester tester,
   String key,
