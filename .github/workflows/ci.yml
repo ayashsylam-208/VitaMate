@@ -266,12 +266,12 @@ jobs:
       - name: Run Flutter integration tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 30
           arch: x86_64
-          profile: Nexus 6
-          target: google_apis
+          profile: pixel_2
+          target: default
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none -memory 2048 -cores 2
           disable-animations: true
           script: |
             bash ./Implementation/vitamate_frontend/scripts/run_ci_integration.sh
