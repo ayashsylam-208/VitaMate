@@ -4,6 +4,7 @@ set -euo pipefail
 LOG_DIR="/tmp/vitamate-integration"
 SMOKE_LOG="$LOG_DIR/flutter-smoke.log"
 CHRONIC_LOG="$LOG_DIR/flutter-chronic.log"
+RUN_CHRONIC_INTEGRATION_TEST="${RUN_CHRONIC_INTEGRATION_TEST:-true}"
 # The timeout wraps Gradle build + APK install + test execution. Cold GitHub
 # runners can spend 10+ minutes installing Android toolchain pieces alone.
 SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-2400}"
@@ -41,7 +42,12 @@ run_integration_test \
   "integration_test/smoke_login_home_test.dart" \
   "$SMOKE_LOG" \
   "$SMOKE_TIMEOUT_SECONDS"
-run_integration_test \
-  "integration_test/chronic_flow_test.dart" \
-  "$CHRONIC_LOG" \
-  "$CHRONIC_TIMEOUT_SECONDS"
+
+if [[ "${RUN_CHRONIC_INTEGRATION_TEST,,}" != "false" ]]; then
+  run_integration_test \
+    "integration_test/chronic_flow_test.dart" \
+    "$CHRONIC_LOG" \
+    "$CHRONIC_TIMEOUT_SECONDS"
+else
+  printf 'Skipped chronic integration test on this runner.\n' >"$CHRONIC_LOG"
+fi

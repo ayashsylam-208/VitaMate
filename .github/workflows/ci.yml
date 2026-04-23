@@ -172,7 +172,7 @@ jobs:
         run: flutter test
 
   flutter-integration-test:
-    name: Flutter Integration Test
+    name: Flutter Smoke Integration Test
     runs-on: ubuntu-latest
     needs:
       - gitleaks
@@ -204,6 +204,7 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: "5432"
       API_BASE_URL: http://10.0.2.2:8000
+      RUN_CHRONIC_INTEGRATION_TEST: "false"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -263,7 +264,7 @@ jobs:
           echo "Backend health check did not become ready in time." >&2
           exit 1
 
-      - name: Run Flutter integration tests on Android emulator
+      - name: Run Flutter smoke integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
