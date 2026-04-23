@@ -116,7 +116,19 @@ void main() {
       find.byKey(const ValueKey(AppTestKeys.chronicDetailSummaryCard)),
       timeout: const Duration(seconds: 30),
     );
-    await waitForText(tester, 'High');
+    final summaryCardFinder = find.byKey(
+      const ValueKey(AppTestKeys.chronicDetailSummaryCard),
+    );
+    await waitForFinder(
+      tester,
+      find.descendant(
+        of: summaryCardFinder,
+        matching: find.textContaining(
+          RegExp(r'\bhigh\b', caseSensitive: false),
+        ),
+      ),
+      timeout: const Duration(seconds: 30),
+    );
     final readingsListFinder = find.byKey(
       const ValueKey(AppTestKeys.chronicDetailReadingsList),
     );
