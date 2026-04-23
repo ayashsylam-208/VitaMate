@@ -144,7 +144,8 @@ void main() {
     );
     await waitForFinder(tester, find.textContaining('145/92'));
 
-    await tapByKey(tester, AppTestKeys.chronicDetailBackButton);
+    await tester.pageBack();
+    await tester.pump(const Duration(milliseconds: 500));
     await waitForFinder(
       tester,
       find.byKey(const ValueKey(AppTestKeys.chronicScreenHeader)),
