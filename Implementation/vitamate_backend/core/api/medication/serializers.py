@@ -61,6 +61,9 @@ class MedicationPlanWriteSerializer(serializers.Serializer):
         required=False,
         default=ConditionMedication.ADHERENCE_STRICT,
     )
+    supplement_nutrient_id = serializers.IntegerField(required=False, allow_null=True)
+    supplement_nutrient_amount = serializers.FloatField(required=False, allow_null=True)
+    supplement_nutrient_unit = serializers.CharField(max_length=30, required=False, allow_blank=True)
     reminder_enabled = serializers.BooleanField(required=False, default=True)
     reminder_lead_minutes = serializers.IntegerField(required=False, min_value=0, default=15)
     schedules = MedicationSchedulePayloadSerializer(many=True, required=False, default=list)
@@ -221,6 +224,10 @@ def serialize_medication(medication: ConditionMedication, *, include_schedules: 
         "is_prn": medication.is_prn,
         "timezone": medication.timezone,
         "adherence_mode": medication.adherence_mode,
+        "supplement_nutrient_id": medication.supplement_nutrient_id,
+        "supplement_nutrient_code": medication.supplement_nutrient.code if medication.supplement_nutrient else "",
+        "supplement_nutrient_amount": medication.supplement_nutrient_amount,
+        "supplement_nutrient_unit": medication.supplement_nutrient_unit,
         "next_due": next_due.scheduled_for.isoformat() if next_due and next_due.scheduled_for else None,
         "adherence_summary_short": serialize_adherence(adherence),
         "schedules": [serialize_schedule(schedule) for schedule in medication.schedules.all()] if include_schedules else [],

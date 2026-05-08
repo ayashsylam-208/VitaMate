@@ -62,6 +62,10 @@ class UserProfileService:
             "preferred_activity_type",
             "enable_activity_reminders",
             "activity_reminder_interval_hours",
+            "activity_reminder_time",
+            "activity_reminder_days",
+            "inactive_reminder_enabled",
+            "inactive_reminder_hours",
             "enable_water_reminders",
             "water_reminder_interval_minutes",
         ]

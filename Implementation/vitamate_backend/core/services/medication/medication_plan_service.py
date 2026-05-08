@@ -89,6 +89,18 @@ class MedicationPlanService:
             "adherence_mode": payload.get("adherence_mode", getattr(existing, "adherence_mode", ConditionMedication.ADHERENCE_STRICT)),
             "reminder_enabled": payload.get("reminder_enabled", getattr(existing, "reminder_enabled", True)),
             "reminder_lead_minutes": payload.get("reminder_lead_minutes", getattr(existing, "reminder_lead_minutes", 15)),
+            "supplement_nutrient_id": payload.get(
+                "supplement_nutrient_id",
+                getattr(existing, "supplement_nutrient_id", None),
+            ),
+            "supplement_nutrient_amount": payload.get(
+                "supplement_nutrient_amount",
+                getattr(existing, "supplement_nutrient_amount", None),
+            ),
+            "supplement_nutrient_unit": payload.get(
+                "supplement_nutrient_unit",
+                getattr(existing, "supplement_nutrient_unit", ""),
+            ),
         }
 
     @classmethod

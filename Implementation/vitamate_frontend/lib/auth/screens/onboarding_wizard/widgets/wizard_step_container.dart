@@ -37,7 +37,7 @@ InputDecoration wizardInputDecoration({
       fontWeight: FontWeight.w500,
     ),
     filled: true,
-    fillColor: Colors.white.withValues(alpha: 0.88),
+    fillColor: Colors.white,
     prefixIcon: prefixIcon == null
         ? null
         : Icon(prefixIcon, color: wizardHintPurple, size: 20),
@@ -79,26 +79,30 @@ class WizardStepContainer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(20, compact ? 6 : 10, 20, 12),
+      padding: EdgeInsets.fromLTRB(16, compact ? 6 : 10, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            width: compact ? 50 : 56,
-            height: compact ? 50 : 56,
+            height: compact ? 54 : 58,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.9),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFFF0E1FF)),
+              gradient: wizardShellBackground,
+              borderRadius: BorderRadius.circular(20),
               boxShadow: const [
                 BoxShadow(
                   color: Color(0x1457369A),
-                  blurRadius: 16,
+                  blurRadius: 20,
                   offset: Offset(0, 8),
                 ),
               ],
             ),
-            child: Icon(icon, color: wizardMidPurple, size: compact ? 24 : 28),
+            child: Center(
+              child: Icon(
+                icon,
+                color: wizardMidPurple,
+                size: compact ? 24 : 28,
+              ),
+            ),
           ),
           SizedBox(height: compact ? 16 : 18),
           Text(

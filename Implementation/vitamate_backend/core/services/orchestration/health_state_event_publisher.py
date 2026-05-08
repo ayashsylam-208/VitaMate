@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from django.contrib.auth import get_user_model
 from django.db import transaction
+
+from core.tasks import dispatch_health_state_event
+
 
 class HealthStateEventPublisher:
     @staticmethod
@@ -18,16 +20,8 @@ class HealthStateEventPublisher:
         payload_copy = deepcopy(payload or {})
 
         def _callback():
-            user_model = get_user_model()
-            user_obj = user_model.objects.filter(pk=user_id).first()
-            if user_obj is None:
-                return
-            from core.services.orchestration.health_state_orchestrator import (
-                HealthStateOrchestrator,
-            )
-
-            HealthStateOrchestrator().handle_event(
-                user=user_obj,
+            dispatch_health_state_event(
+                user_id=user_id,
                 trigger_type=trigger_type,
                 payload=payload_copy,
                 synchronous=synchronous,

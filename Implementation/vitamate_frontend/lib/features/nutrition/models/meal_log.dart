@@ -8,6 +8,9 @@ class MealLog {
   final String unit;
   final double millilitersConsumed;
   final double servingsConsumed;
+  final int? servingOptionId;
+  final String servingOptionName;
+  final String servingLabelSnapshot;
   final DateTime? consumedAt;
   final double caloriesKcal;
   final double proteinG;
@@ -21,6 +24,24 @@ class MealLog {
   final double cholesterolMg;
   final double potassiumMg;
   final double addedSugarsG;
+  final double calciumMg;
+  final double ironMg;
+  final double magnesiumMg;
+  final double zincMg;
+  final double phosphorusMg;
+  final double vitaminAMcg;
+  final double vitaminCMg;
+  final double vitaminDMcg;
+  final double vitaminEMg;
+  final double vitaminKMcg;
+  final double vitaminB1Mg;
+  final double vitaminB2Mg;
+  final double vitaminB3Mg;
+  final double vitaminB6Mg;
+  final double vitaminB12Mcg;
+  final double folateMcg;
+  final double monounsaturatedFatG;
+  final double polyunsaturatedFatG;
   final double caffeineMg;
 
   MealLog({
@@ -33,6 +54,9 @@ class MealLog {
     required this.unit,
     this.millilitersConsumed = 0,
     this.servingsConsumed = 0,
+    this.servingOptionId,
+    this.servingOptionName = '',
+    this.servingLabelSnapshot = '',
     this.consumedAt,
     this.caloriesKcal = 0,
     this.proteinG = 0,
@@ -46,6 +70,24 @@ class MealLog {
     this.cholesterolMg = 0,
     this.potassiumMg = 0,
     this.addedSugarsG = 0,
+    this.calciumMg = 0,
+    this.ironMg = 0,
+    this.magnesiumMg = 0,
+    this.zincMg = 0,
+    this.phosphorusMg = 0,
+    this.vitaminAMcg = 0,
+    this.vitaminCMg = 0,
+    this.vitaminDMcg = 0,
+    this.vitaminEMg = 0,
+    this.vitaminKMcg = 0,
+    this.vitaminB1Mg = 0,
+    this.vitaminB2Mg = 0,
+    this.vitaminB3Mg = 0,
+    this.vitaminB6Mg = 0,
+    this.vitaminB12Mcg = 0,
+    this.folateMcg = 0,
+    this.monounsaturatedFatG = 0,
+    this.polyunsaturatedFatG = 0,
     this.caffeineMg = 0,
   });
 
@@ -73,7 +115,12 @@ class MealLog {
       return '${_formatNumber(millilitersConsumed)} ml';
     }
     if (servingsConsumed > 0) {
-      return '${_formatNumber(servingsConsumed)} serving';
+      final label = servingLabelSnapshot.trim().isNotEmpty
+          ? servingLabelSnapshot.trim().toLowerCase()
+          : servingOptionName.trim().isNotEmpty
+          ? servingOptionName.trim().toLowerCase()
+          : 'serving';
+      return '${_formatNumber(servingsConsumed)} $label';
     }
     return '${_formatNumber(quantityGrams)} g';
   }
@@ -89,6 +136,9 @@ class MealLog {
       unit: (json['unit'] ?? '').toString(),
       millilitersConsumed: _toDouble(json['milliliters_consumed']),
       servingsConsumed: _toDouble(json['servings_consumed']),
+      servingOptionId: _nullableInt(json['serving_option']),
+      servingOptionName: (json['serving_option_name'] ?? '').toString(),
+      servingLabelSnapshot: (json['serving_label_snapshot'] ?? '').toString(),
       consumedAt: _parseDateTime(json['consumed_at']),
       caloriesKcal: _toDouble(
         json['snapshot_calories_kcal'] ?? json['total_calories'],
@@ -104,6 +154,24 @@ class MealLog {
       cholesterolMg: _toDouble(json['snapshot_cholesterol_mg']),
       potassiumMg: _toDouble(json['snapshot_potassium_mg']),
       addedSugarsG: _toDouble(json['snapshot_added_sugars_g']),
+      calciumMg: _toDouble(json['snapshot_calcium_mg']),
+      ironMg: _toDouble(json['snapshot_iron_mg']),
+      magnesiumMg: _toDouble(json['snapshot_magnesium_mg']),
+      zincMg: _toDouble(json['snapshot_zinc_mg']),
+      phosphorusMg: _toDouble(json['snapshot_phosphorus_mg']),
+      vitaminAMcg: _toDouble(json['snapshot_vitamin_a_mcg']),
+      vitaminCMg: _toDouble(json['snapshot_vitamin_c_mg']),
+      vitaminDMcg: _toDouble(json['snapshot_vitamin_d_mcg']),
+      vitaminEMg: _toDouble(json['snapshot_vitamin_e_mg']),
+      vitaminKMcg: _toDouble(json['snapshot_vitamin_k_mcg']),
+      vitaminB1Mg: _toDouble(json['snapshot_vitamin_b1_mg']),
+      vitaminB2Mg: _toDouble(json['snapshot_vitamin_b2_mg']),
+      vitaminB3Mg: _toDouble(json['snapshot_vitamin_b3_mg']),
+      vitaminB6Mg: _toDouble(json['snapshot_vitamin_b6_mg']),
+      vitaminB12Mcg: _toDouble(json['snapshot_vitamin_b12_mcg']),
+      folateMcg: _toDouble(json['snapshot_folate_mcg']),
+      monounsaturatedFatG: _toDouble(json['snapshot_monounsaturated_fat_g']),
+      polyunsaturatedFatG: _toDouble(json['snapshot_polyunsaturated_fat_g']),
       caffeineMg: _toDouble(json['snapshot_caffeine_mg']),
     );
   }
@@ -114,6 +182,13 @@ int _toInt(dynamic value) {
   if (value is double) return value.round();
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int? _nullableInt(dynamic value) {
+  if (value == null || value == '') {
+    return null;
+  }
+  return _toInt(value);
 }
 
 double _toDouble(dynamic value) {

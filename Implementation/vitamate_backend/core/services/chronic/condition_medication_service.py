@@ -73,10 +73,12 @@ class ConditionMedicationService:
             schedule=schedule,
             target_date=today,
         )
-        log = MedicationRepository.get_schedule_log_for_day(
-            schedule=schedule,
-            scheduled_date=today,
-        )
+        log = cls._prefetched_schedule_log_for_day(schedule=schedule)
+        if log is None or log.scheduled_date != today:
+            log = MedicationRepository.get_schedule_log_for_day(
+                schedule=schedule,
+                scheduled_date=today,
+            )
         scheduled_for = (
             log.scheduled_for
             if log and log.scheduled_for

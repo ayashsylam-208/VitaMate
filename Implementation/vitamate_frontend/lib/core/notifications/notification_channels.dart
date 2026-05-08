@@ -31,6 +31,11 @@ class NotificationChannels {
   static const chronicAlertsDesc =
       'Warning notifications for chronic-condition safety limits';
 
+  static const unhealthyHabitsId = 'unhealthy_habits_channel';
+  static const unhealthyHabitsName = 'Habit support';
+  static const unhealthyHabitsDesc =
+      'Support reminders for reducing unhealthy habits';
+
   static const all = <AndroidNotificationChannel>[
     AndroidNotificationChannel(
       debugId,
@@ -72,6 +77,12 @@ class NotificationChannels {
       chronicAlertsId,
       chronicAlertsName,
       description: chronicAlertsDesc,
+      importance: Importance.max,
+    ),
+    AndroidNotificationChannel(
+      unhealthyHabitsId,
+      unhealthyHabitsName,
+      description: unhealthyHabitsDesc,
       importance: Importance.max,
     ),
   ];

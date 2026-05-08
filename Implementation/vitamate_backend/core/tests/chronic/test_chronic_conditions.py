@@ -103,6 +103,49 @@ class ChronicConditionApiTests(TestCase):
             ConditionDailyEvaluation.objects.filter(user_condition_id=body["id"]).exists()
         )
 
+    def test_compact_condition_list_returns_lightweight_payload(self):
+        create_res = self._create_condition(
+            "diabetes",
+            diagnosis_date="2026-04-10",
+            profile_data={"glucose_target": 110},
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+
+        reading_res = self.client.post(
+            f"/api/chronic/user-conditions/{create_res.data['id']}/readings/",
+            {
+                "indicator_type": "glucose",
+                "value": 184,
+                "reading_type": "after_meal",
+                "recorded_at": timezone.now().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(reading_res.status_code, status.HTTP_201_CREATED)
+
+        res = self.client.get("/api/chronic/user-conditions/?view=compact")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        item = res.data[0]
+        self.assertEqual(item["view"], "compact")
+        self.assertEqual(item["condition_type"]["slug"], "diabetes")
+        self.assertEqual(item["summary_subtitle"], "Last glucose reading recorded")
+        self.assertEqual(item["summary_status_label"], "High")
+        self.assertEqual(item["summary_line"], "184 mg/dL")
+        self.assertIn("secondary_summary_line", item)
+        self.assertIn("evaluation_status", item)
+        self.assertIn("latest_reading", item)
+        self.assertIn("open_alerts_count", item)
+        self.assertIn("summary", item)
+        self.assertIn("evaluation", item)
+        self.assertIn("targets", item)
+        self.assertTrue(item["targets"])
+        self.assertTrue(item["summary"]["targets"])
+        self.assertTrue(item["evaluation"]["tracker_impacts"])
+        self.assertNotIn("medications", item)
+        self.assertNotIn("indicator_records", item)
+        self.assertNotIn("alerts", item)
+
     def test_duplicate_active_condition_is_rejected(self):
         payload = {
             "diagnosis_date": "2025-02-01",

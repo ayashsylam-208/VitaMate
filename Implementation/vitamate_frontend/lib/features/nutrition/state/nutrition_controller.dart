@@ -1,47 +1,77 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/health/chronic_target_guide.dart';
+import '../../../core/health/condition_limit_alert_service.dart';
 import '../../../core/health/diabetes_sugar_guard_service.dart';
 import '../../../core/network/network_error_mapper.dart';
+import '../../../core/network/request_manager.dart';
 import '../../../core/notifications/notifications_service.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../data/nutrition_api.dart';
+import '../data/nutrition_repository.dart';
 import '../models/food_item.dart';
 import '../models/meal_log.dart';
+import '../models/micronutrient_tracking.dart';
 import '../models/nutrition_summary.dart';
 
 typedef DiabetesSugarAlertNotifier =
     Future<void> Function(DiabetesSugarWarning warning);
+typedef ConditionLimitAlertNotifier =
+    Future<void> Function(ConditionLimitWarning warning);
 
 class NutritionController extends ChangeNotifier {
   NutritionController({
+    NutritionRepository? repository,
     NutritionApi? api,
+    RequestManager? requestManager,
     DiabetesSugarGuardService? diabetesSugarGuardService,
     DiabetesSugarAlertNotifier? diabetesSugarAlertNotifier,
+    ConditionLimitAlertNotifier? conditionLimitAlertNotifier,
     ChronicTargetGuideService? chronicTargetGuideService,
-  }) : _api = api ?? NutritionApi(),
+    ConditionLimitAlertEvaluator? conditionLimitAlertEvaluator,
+  }) : _repository = repository ?? NutritionRepository(api: api),
+       _requestManager = requestManager ?? RequestManager(),
        _diabetesSugarGuardService =
            diabetesSugarGuardService ?? const DiabetesSugarGuardService(),
        _chronicTargetGuideService =
            chronicTargetGuideService ?? const ChronicTargetGuideService(),
+       _conditionLimitAlertEvaluator =
+           conditionLimitAlertEvaluator ?? const ConditionLimitAlertEvaluator(),
        _diabetesSugarAlertNotifier =
            diabetesSugarAlertNotifier ??
            ((warning) => NotificationsService.showDiabetesSugarWarning(
              limitG: warning.limitG,
              currentG: warning.currentG,
              sourceLabel: warning.sourceLabel,
+           )),
+       _conditionLimitAlertNotifier =
+           conditionLimitAlertNotifier ??
+           ((warning) => NotificationsService.showConditionLimitWarning(
+             metricKey: warning.metricKey,
+             metricLabel: warning.metricLabel,
+             limitValue: warning.limitValue,
+             currentValue: warning.currentValue,
+             unit: warning.unit,
+             sourceLabel: warning.sourceLabel,
+             conditionLabel: warning.conditionLabel,
            ));
 
-  final NutritionApi _api;
+  final NutritionRepository _repository;
+  final RequestManager _requestManager;
   final ChronicTargetGuideService _chronicTargetGuideService;
   final DiabetesSugarGuardService _diabetesSugarGuardService;
   final DiabetesSugarAlertNotifier _diabetesSugarAlertNotifier;
+  final ConditionLimitAlertEvaluator _conditionLimitAlertEvaluator;
+  final ConditionLimitAlertNotifier _conditionLimitAlertNotifier;
 
   bool loading = false;
   String? error;
 
   NutritionSummary summary = NutritionSummary.empty();
   NutritionDetailBreakdown detailBreakdown = const NutritionDetailBreakdown();
+  MicronutrientOverview micronutrients = MicronutrientOverview.empty();
   DiabetesSugarGuard? diabetesSugarGuard;
   List<ChronicGuideCardData> chronicNutritionGuides = const [];
   List<FoodItem> foods = [];
@@ -49,35 +79,15 @@ class NutritionController extends ChangeNotifier {
   int mealPointsToday = 0;
   int mealPointsDelta = 0;
   bool diabetesActive = false;
+  final Map<String, List<FoodItem>> _foodSearchCache =
+      <String, List<FoodItem>>{};
 
   Future<void> load() async {
     loading = true;
     error = null;
-    chronicNutritionGuides = const [];
     notifyListeners();
     try {
-      summary = await _api.getSummary();
-      foods = await _api.listFoods();
-      meals = await _api.getMealsToday();
-      try {
-        diabetesSugarGuard = await _diabetesSugarGuardService.getActiveGuard();
-        diabetesActive = diabetesSugarGuard != null;
-      } catch (_) {
-        diabetesSugarGuard = null;
-        diabetesActive = false;
-      }
-      try {
-        chronicNutritionGuides = await _chronicTargetGuideService.loadForScope(
-          ChronicGuideScope.nutrition,
-        );
-      } catch (_) {
-        chronicNutritionGuides = const [];
-      }
-      detailBreakdown = _buildDetailBreakdown(meals);
-      mealPointsToday = _computeMealPointsToday(
-        meals: meals,
-        targetCalories: summary.targetCalories,
-      );
+      await _refreshCoreNutritionState(includeFoods: true);
       mealPointsDelta = 0;
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
@@ -87,6 +97,55 @@ class NutritionController extends ChangeNotifier {
     } finally {
       loading = false;
       notifyListeners();
+    }
+    unawaited(_refreshAncillaryNutritionState(notifyOnComplete: true));
+  }
+
+  Future<List<FoodItem>> searchFoods({
+    required String mealType,
+    String query = '',
+    String? category,
+    int limit = 12,
+    bool includeMealSlot = true,
+  }) async {
+    final mealSlot = includeMealSlot ? _mealSlotForSearch(mealType) : null;
+    final cacheKey = _foodSearchCacheKey(
+      mealType: mealType,
+      query: query,
+      category: category,
+      mealSlot: mealSlot,
+      limit: limit,
+    );
+    final cached = _foodSearchCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    final lease = _requestManager.beginLatest('nutrition.search');
+    try {
+      final fetched = await _repository.autocompleteFoods(
+        query: query,
+        category: category,
+        mealSlot: mealSlot,
+        itemType: mealType == 'drink' ? 'beverage' : null,
+        limit: limit,
+        cancelToken: lease.cancelToken,
+      );
+      if (!_requestManager.isCurrent(lease)) {
+        return const <FoodItem>[];
+      }
+      final filtered = fetched
+          .where((food) {
+            if (mealType == 'drink') {
+              return food.isBeverage;
+            }
+            return !food.isBeverage;
+          })
+          .toList(growable: false);
+      _rememberFoodSearch(cacheKey, filtered);
+      return filtered;
+    } finally {
+      _requestManager.complete(lease);
     }
   }
 
@@ -104,7 +163,7 @@ class NutritionController extends ChangeNotifier {
     required String servingLabel,
     required int servingGrams,
   }) async {
-    await _api.addFood(
+    await _repository.addFood(
       name: name,
       calories100g: calories100g,
       protein100g: protein100g,
@@ -113,7 +172,51 @@ class NutritionController extends ChangeNotifier {
       servingLabel: servingLabel,
       servingGrams: servingGrams,
     );
-    await load();
+    _foodSearchCache.clear();
+    await _refreshCoreNutritionState(includeFoods: true);
+    notifyListeners();
+    HealthSyncBus.instance.publish(const {
+      HealthSyncScope.nutrition,
+      HealthSyncScope.homeOverview,
+      HealthSyncScope.progressHistory,
+    });
+    unawaited(_refreshAncillaryNutritionState(notifyOnComplete: true));
+  }
+
+  String _foodSearchCacheKey({
+    required String mealType,
+    required String query,
+    required String? category,
+    required String? mealSlot,
+    required int limit,
+  }) {
+    final scope = mealType == 'drink' ? 'drink' : 'food';
+    final normalizedQuery = query.trim().toLowerCase();
+    final normalizedCategory = (category ?? '').trim().toLowerCase();
+    final normalizedMealSlot = (mealSlot ?? '').trim().toLowerCase();
+    return '$scope|$normalizedCategory|$normalizedMealSlot|$normalizedQuery|$limit';
+  }
+
+  String? _mealSlotForSearch(String mealType) {
+    final normalized = mealType.trim().toLowerCase();
+    const valid = <String>{
+      'breakfast',
+      'lunch',
+      'dinner',
+      'snack',
+      'dessert',
+      'drink',
+    };
+    return valid.contains(normalized) ? normalized : null;
+  }
+
+  void _rememberFoodSearch(String key, List<FoodItem> results) {
+    const maxEntries = 24;
+    _foodSearchCache[key] = List<FoodItem>.unmodifiable(results);
+    if (_foodSearchCache.length <= maxEntries) {
+      return;
+    }
+    _foodSearchCache.remove(_foodSearchCache.keys.first);
   }
 
   Future<void> logMeal({
@@ -122,23 +225,42 @@ class NutritionController extends ChangeNotifier {
     double? quantityGrams,
     double? quantity,
     String? unit,
+    int? servingOptionId,
+    String? servingLabelSnapshot,
+    double? servingGramsEquivalent,
+    double? servingMillilitersEquivalent,
+    DateTime? consumedAt,
   }) async {
     final before = mealPointsToday;
     final beforeSugar = _currentDiabetesSugarTotal();
+    final beforeLimitValues = _currentConditionLimitValues();
     final sourceLabel = _foodNameForId(foodId);
-    await _api.addMeal(
+    await _repository.addMeal(
       foodId: foodId,
       mealType: mealType,
       quantityGrams: quantityGrams,
       quantity: quantity,
       unit: unit,
+      servingOptionId: servingOptionId,
+      servingLabelSnapshot: servingLabelSnapshot,
+      servingGramsEquivalent: servingGramsEquivalent,
+      servingMillilitersEquivalent: servingMillilitersEquivalent,
+      consumedAt: consumedAt,
     );
-    await load();
-    HealthSyncBus.instance.notifyTrackerDataChanged();
+    await _refreshCoreNutritionState(includeFoods: false);
     mealPointsDelta = mealPointsToday - before;
-    await _maybeNotifyDiabetesSugarExceeded(
-      beforeSugar: beforeSugar,
-      sourceLabel: sourceLabel,
+    notifyListeners();
+    HealthSyncBus.instance.publish(const {
+      HealthSyncScope.nutrition,
+      HealthSyncScope.homeOverview,
+      HealthSyncScope.progressHistory,
+    });
+    unawaited(
+      _runPostMealAncillary(
+        beforeSugar: beforeSugar,
+        sourceLabel: sourceLabel,
+        beforeValues: beforeLimitValues,
+      ),
     );
   }
 
@@ -173,6 +295,24 @@ class NutritionController extends ChangeNotifier {
     double transFatG = 0;
     double cholesterolMg = 0;
     double potassiumMg = 0;
+    double calciumMg = 0;
+    double ironMg = 0;
+    double magnesiumMg = 0;
+    double zincMg = 0;
+    double phosphorusMg = 0;
+    double vitaminAMcg = 0;
+    double vitaminCMg = 0;
+    double vitaminDMcg = 0;
+    double vitaminEMg = 0;
+    double vitaminKMcg = 0;
+    double vitaminB1Mg = 0;
+    double vitaminB2Mg = 0;
+    double vitaminB3Mg = 0;
+    double vitaminB6Mg = 0;
+    double vitaminB12Mcg = 0;
+    double folateMcg = 0;
+    double monounsaturatedFatG = 0;
+    double polyunsaturatedFatG = 0;
     double caffeineMg = 0;
 
     for (final meal in input) {
@@ -188,6 +328,24 @@ class NutritionController extends ChangeNotifier {
       transFatG += meal.transFatG;
       cholesterolMg += meal.cholesterolMg;
       potassiumMg += meal.potassiumMg;
+      calciumMg += meal.calciumMg;
+      ironMg += meal.ironMg;
+      magnesiumMg += meal.magnesiumMg;
+      zincMg += meal.zincMg;
+      phosphorusMg += meal.phosphorusMg;
+      vitaminAMcg += meal.vitaminAMcg;
+      vitaminCMg += meal.vitaminCMg;
+      vitaminDMcg += meal.vitaminDMcg;
+      vitaminEMg += meal.vitaminEMg;
+      vitaminKMcg += meal.vitaminKMcg;
+      vitaminB1Mg += meal.vitaminB1Mg;
+      vitaminB2Mg += meal.vitaminB2Mg;
+      vitaminB3Mg += meal.vitaminB3Mg;
+      vitaminB6Mg += meal.vitaminB6Mg;
+      vitaminB12Mcg += meal.vitaminB12Mcg;
+      folateMcg += meal.folateMcg;
+      monounsaturatedFatG += meal.monounsaturatedFatG;
+      polyunsaturatedFatG += meal.polyunsaturatedFatG;
       caffeineMg += meal.caffeineMg;
     }
 
@@ -204,6 +362,24 @@ class NutritionController extends ChangeNotifier {
       transFatG: transFatG,
       cholesterolMg: cholesterolMg,
       potassiumMg: potassiumMg,
+      calciumMg: calciumMg,
+      ironMg: ironMg,
+      magnesiumMg: magnesiumMg,
+      zincMg: zincMg,
+      phosphorusMg: phosphorusMg,
+      vitaminAMcg: vitaminAMcg,
+      vitaminCMg: vitaminCMg,
+      vitaminDMcg: vitaminDMcg,
+      vitaminEMg: vitaminEMg,
+      vitaminKMcg: vitaminKMcg,
+      vitaminB1Mg: vitaminB1Mg,
+      vitaminB2Mg: vitaminB2Mg,
+      vitaminB3Mg: vitaminB3Mg,
+      vitaminB6Mg: vitaminB6Mg,
+      vitaminB12Mcg: vitaminB12Mcg,
+      folateMcg: folateMcg,
+      monounsaturatedFatG: monounsaturatedFatG,
+      polyunsaturatedFatG: polyunsaturatedFatG,
       caffeineMg: caffeineMg,
     );
   }
@@ -248,5 +424,222 @@ class NutritionController extends ChangeNotifier {
       return summary.sugarsG;
     }
     return detailBreakdown.sugarsG;
+  }
+
+  Future<void> _refreshCoreNutritionState({required bool includeFoods}) async {
+    if (includeFoods || foods.isEmpty) {
+      final results = await Future.wait<Object>([
+        _repository.getSummary(),
+        _repository.getMealsToday(),
+        _repository.autocompleteFoods(limit: 16),
+        _repository.getMicronutrients(),
+      ]);
+      summary = results[0] as NutritionSummary;
+      meals = results[1] as List<MealLog>;
+      foods = results[2] as List<FoodItem>;
+      micronutrients = results[3] as MicronutrientOverview;
+    } else {
+      final results = await Future.wait<Object>([
+        _repository.getSummary(),
+        _repository.getMealsToday(),
+        _repository.getMicronutrients(),
+      ]);
+      summary = results[0] as NutritionSummary;
+      meals = results[1] as List<MealLog>;
+      micronutrients = results[2] as MicronutrientOverview;
+    }
+    detailBreakdown = _buildDetailBreakdown(meals);
+    mealPointsToday = _computeMealPointsToday(
+      meals: meals,
+      targetCalories: summary.targetCalories,
+    );
+  }
+
+  Future<void> _refreshAncillaryNutritionState({
+    bool notifyOnComplete = false,
+  }) async {
+    try {
+      diabetesSugarGuard = await _diabetesSugarGuardService.getActiveGuard();
+      diabetesActive = diabetesSugarGuard != null;
+    } catch (_) {
+      diabetesSugarGuard = null;
+      diabetesActive = false;
+    }
+    try {
+      chronicNutritionGuides = await _chronicTargetGuideService.loadForScope(
+        ChronicGuideScope.nutrition,
+      );
+    } catch (_) {
+      chronicNutritionGuides = const [];
+    }
+    if (notifyOnComplete) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _runPostMealAncillary({
+    required double beforeSugar,
+    required String sourceLabel,
+    required Map<String, double> beforeValues,
+  }) async {
+    await _refreshAncillaryNutritionState(notifyOnComplete: true);
+    await _maybeNotifyDiabetesSugarExceeded(
+      beforeSugar: beforeSugar,
+      sourceLabel: sourceLabel,
+    );
+    await _maybeNotifyConditionLimitsExceeded(
+      beforeValues: beforeValues,
+      sourceLabel: sourceLabel,
+    );
+  }
+
+  Future<void> _maybeNotifyConditionLimitsExceeded({
+    required Map<String, double> beforeValues,
+    required String sourceLabel,
+  }) async {
+    final excluded = diabetesSugarGuard == null
+        ? const <String>{}
+        : const <String>{'added_sugars_g', 'sugars_g'};
+    final warnings = _conditionLimitAlertEvaluator.evaluate(
+      guides: chronicNutritionGuides,
+      beforeValues: beforeValues,
+      afterValues: _currentConditionLimitValues(),
+      sourceLabel: sourceLabel,
+      excludedMetricKeys: excluded,
+    );
+    for (final warning in warnings) {
+      await _conditionLimitAlertNotifier(warning);
+    }
+  }
+
+  Map<String, double> _currentConditionLimitValues() {
+    final calories = detailBreakdown.caloriesKcal > 0
+        ? detailBreakdown.caloriesKcal
+        : summary.consumedCalories.toDouble();
+    final saturatedFatPct = calories <= 0
+        ? 0.0
+        : (detailBreakdown.saturatedFatG * 9 / calories) * 100;
+    final sugars = detailBreakdown.sugarsG > 0
+        ? detailBreakdown.sugarsG
+        : summary.sugarsG;
+    final addedSugars = detailBreakdown.addedSugarsG > 0
+        ? detailBreakdown.addedSugarsG
+        : summary.addedSugarsG;
+    return {
+      'added_sugars_g': addedSugars > 0 ? addedSugars : sugars,
+      'sugars_g': sugars,
+      'sodium_mg': detailBreakdown.sodiumMg > 0
+          ? detailBreakdown.sodiumMg
+          : summary.sodiumMg,
+      'saturated_fat_pct_kcal': saturatedFatPct,
+      'trans_fat_g': detailBreakdown.transFatG,
+      'cholesterol_mg': detailBreakdown.cholesterolMg,
+    };
+  }
+
+  Future<void> refreshMicronutrients() async {
+    micronutrients = await _repository.getMicronutrients();
+    notifyListeners();
+  }
+
+  Future<void> saveMicronutrientTarget({
+    required String nutrientCode,
+    double? minValue,
+    double? targetValue,
+    double? maxValue,
+    String note = '',
+    String labTestName = '',
+    double? labValue,
+    String labUnit = '',
+    double? labReferenceMin,
+    double? labReferenceMax,
+    String labTestDate = '',
+    double? clinicianRecommendedValue,
+    String currentMedicationName = '',
+    String currentMedicationDose = '',
+    bool createMedicationPlan = false,
+    String supplementName = '',
+    double? supplementAmount,
+    String supplementUnit = '',
+    String scheduleTime = '09:00',
+  }) async {
+    micronutrients = await _repository.upsertMicronutrientTarget(
+      nutrientCode: nutrientCode,
+      minValue: minValue,
+      targetValue: targetValue,
+      maxValue: maxValue,
+      note: note,
+      labTestName: labTestName,
+      labValue: labValue,
+      labUnit: labUnit,
+      labReferenceMin: labReferenceMin,
+      labReferenceMax: labReferenceMax,
+      labTestDate: labTestDate,
+      clinicianRecommendedValue: clinicianRecommendedValue,
+      currentMedicationName: currentMedicationName,
+      currentMedicationDose: currentMedicationDose,
+      createMedicationPlan: createMedicationPlan,
+      supplementName: supplementName,
+      supplementAmount: supplementAmount,
+      supplementUnit: supplementUnit,
+      scheduleTime: scheduleTime,
+    );
+    await _refreshAndVerifyMicronutrientSave(
+      nutrientCode: nutrientCode,
+      expectTarget:
+          minValue != null ||
+          targetValue != null ||
+          maxValue != null ||
+          labValue != null ||
+          clinicianRecommendedValue != null,
+      expectMedication: createMedicationPlan,
+    );
+    try {
+      await _refreshAncillaryNutritionState(notifyOnComplete: false);
+    } catch (_) {
+      // The target is already saved. Keep the returned micronutrient overview
+      // visible even if a secondary refresh fails.
+    }
+    notifyListeners();
+    HealthSyncBus.instance.publish(const {
+      HealthSyncScope.nutrition,
+      HealthSyncScope.medication,
+      HealthSyncScope.homeOverview,
+      HealthSyncScope.progressHistory,
+    });
+  }
+
+  Future<void> _refreshAndVerifyMicronutrientSave({
+    required String nutrientCode,
+    required bool expectTarget,
+    required bool expectMedication,
+  }) async {
+    micronutrients = await _repository.getMicronutrients();
+    final item = _micronutrientByCode(nutrientCode);
+    if (expectTarget && item?.deficiencyTracked != true) {
+      throw StateError(
+        'The target was not saved by the backend. Restart the backend and try again.',
+      );
+    }
+    if (expectMedication && item?.linkedMedication == null) {
+      throw StateError(
+        'The supplement target was saved, but no medication plan was linked. Restart the backend and try again.',
+      );
+    }
+  }
+
+  MicronutrientItem? _micronutrientByCode(String code) {
+    for (final item in micronutrients.items) {
+      if (item.code == code) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _requestManager.cancelAll();
+    super.dispose();
   }
 }

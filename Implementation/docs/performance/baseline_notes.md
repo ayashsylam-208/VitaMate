@@ -25,7 +25,7 @@ From `Implementation/vitamate_backend`:
 ```powershell
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py seed_performance_dataset --profile representative --reset
-.\.venv\Scripts\python.exe manage.py runserver 0.0.0.0:8000
+.\scripts\start_dev_backend.ps1
 ```
 
 Dashboard run:

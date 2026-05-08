@@ -1,7 +1,18 @@
 import '../../../core/config/api_endpoints.dart';
 import '../../../core/network/http_client.dart';
+import '../../../core/network/request_metrics_interceptor.dart';
 
 class MedicationsApi {
+  Future<Map<String, dynamic>> fetchOverview() async {
+    final res = await HttpClient.dio.get(
+      ApiEndpoints.medicationsOverview,
+      options: RequestMetricsInterceptor.taggedOptions(
+        tag: 'medications.overview',
+      ),
+    );
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
   Future<List<dynamic>> fetchMedications() async {
     final res = await HttpClient.dio.get(ApiEndpoints.medications);
     return (res.data as List).cast<dynamic>();

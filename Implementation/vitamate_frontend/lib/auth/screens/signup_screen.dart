@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/notifications/notifications_service.dart';
@@ -117,11 +120,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
         return;
       }
 
-      try {
-        await NotificationsService.showWelcomeNewUser();
-      } catch (error) {
-        debugPrint('SignUpScreen: welcome notification failed: $error');
-      }
+      unawaited(
+        NotificationsService.showWelcomeNewUser().catchError((error) {
+          debugPrint('SignUpScreen: welcome notification failed: $error');
+        }),
+      );
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.onboarding);
     } finally {
@@ -167,360 +170,361 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final disableAndroidAutofill =
+        defaultTargetPlatform == TargetPlatform.android;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF5F0FF),
       resizeToAvoidBottomInset: true,
-      body: Container(
-        decoration: const BoxDecoration(gradient: _pageBackground),
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isCompact = constraints.maxHeight < 760;
-              final isVeryCompact = constraints.maxHeight < 680;
-              final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-
-              return SingleChildScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: EdgeInsets.fromLTRB(10, 6, 10, 12 + bottomInset),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: _shellBackground,
-                        borderRadius: BorderRadius.circular(40),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.88),
-                          width: 3,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x1A57369A),
-                            blurRadius: 32,
-                            offset: Offset(0, 16),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Container(
+          decoration: const BoxDecoration(gradient: _pageBackground),
+          child: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxHeight < 760;
+                final isVeryCompact = constraints.maxHeight < 680;
+                return ListView(
+                  physics: const ClampingScrollPhysics(),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                  children: [
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            top: isVeryCompact
+                                ? 8
+                                : isCompact
+                                ? 18
+                                : 30,
+                            bottom: isVeryCompact ? 8 : 18,
                           ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          22,
-                          isVeryCompact
-                              ? 18
-                              : isCompact
-                              ? 28
-                              : 40,
-                          22,
-                          isVeryCompact
-                              ? 18
-                              : isCompact
-                              ? 26
-                              : 36,
-                        ),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SizedBox(
-                                height: isVeryCompact
-                                    ? 4
-                                    : isCompact
-                                    ? 10
-                                    : 22,
-                              ),
-                              Center(
-                                child: Image.asset(
-                                  'assets/images/logo.png',
-                                  height: isVeryCompact
-                                      ? 56
-                                      : isCompact
-                                      ? 72
-                                      : 84,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Icon(
-                                        Icons.health_and_safety_rounded,
-                                        color: _deepPurple,
-                                        size: isVeryCompact
-                                            ? 48
-                                            : isCompact
-                                            ? 60
-                                            : 72,
-                                      ),
-                                ),
-                              ),
-                              SizedBox(height: isVeryCompact ? 18 : 28),
-                              Text(
-                                'Create Account',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: _deepPurple,
-                                  fontSize: isVeryCompact ? 22 : 24,
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.15,
-                                ),
-                              ),
-                              SizedBox(height: isVeryCompact ? 8 : 10),
-                              Text(
-                                'Start your health journey with VitaMate.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: _midPurple,
-                                  fontSize: isVeryCompact ? 14 : 16,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1.35,
-                                ),
-                              ),
-                              SizedBox(height: isVeryCompact ? 18 : 28),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.84),
-                                  borderRadius: BorderRadius.circular(30),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.65),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Center(
+                                  child: Image.asset(
+                                    'assets/images/logo.png',
+                                    height: isVeryCompact
+                                        ? 56
+                                        : isCompact
+                                        ? 72
+                                        : 84,
+                                    fit: BoxFit.contain,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Icon(
+                                          Icons.health_and_safety_rounded,
+                                          color: _deepPurple,
+                                          size: isVeryCompact
+                                              ? 48
+                                              : isCompact
+                                              ? 60
+                                              : 72,
+                                        ),
                                   ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Color(0x1A57369A),
-                                      blurRadius: 28,
-                                      offset: Offset(0, 12),
-                                    ),
-                                  ],
                                 ),
-                                child: Padding(
-                                  padding: EdgeInsets.fromLTRB(
-                                    20,
-                                    isVeryCompact ? 16 : 20,
-                                    20,
-                                    isVeryCompact ? 16 : 20,
+                                SizedBox(height: isVeryCompact ? 18 : 28),
+                                Text(
+                                  'Create Account',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: _deepPurple,
+                                    fontSize: isVeryCompact ? 22 : 24,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.15,
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      const Text(
-                                        'Username',
-                                        style: TextStyle(
-                                          color: _deepPurple,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      TextFormField(
-                                        controller: _usernameCtrl,
-                                        textInputAction: TextInputAction.next,
-                                        autofillHints: const [
-                                          AutofillHints.newUsername,
-                                        ],
-                                        validator: _usernameValidator,
-                                        decoration: _fieldDecoration(
-                                          hintText: 'Enter username',
-                                          icon: Icons.person_outline_rounded,
-                                        ),
-                                      ),
-                                      SizedBox(height: isVeryCompact ? 12 : 18),
-                                      const Text(
-                                        'Email',
-                                        style: TextStyle(
-                                          color: _deepPurple,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      TextFormField(
-                                        controller: _emailCtrl,
-                                        keyboardType:
-                                            TextInputType.emailAddress,
-                                        textInputAction: TextInputAction.next,
-                                        autofillHints: const [
-                                          AutofillHints.email,
-                                        ],
-                                        validator: Validators.email,
-                                        decoration: _fieldDecoration(
-                                          hintText: 'Enter email address',
-                                          icon: Icons.mail_outline_rounded,
-                                        ),
-                                      ),
-                                      SizedBox(height: isVeryCompact ? 12 : 18),
-                                      const Text(
-                                        'Password',
-                                        style: TextStyle(
-                                          color: _deepPurple,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      TextFormField(
-                                        controller: _passwordCtrl,
-                                        obscureText: _obscurePassword,
-                                        textInputAction: TextInputAction.next,
-                                        autofillHints: const [
-                                          AutofillHints.newPassword,
-                                        ],
-                                        validator: Validators.password,
-                                        decoration: _fieldDecoration(
-                                          hintText: 'Create a password',
-                                          icon: Icons.lock_outline_rounded,
-                                          suffixIcon: IconButton(
-                                            onPressed: () {
-                                              setState(() {
-                                                _obscurePassword =
-                                                    !_obscurePassword;
-                                              });
-                                            },
-                                            icon: Icon(
-                                              _obscurePassword
-                                                  ? Icons.visibility_outlined
-                                                  : Icons
-                                                        .visibility_off_outlined,
-                                              color: _hintPurple,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(height: isVeryCompact ? 12 : 18),
-                                      const Text(
-                                        'Confirm Password',
-                                        style: TextStyle(
-                                          color: _deepPurple,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      TextFormField(
-                                        controller: _confirmCtrl,
-                                        obscureText: _obscureConfirm,
-                                        textInputAction: TextInputAction.done,
-                                        autofillHints: const [
-                                          AutofillHints.newPassword,
-                                        ],
-                                        validator: _confirmPasswordValidator,
-                                        onFieldSubmitted: (_) {
-                                          if (!_loading) _submit();
-                                        },
-                                        decoration: _fieldDecoration(
-                                          hintText: 'Confirm your password',
-                                          icon: Icons.lock_outline_rounded,
-                                          suffixIcon: IconButton(
-                                            onPressed: () {
-                                              setState(() {
-                                                _obscureConfirm =
-                                                    !_obscureConfirm;
-                                              });
-                                            },
-                                            icon: Icon(
-                                              _obscureConfirm
-                                                  ? Icons.visibility_outlined
-                                                  : Icons
-                                                        .visibility_off_outlined,
-                                              color: _hintPurple,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(height: isVeryCompact ? 18 : 24),
-                                      SizedBox(
-                                        height: isVeryCompact ? 46 : 50,
-                                        child: DecoratedBox(
-                                          decoration: BoxDecoration(
-                                            gradient: _buttonGradient,
-                                            borderRadius: BorderRadius.circular(
-                                              18,
-                                            ),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x33962CF8),
-                                                blurRadius: 18,
-                                                offset: Offset(0, 8),
-                                              ),
-                                            ],
-                                          ),
-                                          child: ElevatedButton(
-                                            onPressed: _loading
-                                                ? null
-                                                : _submit,
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor:
-                                                  Colors.transparent,
-                                              disabledBackgroundColor:
-                                                  Colors.transparent,
-                                              shadowColor: Colors.transparent,
-                                              foregroundColor: Colors.white,
-                                              disabledForegroundColor:
-                                                  Colors.white70,
-                                              elevation: 0,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(18),
-                                              ),
-                                            ),
-                                            child: Text(
-                                              _loading
-                                                  ? 'Creating Account...'
-                                                  : 'Continue',
-                                              style: TextStyle(
-                                                fontSize: isVeryCompact
-                                                    ? 15
-                                                    : 16,
-                                                fontWeight: FontWeight.w800,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
+                                ),
+                                SizedBox(height: isVeryCompact ? 8 : 10),
+                                Text(
+                                  'Start your health journey with VitaMate.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: _midPurple,
+                                    fontSize: isVeryCompact ? 14 : 16,
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.35,
+                                  ),
+                                ),
+                                SizedBox(height: isVeryCompact ? 18 : 28),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    gradient: _shellBackground,
+                                    borderRadius: BorderRadius.circular(30),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x1A57369A),
+                                        blurRadius: 18,
+                                        offset: Offset(0, 8),
                                       ),
                                     ],
                                   ),
-                                ),
-                              ),
-                              SizedBox(height: isVeryCompact ? 20 : 28),
-                              Wrap(
-                                alignment: WrapAlignment.center,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  const Text(
-                                    'Already have an account? ',
-                                    style: TextStyle(
-                                      color: _midPurple,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
+                                  child: Padding(
+                                    padding: EdgeInsets.fromLTRB(
+                                      20,
+                                      isVeryCompact ? 16 : 20,
+                                      20,
+                                      isVeryCompact ? 16 : 20,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        const Text(
+                                          'Username',
+                                          style: TextStyle(
+                                            color: _deepPurple,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        TextFormField(
+                                          controller: _usernameCtrl,
+                                          textInputAction: TextInputAction.next,
+                                          autofillHints: disableAndroidAutofill
+                                              ? null
+                                              : const [
+                                                  AutofillHints.newUsername,
+                                                ],
+                                          enableSuggestions:
+                                              !disableAndroidAutofill,
+                                          autocorrect: false,
+                                          validator: _usernameValidator,
+                                          decoration: _fieldDecoration(
+                                            hintText: 'Enter username',
+                                            icon: Icons.person_outline_rounded,
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          height: isVeryCompact ? 12 : 18,
+                                        ),
+                                        const Text(
+                                          'Email',
+                                          style: TextStyle(
+                                            color: _deepPurple,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        TextFormField(
+                                          controller: _emailCtrl,
+                                          keyboardType:
+                                              TextInputType.emailAddress,
+                                          textInputAction: TextInputAction.next,
+                                          autofillHints: disableAndroidAutofill
+                                              ? null
+                                              : const [AutofillHints.email],
+                                          enableSuggestions:
+                                              !disableAndroidAutofill,
+                                          autocorrect: false,
+                                          validator: Validators.email,
+                                          decoration: _fieldDecoration(
+                                            hintText: 'Enter email address',
+                                            icon: Icons.mail_outline_rounded,
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          height: isVeryCompact ? 12 : 18,
+                                        ),
+                                        const Text(
+                                          'Password',
+                                          style: TextStyle(
+                                            color: _deepPurple,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        TextFormField(
+                                          controller: _passwordCtrl,
+                                          obscureText: _obscurePassword,
+                                          textInputAction: TextInputAction.next,
+                                          autofillHints: disableAndroidAutofill
+                                              ? null
+                                              : const [
+                                                  AutofillHints.newPassword,
+                                                ],
+                                          enableSuggestions: false,
+                                          autocorrect: false,
+                                          enableInteractiveSelection:
+                                              !disableAndroidAutofill,
+                                          validator: Validators.password,
+                                          decoration: _fieldDecoration(
+                                            hintText: 'Create a password',
+                                            icon: Icons.lock_outline_rounded,
+                                            suffixIcon: IconButton(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscurePassword =
+                                                      !_obscurePassword;
+                                                });
+                                              },
+                                              icon: Icon(
+                                                _obscurePassword
+                                                    ? Icons.visibility_outlined
+                                                    : Icons
+                                                          .visibility_off_outlined,
+                                                color: _hintPurple,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          height: isVeryCompact ? 12 : 18,
+                                        ),
+                                        const Text(
+                                          'Confirm Password',
+                                          style: TextStyle(
+                                            color: _deepPurple,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        TextFormField(
+                                          controller: _confirmCtrl,
+                                          obscureText: _obscureConfirm,
+                                          textInputAction: TextInputAction.done,
+                                          autofillHints: disableAndroidAutofill
+                                              ? null
+                                              : const [
+                                                  AutofillHints.newPassword,
+                                                ],
+                                          enableSuggestions: false,
+                                          autocorrect: false,
+                                          enableInteractiveSelection:
+                                              !disableAndroidAutofill,
+                                          validator: _confirmPasswordValidator,
+                                          onFieldSubmitted: (_) {
+                                            if (!_loading) _submit();
+                                          },
+                                          decoration: _fieldDecoration(
+                                            hintText: 'Confirm your password',
+                                            icon: Icons.lock_outline_rounded,
+                                            suffixIcon: IconButton(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscureConfirm =
+                                                      !_obscureConfirm;
+                                                });
+                                              },
+                                              icon: Icon(
+                                                _obscureConfirm
+                                                    ? Icons.visibility_outlined
+                                                    : Icons
+                                                          .visibility_off_outlined,
+                                                color: _hintPurple,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          height: isVeryCompact ? 18 : 24,
+                                        ),
+                                        SizedBox(
+                                          height: isVeryCompact ? 46 : 50,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              gradient: _buttonGradient,
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                  color: Color(0x33962CF8),
+                                                  blurRadius: 12,
+                                                  offset: Offset(0, 6),
+                                                ),
+                                              ],
+                                            ),
+                                            child: ElevatedButton(
+                                              onPressed: _loading
+                                                  ? null
+                                                  : _submit,
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor:
+                                                    Colors.transparent,
+                                                disabledBackgroundColor:
+                                                    Colors.transparent,
+                                                shadowColor: Colors.transparent,
+                                                foregroundColor: Colors.white,
+                                                disabledForegroundColor:
+                                                    Colors.white70,
+                                                elevation: 0,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                              ),
+                                              child: Text(
+                                                _loading
+                                                    ? 'Creating Account...'
+                                                    : 'Continue',
+                                                style: TextStyle(
+                                                  fontSize: isVeryCompact
+                                                      ? 15
+                                                      : 16,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  GestureDetector(
-                                    onTap: () {
-                                      Navigator.pushReplacementNamed(
-                                        context,
-                                        Routes.login,
-                                      );
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.only(top: 1),
-                                      child: Text(
-                                        'Sign in',
-                                        style: TextStyle(
-                                          color: _midPurple,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w800,
+                                ),
+                                SizedBox(height: isVeryCompact ? 20 : 28),
+                                Wrap(
+                                  alignment: WrapAlignment.center,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    const Text(
+                                      'Already have an account? ',
+                                      style: TextStyle(
+                                        color: _midPurple,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () {
+                                        Navigator.pushReplacementNamed(
+                                          context,
+                                          Routes.login,
+                                        );
+                                      },
+                                      child: const Padding(
+                                        padding: EdgeInsets.only(top: 1),
+                                        child: Text(
+                                          'Sign in',
+                                          style: TextStyle(
+                                            color: _midPurple,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w800,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: isVeryCompact ? 14 : 34),
-                            ],
+                                  ],
+                                ),
+                                SizedBox(height: isVeryCompact ? 14 : 34),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),

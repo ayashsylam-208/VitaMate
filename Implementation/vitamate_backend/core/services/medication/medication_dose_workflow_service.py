@@ -11,6 +11,7 @@ from core.repositories.medication_repository import MedicationRepository
 from core.services.condition_points_evaluator import ConditionPointsEvaluator
 from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
+from gamification.services.points_service import PointsService
 
 
 class MedicationDoseWorkflowService:
@@ -39,13 +40,63 @@ class MedicationDoseWorkflowService:
         return value
 
     @staticmethod
-    def _apply_condition_points(log: ConditionMedicationLog) -> None:
+    def _apply_points(log: ConditionMedicationLog) -> None:
+        desired_points = ConditionPointsEvaluator.medication_points_for_status(
+            status=log.status,
+            skip_reason=log.skip_reason,
+        )
+        points_diff = desired_points - log.points_applied
+        if points_diff == 0:
+            return
         condition = log.medication.user_condition
         if condition is not None:
             ConditionPointsEvaluator.apply_medication_log_points(
                 log=log,
                 user_condition=condition,
             )
+            return
+        if points_diff > 0:
+            PointsService.add_points(log.medication.user, points_diff)
+        elif points_diff < 0:
+            PointsService.deduct_points(log.medication.user, abs(points_diff))
+        log.points_applied = desired_points
+        MedicationRepository.save_dose_log(
+            log,
+            update_fields=["points_applied", "updated_at"],
+        )
+
+    @classmethod
+    @transaction.atomic
+    def repair_missing_points_for_user(
+        cls,
+        *,
+        user,
+        start_date=None,
+        end_date=None,
+    ) -> int:
+        start_date = start_date or timezone.localdate()
+        end_date = end_date or start_date
+        logs = (
+            ConditionMedicationLog.objects.select_related(
+                "medication",
+                "medication__user_condition",
+            )
+            .filter(
+                medication__user=user,
+                scheduled_date__gte=start_date,
+                scheduled_date__lte=end_date,
+                status__in=cls.FINAL_STATUSES,
+                points_applied=0,
+            )
+            .order_by("scheduled_date", "id")
+        )
+        repaired = 0
+        for log in logs:
+            before = log.points_applied
+            cls._apply_points(log)
+            if log.points_applied != before:
+                repaired += 1
+        return repaired
 
     @classmethod
     def _ensure_not_final(cls, log: ConditionMedicationLog) -> None:
@@ -80,7 +131,7 @@ class MedicationDoseWorkflowService:
             log,
             update_fields=["status", "taken_at", "dose_taken_amount", "action_source", "updated_at"],
         )
-        cls._apply_condition_points(log)
+        cls._apply_points(log)
         cls._publish_adherence_event(log)
         return log
 
@@ -96,7 +147,7 @@ class MedicationDoseWorkflowService:
             log,
             update_fields=["status", "taken_at", "action_source", "updated_at"],
         )
-        cls._apply_condition_points(log)
+        cls._apply_points(log)
         cls._publish_adherence_event(log)
         return log
 
@@ -114,7 +165,7 @@ class MedicationDoseWorkflowService:
             log,
             update_fields=["status", "taken_at", "skip_reason", "notes", "action_source", "updated_at"],
         )
-        cls._apply_condition_points(log)
+        cls._apply_points(log)
         cls._publish_adherence_event(log)
         return log
 
@@ -134,7 +185,7 @@ class MedicationDoseWorkflowService:
             log,
             update_fields=["status", "snoozed_until", "action_source", "updated_at"],
         )
-        cls._apply_condition_points(log)
+        cls._apply_points(log)
         cls._publish_adherence_event(log)
         return log
 

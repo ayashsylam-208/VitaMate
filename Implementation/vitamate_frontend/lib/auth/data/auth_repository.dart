@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import '../../core/storage/secure_storage.dart';
 import '../models/auth_token.dart';
 import '../models/user.dart';
@@ -30,6 +32,9 @@ class AuthRepository {
     required String username,
     required String password,
   }) async {
+    if (kDebugMode) {
+      debugPrint('AuthRepository.login: requesting token');
+    }
     final res = await _api.login(username: username, password: password);
 
     final data = _asMap(res.data);
@@ -45,10 +50,13 @@ class AuthRepository {
       throw Exception('Login response did not include a valid refresh token.');
     }
 
-    await SecureStorage.saveTokens(
-      access: access,
-      refresh: refresh,
-    );
+    if (kDebugMode) {
+      debugPrint('AuthRepository.login: saving tokens');
+    }
+    await SecureStorage.saveTokens(access: access, refresh: refresh);
+    if (kDebugMode) {
+      debugPrint('AuthRepository.login: tokens saved');
+    }
     return token;
   }
 

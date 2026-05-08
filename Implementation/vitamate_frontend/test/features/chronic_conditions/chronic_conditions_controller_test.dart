@@ -10,20 +10,34 @@ class _FakeChronicConditionsApi extends ChronicConditionsApi {
     required this.conditions,
     required this.catalog,
     this.createError,
+    this.compactConditions,
   });
 
   final List<ChronicCondition> conditions;
+  final List<ChronicCondition>? compactConditions;
   final List<ChronicConditionType> catalog;
   final Object? createError;
 
   @override
-  Future<List<ChronicCondition>> getConditions() async => conditions;
+  Future<List<ChronicCondition>> getOverviewConditions({
+    bool forceRefresh = false,
+    bool guidanceOnly = false,
+  }) async => compactConditions ?? conditions;
+
+  @override
+  Future<List<ChronicCondition>> getConditions({bool compact = false}) async =>
+      compact ? (compactConditions ?? conditions) : conditions;
+
+  @override
+  Future<ChronicCondition> getCondition(int conditionId) async {
+    return conditions.firstWhere((item) => item.id == conditionId);
+  }
 
   @override
   Future<List<ChronicConditionType>> getConditionTypes() async => catalog;
 
   @override
-  Future<void> createCondition({
+  Future<ChronicCondition> createCondition({
     required int conditionTypeId,
     DateTime? diagnosisDate,
     required String severityCode,
@@ -36,16 +50,18 @@ class _FakeChronicConditionsApi extends ChronicConditionsApi {
     if (createError != null) {
       throw createError!;
     }
+    return conditions.first;
   }
 }
 
 void main() {
   test(
-    'controller loads conditions, catalogs, doses, and reminder plans',
+    'controller loads compact center first, then detail reminders separately',
     () async {
       final capturedPlans = <ChronicMedicationReminderPlan>[];
       final api = _FakeChronicConditionsApi(
         conditions: [_sampleCondition()],
+        compactConditions: [_sampleCompactCondition()],
         catalog: [_sampleConditionType()],
       );
       final controller = ChronicConditionsController(
@@ -57,13 +73,19 @@ void main() {
         },
       );
 
-      await controller.load();
+      await controller.loadCenter();
 
       expect(controller.catalog, hasLength(1));
       expect(controller.conditions, hasLength(1));
       expect(controller.conditionForType(1)?.id, 4);
-      expect(controller.todayDoses, hasLength(1));
+      expect(controller.todayDoses, isEmpty);
       expect(controller.pendingSchedules, 1);
+      expect(capturedPlans, isEmpty);
+
+      await controller.loadConditionDetail(4);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.todayDoses, hasLength(1));
       expect(capturedPlans, hasLength(1));
       expect(capturedPlans.single.medicationName, 'Metformin');
       expect(capturedPlans.single.conditionName, 'Diabetes');
@@ -237,6 +259,67 @@ ChronicCondition _sampleCondition() {
     'constraint_summary': ['Unsweetened drinks are preferred for hydration.'],
     'daily_medication_count': 1,
     'daily_pending_doses': 1,
+    'disclaimer': 'Supportive self-management only.',
+  });
+}
+
+ChronicCondition _sampleCompactCondition() {
+  return ChronicCondition.fromJson({
+    'view': 'compact',
+    'id': 4,
+    'condition_type': {
+      'id': 1,
+      'code': 'diabetes',
+      'slug': 'diabetes',
+      'name': 'Diabetes',
+      'display_name': 'Diabetes',
+      'description': 'Sample condition type',
+      'can_add': false,
+      'is_active_for_user': true,
+      'setup_fields': [],
+      'measurement_types': ['glucose'],
+      'supports_direct_daily_reading': true,
+      'severity_options': [
+        {
+          'code': 'diabetes_managed',
+          'label': 'Managed diabetes',
+          'description': 'Sample severity',
+        },
+      ],
+      'restrictions': [],
+      'rule_profiles': [],
+    },
+    'diagnosis_date': '2026-04-11',
+    'condition_status': 'active',
+    'severity': 'diabetes_managed',
+    'notes': 'Clinician approved current plan.',
+    'profile_data': {'glucose_target': 110},
+    'is_active': true,
+    'daily_medication_count': 1,
+    'daily_pending_doses': 1,
+    'open_alerts_count': 0,
+    'evaluation_status': 'stable',
+    'summary_status_label': 'In range',
+    'summary_subtitle': 'Last glucose reading recorded',
+    'summary_line': '110 mg/dL',
+    'secondary_summary_line':
+        'Open the tracking view for readings, targets, and guidance.',
+    'latest_reading': {
+      'id': 91,
+      'indicator_name': 'fasting_glucose',
+      'indicator_type': 'glucose',
+      'value': 110,
+      'value_1': 110,
+      'value_2': 0,
+      'value_3': 0,
+      'unit': 'mg/dL',
+      'reading_context': 'fasting',
+      'payload': {'glucose': 110},
+      'classification': 'in_range',
+      'risk_level': 'low',
+      'recorded_at': '2026-04-11T08:30:00Z',
+    },
+    'latest_recorded_at': '2026-04-11T08:30:00Z',
     'disclaimer': 'Supportive self-management only.',
   });
 }

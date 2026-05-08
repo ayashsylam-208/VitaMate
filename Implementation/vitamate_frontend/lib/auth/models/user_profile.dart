@@ -24,6 +24,10 @@ class UserProfileSettings {
     required this.preferredActivityType,
     required this.enableActivityReminders,
     required this.activityReminderIntervalHours,
+    required this.activityReminderTime,
+    required this.activityReminderDays,
+    required this.inactiveReminderEnabled,
+    required this.inactiveReminderHours,
     required this.enableWaterReminders,
     required this.waterReminderIntervalMinutes,
   });
@@ -42,6 +46,10 @@ class UserProfileSettings {
   final String preferredActivityType;
   final bool enableActivityReminders;
   final int activityReminderIntervalHours;
+  final DateTime activityReminderTime;
+  final List<int> activityReminderDays;
+  final bool inactiveReminderEnabled;
+  final int inactiveReminderHours;
   final bool enableWaterReminders;
   final int waterReminderIntervalMinutes;
 
@@ -70,9 +78,27 @@ class UserProfileSettings {
       enableActivityReminders: json['enable_activity_reminders'] == true,
       activityReminderIntervalHours:
           (json['activity_reminder_interval_hours'] as num?)?.toInt() ?? 2,
+      activityReminderTime: _parseProfileTime(
+        json['activity_reminder_time']?.toString(),
+        fallback: DateTime(2000, 1, 1, 10),
+      ),
+      activityReminderDays: _parseReminderDays(json['activity_reminder_days']),
+      inactiveReminderEnabled: json['inactive_reminder_enabled'] == true,
+      inactiveReminderHours:
+          (json['inactive_reminder_hours'] as num?)?.toInt() ?? 3,
       enableWaterReminders: json['enable_water_reminders'] == true,
       waterReminderIntervalMinutes:
           (json['water_reminder_interval_minutes'] as num?)?.toInt() ?? 60,
     );
   }
+}
+
+List<int> _parseReminderDays(dynamic value) {
+  if (value is List) {
+    return value
+        .map((item) => int.tryParse(item.toString()) ?? 0)
+        .where((item) => item >= 1 && item <= 7)
+        .toList(growable: false);
+  }
+  return const <int>[];
 }

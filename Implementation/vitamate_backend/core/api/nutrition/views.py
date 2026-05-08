@@ -1,6 +1,6 @@
 from datetime import date
 
-from rest_framework import viewsets
+from rest_framework import status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,9 +9,11 @@ from core.api.nutrition.serializers import (
     FoodAutocompleteSerializer,
     FoodItemSerializer,
     MealLogSerializer,
+    MicronutrientTargetSerializer,
     NutritionFactsSerializer,
     NutritionServingOptionSerializer,
 )
+from core.services.nutrition.micronutrient_service import MicronutrientTrackingService
 from core.services.nutrition.food_search_service import FoodSearchService
 from core.services.nutrition.nutrition_service import NutritionService
 
@@ -36,6 +38,9 @@ class MealLogViewSet(viewsets.ModelViewSet):
             quantity=data.get("quantity"),
             unit=data.get("unit"),
             serving_option=data.get("serving_option"),
+            serving_label_snapshot=data.get("serving_label_snapshot"),
+            custom_serving_grams=data.get("serving_grams_equivalent"),
+            custom_serving_milliliters=data.get("serving_milliliters_equivalent"),
             consumed_at=data.get("consumed_at"),
             notes=data.get("notes", ""),
             source=data.get("source", "manual"),
@@ -60,6 +65,12 @@ class MealLogViewSet(viewsets.ModelViewSet):
             quantity=quantity,
             unit=unit,
             serving_option=data.get("serving_option", serializer.instance.serving_option),
+            serving_label_snapshot=data.get(
+                "serving_label_snapshot",
+                serializer.instance.serving_label_snapshot,
+            ),
+            custom_serving_grams=data.get("serving_grams_equivalent"),
+            custom_serving_milliliters=data.get("serving_milliliters_equivalent"),
             consumed_at=data["consumed_at"] if "consumed_at" in data else None,
             notes=data.get("notes", serializer.instance.notes),
             source=data.get("source", serializer.instance.source),
@@ -83,6 +94,7 @@ class FoodItemViewSet(viewsets.ModelViewSet):
             item_type=params.get("item_type"),
             query=params.get("q", "").strip(),
             category=params.get("category"),
+            meal_slot=params.get("meal_slot"),
             contains_caffeine=params.get("contains_caffeine"),
             is_hydration_trackable=params.get("is_hydration_trackable"),
             limit=params.get("limit"),
@@ -106,6 +118,7 @@ class FoodItemViewSet(viewsets.ModelViewSet):
             q=request.query_params.get("q", "").strip(),
             item_type=request.query_params.get("item_type"),
             category=request.query_params.get("category"),
+            meal_slot=request.query_params.get("meal_slot"),
             contains_caffeine=request.query_params.get("contains_caffeine"),
             is_hydration_trackable=request.query_params.get("is_hydration_trackable"),
             limit=request.query_params.get("limit"),
@@ -121,6 +134,7 @@ class FoodItemViewSet(viewsets.ModelViewSet):
             q=request.query_params.get("q", "").strip(),
             item_type=request.query_params.get("item_type"),
             category=request.query_params.get("category"),
+            meal_slot=request.query_params.get("meal_slot"),
             contains_caffeine=request.query_params.get("contains_caffeine"),
             is_hydration_trackable=request.query_params.get("is_hydration_trackable"),
             limit=request.query_params.get("limit"),
@@ -168,3 +182,29 @@ class NutritionServingOptionViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         NutritionService.delete_serving_option(instance)
+
+
+class MicronutrientOverviewView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(
+            MicronutrientTrackingService.overview(
+                user=request.user,
+                request_id=getattr(request, "request_id", ""),
+            )
+        )
+
+
+class MicronutrientTargetView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MicronutrientTargetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = MicronutrientTrackingService.upsert_target(
+            user=request.user,
+            payload=serializer.validated_data,
+            request_id=getattr(request, "request_id", ""),
+        )
+        return Response(payload, status=status.HTTP_201_CREATED)

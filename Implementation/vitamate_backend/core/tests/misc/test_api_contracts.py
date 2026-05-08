@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -6,7 +7,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from core.models import StepLog, WaterLog
+from core.models import ConditionMedication, ConditionMedicationLog, NutritionFacts, StepLog, WaterLog
 from core.services.steps_service import StepsService
 from test_utils.helpers import (
     auth_client_for_user,
@@ -93,6 +94,10 @@ class ApiContractTests(TestCase):
             "preferred_activity_type",
             "enable_activity_reminders",
             "activity_reminder_interval_hours",
+            "activity_reminder_time",
+            "activity_reminder_days",
+            "inactive_reminder_enabled",
+            "inactive_reminder_hours",
             "enable_water_reminders",
             "water_reminder_interval_minutes",
         }
@@ -173,6 +178,522 @@ class ApiContractTests(TestCase):
             "burn_current",
         }
         self.assertTrue(expected_keys.issubset(set(item.keys())))
+
+    def test_home_overview_contract(self):
+        res = self.client_auth.get("/api/home/overview/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
+        self.assertTrue(
+            {
+                "points",
+                "level",
+                "daily_points",
+                "today_steps",
+                "step_target",
+                "activity_burned_kcal",
+                "activity_minutes",
+                "burn_target_kcal",
+                "water_ml",
+                "sleep_minutes",
+                "calories",
+                "chronic_conditions",
+                "conditions_center",
+            }.issubset(res.data["data"].keys())
+        )
+        self.assertTrue(
+            {"is_stale", "computed_at", "snapshot_version", "request_id"}.issubset(
+                res.data["meta"].keys()
+            )
+        )
+
+    def test_progress_endpoints_contract(self):
+        overview = self.client_auth.get("/api/progress/overview/")
+        self.assertEqual(overview.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(overview.data.keys()))
+        self.assertTrue(
+            {
+                "summary",
+                "hydration",
+                "sleep",
+                "activity",
+                "gamification",
+                "chronic_conditions",
+                "medications",
+            }.issubset(overview.data["data"].keys())
+        )
+        self.assertTrue(
+            {
+                "overall_score",
+                "points",
+                "level",
+                "weekly_consistency",
+                "tracker_cards",
+                "timeline_7d",
+                "insight",
+            }.issubset(overview.data["data"].keys())
+        )
+
+        history = self.client_auth.get("/api/progress/history/")
+        self.assertEqual(history.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(history.data.keys()))
+        self.assertIn("history", history.data["data"])
+        self.assertEqual(len(history.data["data"]["history"]), 7)
+
+        detail = self.client_auth.get("/api/progress/details/nutrition/?range_days=14")
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(detail.data.keys()))
+        self.assertTrue(
+            {
+                "tracker",
+                "title",
+                "score",
+                "status",
+                "range_days",
+                "summary_cards",
+                "metrics",
+                "trend",
+                "sections",
+                "insight",
+            }.issubset(detail.data["data"].keys())
+        )
+        self.assertEqual(detail.data["data"]["tracker"], "nutrition")
+        self.assertEqual(detail.data["data"]["range_days"], 14)
+
+    def test_progress_overview_uses_projection_when_snapshot_missing(self):
+        profile = self.user.userprofile
+        profile.daily_calorie_target = 2150
+        profile.daily_water_target = 2.4
+        profile.daily_step_goal = 8500
+        profile.daily_burn_goal = 420
+        profile.recommended_sleep_hours = 7.5
+        profile.save(
+            update_fields=[
+                "daily_calorie_target",
+                "daily_water_target",
+                "daily_step_goal",
+                "daily_burn_goal",
+                "recommended_sleep_hours",
+            ]
+        )
+
+        res = self.client_auth.get("/api/progress/overview/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["data"]["summary"]["calories_target"], 2150)
+        self.assertEqual(res.data["data"]["summary"]["burn_target"], 420)
+        self.assertEqual(res.data["data"]["hydration"]["target"], 2.4)
+        self.assertEqual(res.data["data"]["sleep"]["recommended_sleep_hours"], 7.5)
+        self.assertEqual(res.data["data"]["activity"]["steps_target"], 8500)
+
+    def test_feature_summary_endpoints_contract(self):
+        endpoints = {
+            "/api/nutrition/summary/": {
+                "target_calories",
+                "consumed_calories",
+                "burned_calories",
+                "remaining_calories",
+                "points",
+            },
+            "/api/nutrition/micronutrients/": {
+                "date",
+                "items",
+                "disclaimer",
+            },
+            "/api/hydration/summary/": {
+                "target_ml",
+                "consumed_ml",
+                "remaining_ml",
+                "progress_percent",
+            },
+            "/api/sleep/summary/": {
+                "goal_hours",
+                "logged_hours_today",
+                "progress_percent",
+                "sleep_points",
+            },
+            "/api/steps/summary/": {
+                "target_steps",
+                "steps_today",
+                "remaining_steps",
+                "distance_km",
+                "calories_burned",
+                "burn_rate_kcal_per_km",
+                "points",
+            },
+            "/api/activity/summary/": {
+                "burn_target",
+                "burn_current",
+                "exercise_minutes",
+                "points_estimate",
+                "today_summary",
+                "weekly_summary",
+                "active_session",
+                "suggestions",
+            },
+            "/api/medications/overview/": {
+                "medications",
+                "today_plan",
+                "overall_adherence",
+                "reminder_sync",
+                "snapshot_summary",
+            },
+            "/api/chronic/overview/": {
+                "conditions",
+                "today_doses",
+                "summary",
+            },
+        }
+
+        for endpoint, expected_keys in endpoints.items():
+            with self.subTest(endpoint=endpoint):
+                res = self.client_auth.get(endpoint)
+                self.assertEqual(res.status_code, status.HTTP_200_OK)
+                self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
+                self.assertTrue(expected_keys.issubset(res.data["data"].keys()))
+
+    def test_nutrition_summary_uses_profile_calorie_target_when_snapshot_missing(self):
+        self.user.userprofile.daily_calorie_target = 2150
+        self.user.userprofile.save(update_fields=["daily_calorie_target"])
+
+        res = self.client_auth.get("/api/nutrition/summary/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["data"]["target_calories"], 2150)
+
+    def test_activity_and_steps_summaries_use_projection_when_snapshot_missing(self):
+        profile = self.user.userprofile
+        profile.daily_step_goal = 9000
+        profile.daily_burn_goal = 450
+        profile.save(update_fields=["daily_step_goal", "daily_burn_goal"])
+
+        self.client_auth.post(
+            "/api/steps/",
+            {"steps_count": 2500, "distance_km": 1.8},
+            format="json",
+        )
+        self.client_auth.post(
+            "/api/activities/",
+            {"exercise": self.exercise.id, "duration_minutes": 20},
+            format="json",
+        )
+
+        steps_res = self.client_auth.get("/api/steps/summary/")
+        activity_res = self.client_auth.get("/api/activity/summary/")
+
+        self.assertEqual(steps_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(steps_res.data["data"]["target_steps"], 9000)
+        self.assertEqual(steps_res.data["data"]["steps_today"], 2500)
+        self.assertGreater(steps_res.data["data"]["calories_burned"], 0)
+
+        self.assertEqual(activity_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(activity_res.data["data"]["burn_target"], 450)
+        self.assertEqual(activity_res.data["data"]["exercise_minutes"], 20)
+        self.assertGreater(activity_res.data["data"]["burn_current"], 0)
+        self.assertGreater(activity_res.data["data"]["points_estimate"], 0)
+
+        home_res = self.client_auth.get("/api/home/overview/")
+        progress_res = self.client_auth.get("/api/progress/overview/")
+
+        self.assertEqual(home_res.status_code, status.HTTP_200_OK)
+        self.assertGreater(home_res.data["data"]["points"], 0)
+        self.assertGreaterEqual(home_res.data["data"]["level"], 1)
+        self.assertGreater(home_res.data["data"]["daily_points"], 0)
+        self.assertEqual(home_res.data["data"]["today_steps"], 2500)
+        self.assertEqual(home_res.data["data"]["step_target"], 9000)
+        self.assertEqual(home_res.data["data"]["activity_minutes"], 20)
+        self.assertGreater(home_res.data["data"]["activity_burned_kcal"], 0)
+        self.assertEqual(home_res.data["data"]["burn_target_kcal"], 450)
+
+        self.assertEqual(progress_res.status_code, status.HTTP_200_OK)
+        self.assertGreater(
+            progress_res.data["data"]["summary"]["calories_burned"],
+            0,
+        )
+        self.assertEqual(progress_res.data["data"]["activity"]["steps"], 2500)
+
+    def test_activity_session_endpoints_contract(self):
+        start = self.client_auth.post(
+            "/api/activity/sessions/",
+            {
+                "exercise": self.exercise.id,
+                "target_duration_seconds": 1800,
+                "intensity": "moderate",
+                "source": "live",
+            },
+            format="json",
+        )
+
+        self.assertEqual(start.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            {
+                "id",
+                "exercise",
+                "exercise_name",
+                "exercise_icon_key",
+                "status",
+                "source",
+                "intensity",
+                "target_duration_seconds",
+                "actual_duration_seconds",
+                "remaining_duration_seconds",
+                "progress_percent",
+                "estimated_calories",
+                "calories_burned",
+                "started_at",
+                "total_paused_seconds",
+            }.issubset(set(start.data.keys()))
+        )
+
+        session_id = start.data["id"]
+        active = self.client_auth.get("/api/activity/sessions/active/")
+        self.assertEqual(active.status_code, status.HTTP_200_OK)
+        self.assertEqual(active.data["id"], session_id)
+
+        pause = self.client_auth.patch(
+            f"/api/activity/sessions/{session_id}/pause/",
+            {},
+            format="json",
+        )
+        self.assertEqual(pause.status_code, status.HTTP_200_OK)
+        self.assertEqual(pause.data["status"], "paused")
+
+        resume = self.client_auth.patch(
+            f"/api/activity/sessions/{session_id}/resume/",
+            {},
+            format="json",
+        )
+        self.assertEqual(resume.status_code, status.HTTP_200_OK)
+        self.assertEqual(resume.data["status"], "running")
+
+        edit = self.client_auth.patch(
+            f"/api/activity/sessions/{session_id}/edit/",
+            {"target_duration_seconds": 2100, "intensity": "intense"},
+            format="json",
+        )
+        self.assertEqual(edit.status_code, status.HTTP_200_OK)
+        self.assertEqual(edit.data["target_duration_seconds"], 2100)
+        self.assertEqual(edit.data["intensity"], "intense")
+
+        finish = self.client_auth.post(
+            f"/api/activity/sessions/{session_id}/finish/",
+            {"save_partial": True},
+            format="json",
+        )
+        self.assertEqual(finish.status_code, status.HTTP_200_OK)
+        self.assertEqual(finish.data["status"], "completed")
+
+        no_active = self.client_auth.get("/api/activity/sessions/active/")
+        self.assertEqual(no_active.status_code, status.HTTP_200_OK)
+        self.assertIsNone(no_active.data)
+
+    def test_micronutrient_overview_uses_meal_snapshots(self):
+        NutritionFacts.objects.create(
+            food_item=self.food,
+            basis_type="per_100g",
+            basis_amount=100,
+            basis_unit="g",
+            calcium_mg=120,
+            iron_mg=2,
+            vitamin_d_mcg=3,
+        )
+        self.client_auth.post(
+            "/api/meals/",
+            {"food": self.food.id, "meal_type": "lunch", "quantity_grams": 200},
+            format="json",
+        )
+
+        res = self.client_auth.get("/api/nutrition/micronutrients/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
+        items = {item["code"]: item for item in res.data["data"]["items"]}
+        self.assertIn("calcium_mg", items)
+        self.assertIn("vitamin_d_mcg", items)
+        self.assertEqual(items["calcium_mg"]["food_consumed"], 240.0)
+        self.assertEqual(items["vitamin_d_mcg"]["food_consumed"], 6.0)
+        self.assertEqual(items["calcium_mg"]["supplement_consumed"], 0.0)
+
+    def test_micronutrient_target_can_create_linked_supplement_plan(self):
+        target_res = self.client_auth.post(
+            "/api/nutrition/micronutrients/targets/",
+            {
+                "nutrient_code": "vitamin_d_mcg",
+                "target_value": 20,
+                "note": "Low vitamin D",
+                "create_medication_plan": True,
+                "supplement_name": "Vitamin D",
+                "supplement_amount": 25,
+                "supplement_unit": "mcg",
+                "schedule_time": "08:30",
+            },
+            format="json",
+        )
+
+        self.assertEqual(target_res.status_code, status.HTTP_201_CREATED)
+        items = {item["code"]: item for item in target_res.data["data"]["items"]}
+        vitamin_d = items["vitamin_d_mcg"]
+        self.assertTrue(vitamin_d["deficiency_tracked"])
+        self.assertIsNotNone(vitamin_d["linked_medication"])
+
+        medication_id = vitamin_d["linked_medication"]["id"]
+        ConditionMedicationLog.objects.create(
+            medication_id=medication_id,
+            scheduled_date=date.today(),
+            status=ConditionMedicationLog.STATUS_TAKEN,
+            dose_taken_amount=Decimal("25"),
+        )
+
+        overview = self.client_auth.get("/api/nutrition/micronutrients/")
+
+        self.assertEqual(overview.status_code, status.HTTP_200_OK)
+        items = {item["code"]: item for item in overview.data["data"]["items"]}
+        self.assertEqual(items["vitamin_d_mcg"]["food_consumed"], 0.0)
+        self.assertEqual(items["vitamin_d_mcg"]["supplement_consumed"], 25.0)
+
+    def test_micronutrient_target_can_create_medication_from_name_without_numeric_dose(self):
+        target_res = self.client_auth.post(
+            "/api/nutrition/micronutrients/targets/",
+            {
+                "nutrient_code": "vitamin_d_mcg",
+                "lab_value": 18,
+                "current_medication_name": "Vitamin D drops",
+                "current_medication_dose": "1000 IU daily",
+                "create_medication_plan": True,
+                "schedule_time": "09:00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(target_res.status_code, status.HTTP_201_CREATED)
+        items = {item["code"]: item for item in target_res.data["data"]["items"]}
+        vitamin_d = items["vitamin_d_mcg"]
+        self.assertTrue(vitamin_d["deficiency_tracked"])
+        self.assertIsNotNone(vitamin_d["linked_medication"])
+        self.assertEqual(
+            vitamin_d["linked_medication"]["display_name"],
+            "Vitamin D drops",
+        )
+
+        medication = ConditionMedication.objects.get(
+            id=vitamin_d["linked_medication"]["id"],
+        )
+        self.assertEqual(medication.display_name, "Vitamin D drops")
+        self.assertEqual(medication.dosage, "1000 IU daily")
+        self.assertEqual(medication.supplement_nutrient.code, "vitamin_d_mcg")
+
+        overview = self.client_auth.get("/api/medications/overview/")
+        medication_names = [
+            item["display_name"] for item in overview.data["data"]["medications"]
+        ]
+        self.assertIn("Vitamin D drops", medication_names)
+
+    def test_micronutrient_target_accepts_lab_context_and_suggests_daily_target(self):
+        target_res = self.client_auth.post(
+            "/api/nutrition/micronutrients/targets/",
+            {
+                "nutrient_code": "vitamin_d_mcg",
+                "lab_value": 18,
+                "current_medication_name": "Vitamin D drops",
+                "current_medication_dose": "1000 IU daily",
+            },
+            format="json",
+        )
+
+        self.assertEqual(target_res.status_code, status.HTTP_201_CREATED)
+        items = {item["code"]: item for item in target_res.data["data"]["items"]}
+        vitamin_d = items["vitamin_d_mcg"]
+        self.assertTrue(vitamin_d["deficiency_tracked"])
+        self.assertEqual(vitamin_d["target_value"], 18.75)
+        self.assertEqual(vitamin_d["lab_context"]["value"], 18.0)
+        self.assertEqual(vitamin_d["lab_context"]["reference_min"], 30.0)
+        self.assertEqual(vitamin_d["lab_context"]["reference_max"], 100.0)
+        self.assertEqual(
+            vitamin_d["lab_context"]["calculation_basis"],
+            "lab_below_range",
+        )
+        self.assertEqual(
+            vitamin_d["lab_context"]["improvement_plan"]["status"],
+            "build_up",
+        )
+        self.assertEqual(
+            vitamin_d["lab_context"]["current_medication_name"],
+            "Vitamin D drops",
+        )
+
+    def test_micronutrient_lab_above_range_creates_mineral_limit(self):
+        target_res = self.client_auth.post(
+            "/api/nutrition/micronutrients/targets/",
+            {
+                "nutrient_code": "sodium_mg",
+                "lab_value": 150,
+            },
+            format="json",
+        )
+
+        self.assertEqual(target_res.status_code, status.HTTP_201_CREATED)
+        items = {item["code"]: item for item in target_res.data["data"]["items"]}
+        sodium = items["sodium_mg"]
+        self.assertTrue(sodium["deficiency_tracked"])
+        self.assertEqual(sodium["target_value"], 1200.0)
+        self.assertEqual(sodium["max_value"], 1200.0)
+        self.assertEqual(
+            sodium["lab_context"]["calculation_basis"],
+            "lab_above_range",
+        )
+
+    def test_micronutrient_sodium_below_range_creates_goal_and_medication(self):
+        target_res = self.client_auth.post(
+            "/api/nutrition/micronutrients/targets/",
+            {
+                "nutrient_code": "sodium_mg",
+                "lab_value": 100,
+                "current_medication_name": "Sodium supplement",
+                "create_medication_plan": True,
+                "supplement_name": "Sodium supplement",
+                "supplement_amount": 2,
+                "supplement_unit": "mg",
+                "schedule_time": "09:00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(target_res.status_code, status.HTTP_201_CREATED)
+        items = {item["code"]: item for item in target_res.data["data"]["items"]}
+        sodium = items["sodium_mg"]
+        self.assertTrue(sodium["deficiency_tracked"])
+        self.assertEqual(sodium["target_value"], 1875.0)
+        self.assertEqual(sodium["min_value"], 1875.0)
+        self.assertIsNotNone(sodium["linked_medication"])
+        self.assertEqual(
+            sodium["linked_medication"]["display_name"],
+            "Sodium supplement",
+        )
+
+        overview = self.client_auth.get("/api/medications/overview/")
+        medication_names = [
+            item["display_name"] for item in overview.data["data"]["medications"]
+        ]
+        self.assertIn("Sodium supplement", medication_names)
+
+    def test_chronic_guidance_overview_contract(self):
+        res = self.client_auth.get("/api/chronic/overview/?view=guidance")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
+        self.assertTrue({"conditions", "summary"}.issubset(res.data["data"].keys()))
+        self.assertNotIn("today_doses", res.data["data"])
+
+    def test_read_model_endpoints_include_debug_headers(self):
+        res = self.client_auth.get("/api/home/overview/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("X-VitaMate-Request-Id", res.headers)
+        self.assertIn("X-VitaMate-Latency-Ms", res.headers)
+        self.assertIn("X-VitaMate-Db-Queries", res.headers)
+        self.assertIn("X-VitaMate-Response-Bytes", res.headers)
+
+    def test_openapi_schema_endpoint_is_available(self):
+        res = self.client_auth.get("/api/schema/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("openapi", res.data)
 
     def test_water_post_contract(self):
         res = self.client_auth.post("/api/water/", {"amount_liter": 0.25}, format="json")

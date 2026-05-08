@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/network_error_mapper.dart';
@@ -22,6 +24,7 @@ class MedicationsController extends ChangeNotifier {
 
   final MedicationsRepository _repository;
   final MedicationReminderSyncer _reminderSyncer;
+  ReminderSyncPayload _cachedReminderSync = ReminderSyncPayload.empty();
 
   MedicationsState state = MedicationsState.initial();
 
@@ -29,33 +32,11 @@ class MedicationsController extends ChangeNotifier {
   List<MedicationDoseLog> get todayPlan => state.todayPlan;
 
   Future<void> refreshAll() async {
-    state = state.copyWith(
-      isLoading: true,
-      clearError: true,
+    await _refreshOverview(
+      showLoading: true,
+      fallbackError: 'Failed to load medications.',
       clearSuccess: true,
     );
-    notifyListeners();
-    try {
-      final medications = await _repository.getMedications();
-      final todayPlan = await _repository.getTodayPlan();
-      final overallAdherence = await _repository.getOverallAdherence();
-      state = state.copyWith(
-        isLoading: false,
-        medications: medications,
-        todayPlan: todayPlan,
-        overallAdherence: overallAdherence,
-        clearError: true,
-      );
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        errorMessage: NetworkErrorMapper.toMessage(
-          e,
-          fallback: 'Failed to load medications.',
-        ),
-      );
-    }
-    notifyListeners();
   }
 
   Future<void> loadMedications() async {
@@ -164,7 +145,9 @@ class MedicationsController extends ChangeNotifier {
     state = state.copyWith(reminderSyncInProgress: true, clearError: true);
     notifyListeners();
     try {
-      final payload = await _repository.getReminderSync();
+      final payload = _cachedReminderSync.items.isNotEmpty
+          ? _cachedReminderSync
+          : await _repository.getReminderSync();
       await _reminderSyncer(_plansFromPayload(payload));
       state = state.copyWith(reminderSyncInProgress: false);
       notifyListeners();
@@ -193,12 +176,21 @@ class MedicationsController extends ChangeNotifier {
     );
     notifyListeners();
     try {
-      await action();
-      await refreshAll();
-      await syncMedicationReminders();
-      HealthSyncBus.instance.notifyTrackerDataChanged();
-      state = state.copyWith(isSaving: false, successMessage: success);
+      final medication = await action();
+      state = state.copyWith(
+        isSaving: false,
+        medications: _upsertMedication(state.medications, medication),
+        successMessage: success,
+        clearError: true,
+      );
       notifyListeners();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.medication,
+        HealthSyncScope.nutrition,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
+      unawaited(_refreshAfterMedicationMutation());
       return true;
     } catch (e) {
       state = state.copyWith(
@@ -225,12 +217,30 @@ class MedicationsController extends ChangeNotifier {
     );
     notifyListeners();
     try {
-      await action();
-      await afterSuccess?.call();
-      await refreshAll();
-      HealthSyncBus.instance.notifyTrackerDataChanged();
-      state = state.copyWith(isSaving: false, successMessage: success);
+      final log = await action();
+      state = state.copyWith(
+        isSaving: false,
+        todayPlan: _upsertDoseLog(state.todayPlan, log),
+        successMessage: success,
+        clearError: true,
+      );
       notifyListeners();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.medication,
+        HealthSyncScope.nutrition,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
+      if (afterSuccess != null) {
+        unawaited(afterSuccess());
+      }
+      unawaited(
+        _refreshOverview(
+          showLoading: false,
+          fallbackError:
+              'Medication updated, but some data is still refreshing.',
+        ),
+      );
       return true;
     } catch (e) {
       state = state.copyWith(
@@ -271,5 +281,75 @@ class MedicationsController extends ChangeNotifier {
       }
     }
     return plans;
+  }
+
+  Future<void> _refreshOverview({
+    required bool showLoading,
+    required String fallbackError,
+    bool clearSuccess = false,
+  }) async {
+    if (showLoading) {
+      state = state.copyWith(
+        isLoading: true,
+        clearError: true,
+        clearSuccess: clearSuccess,
+      );
+      notifyListeners();
+    }
+    try {
+      final overview = await _repository.getOverview();
+      _cachedReminderSync = overview.reminderSync;
+      state = state.copyWith(
+        isLoading: false,
+        medications: overview.medications,
+        todayPlan: overview.todayPlan,
+        overallAdherence: overview.overallAdherence,
+        clearError: true,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: NetworkErrorMapper.toMessage(e, fallback: fallbackError),
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> _refreshAfterMedicationMutation() async {
+    await Future.wait<Object?>([
+      _refreshOverview(
+        showLoading: false,
+        fallbackError: 'Medication saved, but some data is still refreshing.',
+      ),
+      syncMedicationReminders(),
+    ]);
+  }
+
+  List<MedicationItem> _upsertMedication(
+    List<MedicationItem> medications,
+    MedicationItem medication,
+  ) {
+    final next = List<MedicationItem>.from(medications);
+    final index = next.indexWhere((item) => item.id == medication.id);
+    if (index >= 0) {
+      next[index] = medication;
+    } else {
+      next.insert(0, medication);
+    }
+    return next;
+  }
+
+  List<MedicationDoseLog> _upsertDoseLog(
+    List<MedicationDoseLog> logs,
+    MedicationDoseLog updatedLog,
+  ) {
+    final next = List<MedicationDoseLog>.from(logs);
+    final index = next.indexWhere((item) => item.logId == updatedLog.logId);
+    if (index >= 0) {
+      next[index] = updatedLog;
+    } else {
+      next.insert(0, updatedLog);
+    }
+    return next;
   }
 }

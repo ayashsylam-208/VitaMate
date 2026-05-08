@@ -63,6 +63,25 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         source="userprofile.activity_reminder_interval_hours",
         required=False,
     )
+    activity_reminder_time = serializers.TimeField(
+        source="userprofile.activity_reminder_time",
+        required=False,
+    )
+    activity_reminder_days = serializers.ListField(
+        source="userprofile.activity_reminder_days",
+        required=False,
+        child=serializers.IntegerField(min_value=1, max_value=7),
+    )
+    inactive_reminder_enabled = serializers.BooleanField(
+        source="userprofile.inactive_reminder_enabled",
+        required=False,
+    )
+    inactive_reminder_hours = serializers.IntegerField(
+        source="userprofile.inactive_reminder_hours",
+        required=False,
+        min_value=1,
+        max_value=24,
+    )
     enable_water_reminders = serializers.BooleanField(
         source="userprofile.enable_water_reminders",
         required=False,
@@ -94,6 +113,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             "preferred_activity_type",
             "enable_activity_reminders",
             "activity_reminder_interval_hours",
+            "activity_reminder_time",
+            "activity_reminder_days",
+            "inactive_reminder_enabled",
+            "inactive_reminder_hours",
             "enable_water_reminders",
             "water_reminder_interval_minutes",
         ]
@@ -109,4 +132,3 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             user_data=validated_data,
             profile_data=profile_data,
         )
-

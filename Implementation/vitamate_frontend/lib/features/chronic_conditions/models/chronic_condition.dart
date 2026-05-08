@@ -652,6 +652,7 @@ class ChronicCondition {
   final String severityCode;
   final String notes;
   final bool isActive;
+  final bool hasDetailPayload;
   final Map<String, dynamic> profileData;
   final List<ChronicTargetResult> targets;
   final ChronicEvaluation evaluation;
@@ -662,6 +663,13 @@ class ChronicCondition {
   final List<String> constraintSummary;
   final int dailyMedicationCount;
   final int dailyPendingDoses;
+  final int openAlertsCountSnapshot;
+  final ConditionIndicatorRecord? latestReadingSnapshot;
+  final String latestRecordedAtSnapshot;
+  final String summaryStatusLabelSnapshot;
+  final String summarySubtitleSnapshot;
+  final String summaryLineSnapshot;
+  final String secondarySummaryLineSnapshot;
   final String disclaimer;
 
   const ChronicCondition({
@@ -672,6 +680,7 @@ class ChronicCondition {
     required this.severityCode,
     required this.notes,
     required this.isActive,
+    required this.hasDetailPayload,
     required this.profileData,
     required this.targets,
     required this.evaluation,
@@ -682,11 +691,20 @@ class ChronicCondition {
     required this.constraintSummary,
     required this.dailyMedicationCount,
     required this.dailyPendingDoses,
+    required this.openAlertsCountSnapshot,
+    required this.latestReadingSnapshot,
+    required this.latestRecordedAtSnapshot,
+    required this.summaryStatusLabelSnapshot,
+    required this.summarySubtitleSnapshot,
+    required this.summaryLineSnapshot,
+    required this.secondarySummaryLineSnapshot,
     required this.disclaimer,
   });
 
   factory ChronicCondition.fromJson(Map<String, dynamic> json) {
     final summaryMap = _asMap(json['summary']);
+    final latestReadingMap = _asMap(json['latest_reading']);
+    final isCompact = _asString(json['view']) == 'compact';
     return ChronicCondition(
       id: _asInt(json['id']),
       conditionType: ChronicConditionType.fromJson(
@@ -701,11 +719,20 @@ class ChronicCondition {
           : _asString(json['severity_code']),
       notes: _asString(json['notes']),
       isActive: _asBool(json['is_active'], fallback: true),
+      hasDetailPayload: !isCompact,
       profileData: _asMap(json['profile_data']),
       targets: _asMapList(
         json['targets'],
       ).map(ChronicTargetResult.fromJson).toList(),
-      evaluation: ChronicEvaluation.fromJson(_asMap(json['evaluation'])),
+      evaluation: ChronicEvaluation.fromJson({
+        ..._asMap(json['evaluation']),
+        if (_asMap(json['evaluation']).isEmpty &&
+            _asString(json['evaluation_status']).isNotEmpty)
+          'status': _asString(json['evaluation_status']),
+        if (_asMap(json['evaluation']).isEmpty &&
+            _asString(json['latest_recorded_at']).isNotEmpty)
+          'latest_recorded_at': _asString(json['latest_recorded_at']),
+      }),
       medications: _asMapList(
         json['medications'],
       ).map(ChronicMedication.fromJson).toList(),
@@ -721,6 +748,17 @@ class ChronicCondition {
       constraintSummary: _asStringList(json['constraint_summary']),
       dailyMedicationCount: _asInt(json['daily_medication_count']),
       dailyPendingDoses: _asInt(json['daily_pending_doses']),
+      openAlertsCountSnapshot: _asInt(json['open_alerts_count']),
+      latestReadingSnapshot: latestReadingMap.isEmpty
+          ? null
+          : ConditionIndicatorRecord.fromJson(latestReadingMap),
+      latestRecordedAtSnapshot: _asString(json['latest_recorded_at']),
+      summaryStatusLabelSnapshot: _asString(json['summary_status_label']),
+      summarySubtitleSnapshot: _asString(json['summary_subtitle']),
+      summaryLineSnapshot: _asString(json['summary_line']),
+      secondarySummaryLineSnapshot: _asString(
+        json['secondary_summary_line'],
+      ),
       disclaimer: _asString(json['disclaimer']),
     );
   }
@@ -747,12 +785,22 @@ class ChronicCondition {
     (sum, medication) => sum + medication.pendingScheduleCount,
   );
 
-  int get openAlertsCount =>
-      alerts.where((alert) => alert.status == 'open').length;
+  int get openAlertsCount {
+    if (alerts.isNotEmpty) {
+      return alerts.where((alert) => alert.status == 'open').length;
+    }
+    return openAlertsCountSnapshot;
+  }
 
   bool get needsAttention =>
       evaluation.status == 'attention_needed' ||
-      evaluation.status == 'critical';
+      evaluation.status == 'critical' ||
+      {
+        'needs attention',
+        'high',
+        'low',
+        'elevated',
+      }.contains(summaryStatusLabelSnapshot.toLowerCase());
 
   ConditionIndicatorRecord? get latestReading {
     final summaryReading = summary?.latestReading;
@@ -762,12 +810,18 @@ class ChronicCondition {
     if (indicatorRecords.isNotEmpty) {
       return indicatorRecords.first;
     }
+    if (latestReadingSnapshot != null) {
+      return latestReadingSnapshot;
+    }
     return null;
   }
 
   String get uiLabel => conditionType.uiLabel;
 
   String get summaryStatusLabel {
+    if (summaryStatusLabelSnapshot.isNotEmpty) {
+      return summaryStatusLabelSnapshot;
+    }
     final latest = latestReading;
     if (latest != null && latest.classification.isNotEmpty) {
       if (conditionType.slug == 'hypertension') {
@@ -822,6 +876,9 @@ class ChronicCondition {
   }
 
   String get summarySubtitle {
+    if (summarySubtitleSnapshot.isNotEmpty) {
+      return summarySubtitleSnapshot;
+    }
     switch (conditionType.slug) {
       case 'diabetes':
         return 'Last glucose reading recorded';
@@ -835,6 +892,9 @@ class ChronicCondition {
   }
 
   String get summaryLine {
+    if (summaryLineSnapshot.isNotEmpty) {
+      return summaryLineSnapshot;
+    }
     final latest = latestReading;
     if (latest != null) {
       return latest.primaryValueLabel;
@@ -852,6 +912,9 @@ class ChronicCondition {
   }
 
   String get secondarySummaryLine {
+    if (secondarySummaryLineSnapshot.isNotEmpty) {
+      return secondarySummaryLineSnapshot;
+    }
     if (summary?.recommendations.isNotEmpty == true) {
       return summary!.recommendations.first.message;
     }

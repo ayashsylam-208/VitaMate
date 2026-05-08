@@ -12,11 +12,20 @@ class SleepSummary {
   });
 
   factory SleepSummary.empty() => const SleepSummary(
-        goalHours: 0,
-      loggedHoursToday: 0,
-      progressPercent: 0,
-      sleepPoints: 0,
+    goalHours: 0,
+    loggedHoursToday: 0,
+    progressPercent: 0,
+    sleepPoints: 0,
+  );
+
+  factory SleepSummary.fromSummaryJson(Map<String, dynamic> json) {
+    return SleepSummary(
+      goalHours: _toDouble(json['goal_hours']),
+      loggedHoursToday: _toDouble(json['logged_hours_today']),
+      progressPercent: _toInt(json['progress_percent']),
+      sleepPoints: _toInt(json['sleep_points']),
     );
+  }
 
   factory SleepSummary.fromDashboard(Map<String, dynamic> d) {
     Map<String, dynamic> asMap(dynamic v) {
@@ -46,7 +55,23 @@ class SleepSummary {
       goalHours: toDouble(sleep['recommended_sleep_hours']),
       loggedHoursToday: toDouble(sleep['logged_hours_today']),
       progressPercent: toInt(sleep['progress_percent']),
-      sleepPoints: toInt(d['sleep_points'] ?? d['points'] ?? gamification['points']),
+      sleepPoints: toInt(
+        d['sleep_points'] ?? d['points'] ?? gamification['points'],
+      ),
     );
   }
+}
+
+int _toInt(dynamic v) {
+  if (v == null) return 0;
+  if (v is int) return v;
+  if (v is double) return v.round();
+  return int.tryParse(v.toString()) ?? 0;
+}
+
+double _toDouble(dynamic v) {
+  if (v == null) return 0;
+  if (v is double) return v;
+  if (v is int) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0;
 }

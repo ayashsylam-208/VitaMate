@@ -12,9 +12,11 @@ from core.models import (
     ConditionMedicationLog,
     ConditionType,
     Medicine,
+    Nutrient,
     UserCondition,
 )
 from core.services.condition_medication_service import ConditionMedicationService
+from gamification.models import UserScore
 from test_utils.helpers import auth_client_for_user, create_user_with_profile
 
 
@@ -219,6 +221,121 @@ class UnifiedMedicationApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(second_take.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_manual_medication_taken_awards_points_once(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+
+        take_res = self.client_auth.post(
+            f"/api/medications/doses/{log_id}/taken/",
+            {"taken_at": timezone.now().isoformat(), "dose_taken_amount": "1000"},
+            format="json",
+        )
+        self.assertEqual(take_res.status_code, status.HTTP_200_OK, take_res.data)
+        log = ConditionMedicationLog.objects.get(id=log_id)
+        self.assertIn(
+            log.status,
+            {
+                ConditionMedicationLog.STATUS_TAKEN_ON_TIME,
+                ConditionMedicationLog.STATUS_TAKEN_LATE,
+            },
+        )
+        self.assertEqual(
+            log.points_applied,
+            3 if log.status == ConditionMedicationLog.STATUS_TAKEN_ON_TIME else 1,
+        )
+        self.assertEqual(UserScore.objects.get(user=self.user).total_points, log.points_applied)
+
+    def test_taken_medication_updates_home_and_progress_points(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+
+        take_res = self.client_auth.post(
+            f"/api/medications/doses/{log_id}/taken/",
+            {"taken_at": timezone.now().isoformat()},
+            format="json",
+        )
+
+        self.assertEqual(take_res.status_code, status.HTTP_200_OK, take_res.data)
+        log = ConditionMedicationLog.objects.get(id=log_id)
+        score = UserScore.objects.get(user=self.user)
+
+        home_res = self.client_auth.get("/api/home/overview/")
+        progress_res = self.client_auth.get("/api/progress/overview/")
+
+        self.assertEqual(home_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(progress_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(home_res.data["data"]["points"], score.total_points)
+        self.assertGreaterEqual(home_res.data["data"]["daily_points"], log.points_applied)
+        self.assertEqual(
+            progress_res.data["data"]["gamification"]["points"],
+            score.total_points,
+        )
+        self.assertEqual(
+            progress_res.data["data"]["medications"]["taken_today"],
+            1,
+        )
+
+    def test_home_overview_repairs_legacy_taken_dose_without_points(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log = ConditionMedicationLog.objects.get(id=log_id)
+        log.status = ConditionMedicationLog.STATUS_TAKEN_ON_TIME
+        log.taken_at = timezone.now()
+        log.points_applied = 0
+        log.save(update_fields=["status", "taken_at", "points_applied", "updated_at"])
+
+        res = self.client_auth.get("/api/home/overview/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        log.refresh_from_db()
+        self.assertEqual(log.points_applied, 3)
+        self.assertEqual(UserScore.objects.get(user=self.user).total_points, 3)
+        self.assertGreaterEqual(res.data["data"]["daily_points"], 3)
+
+    def test_taken_supplement_dose_counts_in_micronutrient_overview(self):
+        nutrient = Nutrient.objects.get_or_create(
+            code="vitamin_d_mcg",
+            defaults={
+                "name": "Vitamin D",
+                "unit": "mcg",
+                "category": "vitamin",
+                "is_core": False,
+            },
+        )[0]
+        res = self.client_auth.post(
+            "/api/medications/",
+            {
+                "display_name": "Vitamin D supplement",
+                "source_type": "manual",
+                "dose_amount": "25",
+                "dose_unit": "mcg",
+                "form": "capsule",
+                "start_date": str(timezone.localdate()),
+                "supplement_nutrient_id": nutrient.id,
+                "supplement_nutrient_amount": 25,
+                "supplement_nutrient_unit": "mcg",
+                "schedules": [{"schedule_type": "daily", "time": self._future_time()}],
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+
+        take_res = self.client_auth.post(
+            f"/api/medications/doses/{log_id}/taken/",
+            {"taken_at": timezone.now().isoformat()},
+            format="json",
+        )
+        self.assertEqual(take_res.status_code, status.HTTP_200_OK, take_res.data)
+
+        micro_res = self.client_auth.get("/api/nutrition/micronutrients/")
+        self.assertEqual(micro_res.status_code, status.HTTP_200_OK)
+        items = {item["code"]: item for item in micro_res.data["data"]["items"]}
+        self.assertEqual(items["vitamin_d_mcg"]["supplement_consumed"], 25.0)
 
     def test_snooze_skip_and_adherence_summary(self):
         create_res = self._create_manual_medication()

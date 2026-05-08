@@ -23,6 +23,14 @@ class ActivityRepository:
         )
 
     @staticmethod
+    def list_for_user_between_dates(user, *, start_date, end_date):
+        return (
+            ActivityLog.objects.filter(user=user, date__gte=start_date, date__lte=end_date)
+            .select_related("exercise")
+            .order_by("-date", "-id")
+        )
+
+    @staticmethod
     def save(log, *, update_fields=None):
         if update_fields is None:
             log.save()

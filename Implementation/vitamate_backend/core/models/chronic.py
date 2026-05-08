@@ -213,6 +213,24 @@ class UserNutrientTarget(models.Model):
     max_value = models.FloatField(null=True, blank=True)
     period = models.CharField(max_length=20, choices=PERIOD_CHOICES, default=PERIOD_DAILY)
     source = models.CharField(max_length=30, choices=SOURCE_CHOICES, default=SOURCE_DEFAULT)
+    note = models.TextField(blank=True)
+    lab_test_name = models.CharField(max_length=120, blank=True)
+    lab_value = models.FloatField(null=True, blank=True)
+    lab_unit = models.CharField(max_length=30, blank=True)
+    lab_reference_min = models.FloatField(null=True, blank=True)
+    lab_reference_max = models.FloatField(null=True, blank=True)
+    lab_test_date = models.DateField(null=True, blank=True)
+    clinician_recommended_value = models.FloatField(null=True, blank=True)
+    calculation_basis = models.CharField(max_length=40, blank=True)
+    current_medication_name = models.CharField(max_length=120, blank=True)
+    current_medication_dose = models.CharField(max_length=80, blank=True)
+    linked_medication = models.ForeignKey(
+        "ConditionMedication",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="linked_nutrient_targets",
+    )
 
     class Meta:
         ordering = ("user_id", "period", "nutrient__code", "source")
@@ -422,6 +440,15 @@ class ConditionMedication(models.Model):
     )
     reminder_enabled = models.BooleanField(default=True)
     reminder_lead_minutes = models.PositiveSmallIntegerField(default=15)
+    supplement_nutrient = models.ForeignKey(
+        Nutrient,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supplement_medication_plans",
+    )
+    supplement_nutrient_amount = models.FloatField(null=True, blank=True)
+    supplement_nutrient_unit = models.CharField(max_length=30, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

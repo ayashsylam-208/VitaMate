@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../state/medications_controller.dart';
 import '../widgets/today_dose_tile.dart';
@@ -36,6 +37,7 @@ class _MedicationTodayPlanScreenState extends State<MedicationTodayPlanScreen> {
   Widget build(BuildContext context) {
     final doses = widget.controller.todayPlan;
     return Scaffold(
+      key: const ValueKey(AppTestKeys.medicationsTodayScreen),
       backgroundColor: VitaMateTheme.background,
       appBar: AppBar(title: const Text('Today plan')),
       body: SafeArea(

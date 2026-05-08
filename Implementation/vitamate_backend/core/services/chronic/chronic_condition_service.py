@@ -65,10 +65,60 @@ class ChronicConditionService:
             HealthTarget.SOURCE_COMPUTED_RULE: 3,
         }.get(source_type, 3)
 
+    @staticmethod
+    def _prefetched_items(instance, relation_name: str):
+        prefetched = getattr(instance, "_prefetched_objects_cache", None) or {}
+        return prefetched.get(relation_name)
+
+    @classmethod
+    def _ordered_targets_for_condition(cls, *, user_condition: UserCondition):
+        prefetched = cls._prefetched_items(user_condition, "targets")
+        if prefetched is not None:
+            return sorted(prefetched, key=lambda item: (item.priority, -item.id))
+        return list(user_condition.targets.order_by("priority", "-id"))
+
+    @staticmethod
+    def _serialize_target_payload(target: HealthTarget) -> dict:
+        return {
+            "id": target.id,
+            "target_key": target.target_key,
+            "target_name": target.target_name,
+            "category": target.category,
+            "metric_key": target.metric_key,
+            "evaluation_mode": target.evaluation_mode,
+            "status": target.status,
+            "unit": target.unit,
+            "min_value": target.min_value,
+            "max_value": target.max_value,
+            "current_value": target.last_evaluated_value,
+            "last_evaluated_value": target.last_evaluated_value,
+            "source_type": target.source_type,
+            "priority": target.priority,
+            "guidance": target.guidance,
+            "evidence_source": target.evidence_source,
+            "is_scored": target.is_scored,
+            "is_inference": target.is_inference,
+        }
+
+    @classmethod
+    def _latest_daily_evaluation(
+        cls,
+        *,
+        user_condition: UserCondition,
+        on_date: date,
+    ) -> ConditionDailyEvaluation | None:
+        prefetched = cls._prefetched_items(user_condition, "daily_evaluations")
+        if prefetched is not None:
+            for evaluation in prefetched:
+                if evaluation.evaluation_date == on_date:
+                    return evaluation
+            return prefetched[0] if prefetched else None
+        return user_condition.daily_evaluations.order_by("-evaluation_date", "-id").first()
+
     @classmethod
     def effective_targets_for_condition(cls, *, user_condition: UserCondition) -> list[HealthTarget]:
         selected: dict[str, HealthTarget] = {}
-        for target in user_condition.targets.order_by("priority", "-id"):
+        for target in cls._ordered_targets_for_condition(user_condition=user_condition):
             existing = selected.get(target.target_key)
             if existing is None or target.priority < existing.priority:
                 selected[target.target_key] = target
@@ -486,6 +536,386 @@ class ChronicConditionService:
     @staticmethod
     def readings_timeline(*, user_condition: UserCondition) -> list[dict]:
         return ConditionIndicatorService.serialize_timeline(user_condition=user_condition)
+
+    @staticmethod
+    def _compact_summary_subtitle(slug: str) -> str:
+        if slug == "diabetes":
+            return "Last glucose reading recorded"
+        if slug == "hypertension":
+            return "Last blood pressure reading recorded"
+        if slug == "dyslipidemia":
+            return "Latest lipid follow-up recorded"
+        return "Latest condition update"
+
+    @staticmethod
+    def _format_compact_metric(value: float | int | None) -> str:
+        if value in (None, ""):
+            return ""
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if numeric == round(numeric):
+            return str(int(round(numeric)))
+        return f"{numeric:.1f}"
+
+    @classmethod
+    def _compact_summary_line(cls, *, slug: str, latest_reading) -> str:
+        if latest_reading is not None:
+            indicator_type = latest_reading.indicator_type or latest_reading.indicator_name
+            payload = dict(latest_reading.payload or {})
+            unit = (latest_reading.unit or "").strip()
+            if indicator_type == "blood_pressure":
+                systolic = cls._format_compact_metric(
+                    payload.get("systolic") or latest_reading.value_1 or latest_reading.value
+                )
+                diastolic = cls._format_compact_metric(payload.get("diastolic") or latest_reading.value_2)
+                return f"{systolic}/{diastolic} {unit}".strip()
+            if indicator_type == "lipid_panel":
+                ldl = cls._format_compact_metric(payload.get("ldl") or latest_reading.value_1)
+                return f"LDL {ldl} {unit}".strip()
+            primary = cls._format_compact_metric(latest_reading.value_1 or latest_reading.value)
+            return f"{primary} {unit}".strip()
+        if slug == "dyslipidemia":
+            return "Track follow-ups and nutrition-linked insights."
+        if slug == "hypertension":
+            return "Track blood pressure and sodium-aware guidance."
+        if slug == "diabetes":
+            return "Track glucose and daily care guidance."
+        return "Tracking summary not available yet."
+
+    @staticmethod
+    def _compact_secondary_summary_line(*, slug: str, alert_message: str = "") -> str:
+        if alert_message.strip():
+            return alert_message.strip()
+        if slug == "dyslipidemia":
+            return "Nutrition choices and follow-up targets stay connected."
+        return "Open the tracking view for readings, targets, and guidance."
+
+    @staticmethod
+    def _compact_status_label(*, slug: str, classification: str, needs_attention: bool) -> str:
+        if classification:
+            if slug == "hypertension":
+                if classification in {"in_range", "controlled"}:
+                    return "Controlled"
+                if classification == "elevated":
+                    return "Elevated"
+                if classification in {"high", "critical"}:
+                    return "High"
+            if slug == "diabetes":
+                if classification in {"in_range", "normal"}:
+                    return "In range"
+                if classification == "low":
+                    return "Low"
+                if classification in {"high", "elevated", "critical"}:
+                    return "High"
+            if slug == "dyslipidemia":
+                if classification in {"in_range", "normal", "controlled", "on_track"}:
+                    return "On track"
+                return "Needs attention"
+            return classification.replace("_", " ").title()
+        if slug == "dyslipidemia":
+            return "Needs attention" if needs_attention else "On track"
+        if slug == "hypertension":
+            return "High" if needs_attention else "Controlled"
+        if slug == "diabetes":
+            return "High" if needs_attention else "In range"
+        return "Needs attention" if needs_attention else "Active"
+
+    @classmethod
+    def _minimal_condition_type_payload(
+        cls,
+        *,
+        user_condition: UserCondition,
+    ) -> dict:
+        condition_type = user_condition.condition_type
+        return {
+            "id": condition_type.id,
+            "code": condition_type.code,
+            "name": condition_type.name,
+            "slug": condition_type.slug,
+            "display_name": ConditionCatalogService.display_name(condition_type),
+            "description": "",
+            "can_add": False,
+            "is_active_for_user": user_condition.is_active,
+            "severity_options": [],
+            "restrictions": [],
+            "rule_profiles": [],
+            "setup_fields": [],
+            "measurement_types": [],
+            "supports_direct_daily_reading": bool(
+                (condition_type.setup_schema or {}).get("supports_direct_daily_reading")
+            ),
+        }
+
+    @classmethod
+    def condition_light_overview(
+        cls,
+        *,
+        user_condition: UserCondition,
+        on_date: date | None = None,
+        include_targets: bool = True,
+    ) -> dict:
+        on_date = on_date or cls._system_local_now().date()
+        latest_evaluation = cls._latest_daily_evaluation(
+            user_condition=user_condition,
+            on_date=on_date,
+        )
+        target_payload = (
+            [
+                cls._serialize_target_payload(target)
+                for target in cls.effective_targets_for_condition(
+                    user_condition=user_condition
+                )
+            ]
+            if include_targets
+            else []
+        )
+        tracker_impacts = (
+            list(latest_evaluation.tracker_impacts_payload or [])
+            if include_targets and latest_evaluation
+            else []
+        )
+        latest_recorded_at = (
+            latest_evaluation.latest_recorded_at.isoformat()
+            if latest_evaluation and latest_evaluation.latest_recorded_at
+            else ""
+        )
+        evaluation_status = (
+            latest_evaluation.status
+            if latest_evaluation and latest_evaluation.status
+            else "stable"
+        )
+        needs_attention = evaluation_status in {"attention_needed", "critical"}
+        slug = user_condition.condition_type.slug
+        evaluation_payload = {
+            "evaluation_date": str(
+                latest_evaluation.evaluation_date if latest_evaluation else on_date
+            ),
+            "status": evaluation_status,
+            "risk_flags": [],
+            "medication_adherence_percent": 0.0,
+            "restriction_adherence_percent": 0.0,
+            "points_delta": 0,
+            "streak_bonus": 0,
+            "latest_recorded_at": latest_recorded_at,
+            "recommendations": [],
+            "tracker_impacts": tracker_impacts,
+            "targets": [],
+        }
+        summary_payload = {
+            "condition_id": user_condition.id,
+            "status": evaluation_status,
+            "risk_flags": [],
+            "latest_recorded_at": latest_recorded_at,
+            "recommendations": [],
+            "tracker_impacts": [],
+            "latest_reading": None,
+            "alerts": [],
+            "targets": [],
+        }
+        return {
+            "view": "compact",
+            "id": user_condition.id,
+            "condition_type": cls._minimal_condition_type_payload(
+                user_condition=user_condition
+            ),
+            "diagnosis_date": str(user_condition.diagnosis_date)
+            if user_condition.diagnosis_date
+            else None,
+            "status": user_condition.status,
+            "condition_status": user_condition.status,
+            "severity_code": user_condition.severity_code,
+            "severity": user_condition.severity_code,
+            "notes": "",
+            "profile_data": {},
+            "is_active": user_condition.is_active,
+            "targets": target_payload,
+            "evaluation": evaluation_payload,
+            "summary": summary_payload,
+            "constraint_summary": [],
+            "daily_medication_count": 0,
+            "daily_pending_doses": 0,
+            "open_alerts_count": 0,
+            "latest_reading": None,
+            "latest_recorded_at": latest_recorded_at or None,
+            "evaluation_status": evaluation_status,
+            "summary_status_label": cls._compact_status_label(
+                slug=slug,
+                classification="",
+                needs_attention=needs_attention,
+            ),
+            "summary_subtitle": cls._compact_summary_subtitle(slug),
+            "summary_line": cls._compact_summary_line(
+                slug=slug,
+                latest_reading=None,
+            ),
+            "secondary_summary_line": cls._compact_secondary_summary_line(
+                slug=slug,
+                alert_message="",
+            ),
+            "disclaimer": "",
+        }
+
+    @classmethod
+    def condition_compact_overview(
+        cls,
+        *,
+        user_condition: UserCondition,
+        on_date: date | None = None,
+    ) -> dict:
+        on_date = on_date or cls._system_local_now().date()
+        prefetched_readings = cls._prefetched_items(user_condition, "indicator_records")
+        latest_reading = prefetched_readings[0] if prefetched_readings else None
+        if prefetched_readings is None:
+            latest_reading = user_condition.indicator_records.order_by("-recorded_at", "-id").first()
+
+        prefetched_alerts = cls._prefetched_items(user_condition, "alerts")
+        if prefetched_alerts is None:
+            open_alerts = list(user_condition.alerts.filter(status="open").order_by("-created_at", "-id")[:1])
+            open_alerts_count = user_condition.alerts.filter(status="open").count()
+        else:
+            open_alert_items = [alert for alert in prefetched_alerts if alert.status == "open"]
+            open_alerts = open_alert_items[:1]
+            open_alerts_count = len(open_alert_items)
+
+        latest_evaluation = cls._latest_daily_evaluation(
+            user_condition=user_condition,
+            on_date=on_date,
+        )
+        target_payload = [
+            cls._serialize_target_payload(target)
+            for target in cls.effective_targets_for_condition(user_condition=user_condition)
+        ]
+        tracker_impacts = list(latest_evaluation.tracker_impacts_payload or []) if latest_evaluation else []
+        recommendations = (
+            list(latest_evaluation.recommendations_payload or [])
+            if latest_evaluation
+            else []
+        )
+        risk_flags = list(latest_evaluation.risk_flags or []) if latest_evaluation else []
+        daily_medication_count = 0
+        daily_pending_doses = 0
+        prefetched_medications = cls._prefetched_items(user_condition, "medications")
+        medications = (
+            [item for item in prefetched_medications if item.is_active]
+            if prefetched_medications is not None
+            else user_condition.medications.filter(is_active=True).prefetch_related("schedules__logs")
+        )
+        for medication in medications:
+            daily_medication_count += 1
+            for schedule in medication.schedules.all():
+                schedule_display = ConditionMedicationService.dose_display_for_today(
+                    schedule=schedule,
+                    today=on_date,
+                )
+                if schedule_display["today_status"] in {"pending", ConditionMedicationLog.STATUS_SNOOZED}:
+                    daily_pending_doses += 1
+        classification = (latest_reading.classification or "") if latest_reading else ""
+        risk_level = (latest_reading.risk_level or "") if latest_reading else ""
+        needs_attention = bool(
+            open_alerts_count
+            or classification in {"high", "low", "critical", "elevated", "needs_attention"}
+            or risk_level in {"medium", "high", "critical"}
+            or user_condition.status in {"needs_attention", "uncontrolled"}
+        )
+        slug = user_condition.condition_type.slug
+        latest_recorded_at = ""
+        if latest_evaluation and latest_evaluation.latest_recorded_at:
+            latest_recorded_at = latest_evaluation.latest_recorded_at.isoformat()
+        elif latest_reading and latest_reading.recorded_at:
+            latest_recorded_at = latest_reading.recorded_at.isoformat()
+        evaluation_status = (
+            latest_evaluation.status
+            if latest_evaluation and latest_evaluation.status
+            else ("attention_needed" if needs_attention else "stable")
+        )
+        evaluation_payload = {
+            "evaluation_date": str(latest_evaluation.evaluation_date)
+            if latest_evaluation
+            else str(on_date),
+            "status": evaluation_status,
+            "risk_flags": risk_flags,
+            "medication_adherence_percent": (
+                latest_evaluation.medication_adherence_percent if latest_evaluation else 0.0
+            ),
+            "restriction_adherence_percent": (
+                latest_evaluation.restriction_adherence_percent if latest_evaluation else 0.0
+            ),
+            "points_delta": latest_evaluation.points_delta if latest_evaluation else 0,
+            "streak_bonus": 0,
+            "latest_recorded_at": latest_recorded_at,
+            "recommendations": recommendations,
+            "tracker_impacts": tracker_impacts,
+            "targets": target_payload,
+        }
+        summary_payload = {
+            "condition_id": user_condition.id,
+            "status": evaluation_status,
+            "risk_flags": risk_flags,
+            "latest_recorded_at": latest_recorded_at,
+            "recommendations": recommendations,
+            "tracker_impacts": tracker_impacts,
+            "latest_reading": ConditionIndicatorService.serialize_record(latest_reading)
+            if latest_reading
+            else None,
+            "alerts": [],
+            "targets": target_payload,
+        }
+        return {
+            "view": "compact",
+            "id": user_condition.id,
+            "condition_type": {
+                "id": user_condition.condition_type.id,
+                "code": user_condition.condition_type.code,
+                "name": user_condition.condition_type.name,
+                "slug": user_condition.condition_type.slug,
+                "display_name": ConditionCatalogService.display_name(user_condition.condition_type),
+                "description": user_condition.condition_type.description,
+                "can_add": False,
+                "is_active_for_user": user_condition.is_active,
+                "severity_options": user_condition.condition_type.severity_options,
+                "restrictions": [],
+                "rule_profiles": [],
+                "setup_fields": [],
+                "measurement_types": list(
+                    (user_condition.condition_type.setup_schema or {}).get("measurement_types") or []
+                ),
+                "supports_direct_daily_reading": bool(
+                    (user_condition.condition_type.setup_schema or {}).get("supports_direct_daily_reading")
+                ),
+            },
+            "diagnosis_date": str(user_condition.diagnosis_date) if user_condition.diagnosis_date else None,
+            "status": user_condition.status,
+            "condition_status": user_condition.status,
+            "severity_code": user_condition.severity_code,
+            "severity": user_condition.severity_code,
+            "notes": user_condition.notes,
+            "profile_data": dict(user_condition.profile_data or {}),
+            "is_active": user_condition.is_active,
+            "targets": target_payload,
+            "evaluation": evaluation_payload,
+            "summary": summary_payload,
+            "constraint_summary": [],
+            "daily_medication_count": daily_medication_count,
+            "daily_pending_doses": daily_pending_doses,
+            "open_alerts_count": open_alerts_count,
+            "latest_reading": ConditionIndicatorService.serialize_record(latest_reading) if latest_reading else None,
+            "latest_recorded_at": latest_recorded_at or None,
+            "evaluation_status": evaluation_status,
+            "summary_status_label": cls._compact_status_label(
+                slug=slug,
+                classification=classification,
+                needs_attention=needs_attention,
+            ),
+            "summary_subtitle": cls._compact_summary_subtitle(slug),
+            "summary_line": cls._compact_summary_line(slug=slug, latest_reading=latest_reading),
+            "secondary_summary_line": cls._compact_secondary_summary_line(
+                slug=slug,
+                alert_message=open_alerts[0].message if open_alerts else "",
+            ),
+            "disclaimer": cls.DISCLAIMER,
+        }
 
     @staticmethod
     def condition_summary(

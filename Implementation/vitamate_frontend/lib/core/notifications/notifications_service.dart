@@ -14,6 +14,7 @@ part 'notifications_service_hydration.dart';
 part 'notifications_service_meals_activity.dart';
 part 'notifications_service_chronic.dart';
 part 'notifications_service_health_alerts.dart';
+part 'notifications_service_habits.dart';
 part 'notifications_service_debug.dart';
 
 class ChronicMedicationReminderPlan {
@@ -35,6 +36,24 @@ class ChronicMedicationReminderPlan {
     required this.minute,
     required this.leadMinutes,
     required this.recurrenceDays,
+  });
+}
+
+class UnhealthyHabitReminderPlan {
+  final int habitId;
+  final int reminderId;
+  final String habitLabel;
+  final String message;
+  final int hour;
+  final int minute;
+
+  const UnhealthyHabitReminderPlan({
+    required this.habitId,
+    required this.reminderId,
+    required this.habitLabel,
+    required this.message,
+    required this.hour,
+    required this.minute,
   });
 }
 
@@ -237,6 +256,14 @@ class NotificationsService {
     return _scheduleDailyWake(wakeTime: wakeTime);
   }
 
+  static Future<void> scheduleSleepCoachWake({required DateTime wakeTime}) {
+    return _scheduleSleepCoachWake(wakeTime: wakeTime);
+  }
+
+  static Future<void> cancelSleepCoachWake() {
+    return _cancelSleepCoachWake();
+  }
+
   static Future<void> cancelSleep() {
     return _cancelSleep();
   }
@@ -253,6 +280,16 @@ class NotificationsService {
 
   static Future<void> showWaterEnabled(int intervalMinutes) {
     return _showWaterEnabled(intervalMinutes);
+  }
+
+  static Future<void> showPostWorkoutHydrationNudge({
+    required String activityName,
+    required int durationMinutes,
+  }) {
+    return _showPostWorkoutHydrationNudge(
+      activityName: activityName,
+      durationMinutes: durationMinutes,
+    );
   }
 
   static Future<void> cancelWater() {
@@ -275,12 +312,20 @@ class NotificationsService {
     return _scheduleActivityEveryXHours(hours);
   }
 
+  static Future<void> cancelActivityIntervals() {
+    return _cancelActivityIntervals();
+  }
+
   static Future<void> cancelActivity() {
     return _cancelActivity();
   }
 
   static Future<void> scheduleDailyActivityReminder({required DateTime time}) {
     return _scheduleDailyActivityReminder(time: time);
+  }
+
+  static Future<void> cancelDailyActivityReminder() {
+    return _cancelDailyActivityReminder();
   }
 
   static Future<void> scheduleDailyStepsReminder({required DateTime time}) {
@@ -333,6 +378,44 @@ class NotificationsService {
       currentG: currentG,
       sourceLabel: sourceLabel,
     );
+  }
+
+  static Future<void> showConditionLimitWarning({
+    required String metricKey,
+    required String metricLabel,
+    required double limitValue,
+    required double currentValue,
+    required String unit,
+    required String sourceLabel,
+    required String conditionLabel,
+  }) {
+    return _showConditionLimitWarning(
+      metricKey: metricKey,
+      metricLabel: metricLabel,
+      limitValue: limitValue,
+      currentValue: currentValue,
+      unit: unit,
+      sourceLabel: sourceLabel,
+      conditionLabel: conditionLabel,
+    );
+  }
+
+  static Future<void> syncUnhealthyHabitReminders(
+    List<UnhealthyHabitReminderPlan> plans,
+  ) {
+    return _syncUnhealthyHabitReminders(plans);
+  }
+
+  static Future<void> cancelUnhealthyHabitReminders() {
+    return _cancelUnhealthyHabitReminders();
+  }
+
+  static Future<void> showCaffeineCutoffWarning() {
+    return _showCaffeineCutoffWarning();
+  }
+
+  static Future<void> showFastFoodLimitWarning() {
+    return _showFastFoodLimitWarning();
   }
 
   static Future<void> testAfterSeconds(int seconds) {

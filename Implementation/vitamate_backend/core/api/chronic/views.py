@@ -56,8 +56,12 @@ class UserConditionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = UserConditionWriteSerializer
 
+    def _compact_view_requested(self) -> bool:
+        return self.request.query_params.get("view") == "compact"
+
     def get_queryset(self):
-        return ConditionReadService.get_user_conditions(user=self.request.user)
+        compact = self.action == "list" and self._compact_view_requested()
+        return ConditionReadService.get_user_conditions(user=self.request.user, compact=compact)
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -99,6 +103,12 @@ class UserConditionViewSet(viewsets.ModelViewSet):
         return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
     def list(self, request, *args, **kwargs):
+        if self._compact_view_requested():
+            data = [
+                ChronicConditionService.condition_compact_overview(user_condition=condition)
+                for condition in self.get_queryset()
+            ]
+            return Response(data)
         data = [
             ChronicConditionService.condition_overview(user_condition=condition)
             for condition in self.get_queryset()
@@ -121,7 +131,11 @@ class UserConditionViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             return self._condition_error_response(exc)
-        payload = ChronicConditionService.condition_overview(user_condition=condition)
+        payload = (
+            ChronicConditionService.condition_compact_overview(user_condition=condition)
+            if self._compact_view_requested()
+            else ChronicConditionService.condition_overview(user_condition=condition)
+        )
         return Response(payload, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -136,7 +150,12 @@ class UserConditionViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             return self._condition_error_response(exc)
-        return Response(ChronicConditionService.condition_overview(user_condition=condition))
+        payload = (
+            ChronicConditionService.condition_compact_overview(user_condition=condition)
+            if self._compact_view_requested()
+            else ChronicConditionService.condition_overview(user_condition=condition)
+        )
+        return Response(payload)
 
     def update(self, request, *args, **kwargs):
         condition = self.get_object()
@@ -150,7 +169,12 @@ class UserConditionViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             return self._condition_error_response(exc)
-        return Response(ChronicConditionService.condition_overview(user_condition=condition))
+        payload = (
+            ChronicConditionService.condition_compact_overview(user_condition=condition)
+            if self._compact_view_requested()
+            else ChronicConditionService.condition_overview(user_condition=condition)
+        )
+        return Response(payload)
 
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):

@@ -148,6 +148,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                   title: 'Condition status',
                   subtitle:
                       'Choose the current tracking state for this condition.',
+                  initiallyExpanded: true,
                   child: DropdownButtonFormField<String>(
                     initialValue: status,
                     decoration: const InputDecoration(
@@ -207,6 +208,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
                   title: 'Baseline targets preview',
                   subtitle:
                       'These previews stay coordinated with VitaMate guidance after setup.',
+                  initiallyExpanded: false,
                   child: _TargetPreviewGrid(
                     type: type,
                     followupDays: _followupDays,
@@ -238,6 +240,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
           _SetupCard(
             title: 'Basic information',
             subtitle: 'Use the same structure as the approved diabetes setup.',
+            initiallyExpanded: true,
             child: DropdownButtonFormField<String>(
               initialValue: diabetesType,
               decoration: const InputDecoration(labelText: 'Diabetes type'),
@@ -262,6 +265,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
           _SetupCard(
             title: 'Initial readings',
             subtitle: 'Start with the latest values you have available.',
+            initiallyExpanded: false,
             child: Column(
               children: [
                 TextField(
@@ -295,6 +299,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
             title: 'Initial blood pressure',
             subtitle:
                 'Add a recent reading to start classification and tracking.',
+            initiallyExpanded: true,
             child: Column(
               children: [
                 Row(
@@ -350,6 +355,7 @@ class _ConditionDraftSheetState extends State<_ConditionDraftSheet> {
             title: 'Latest lipid follow-up',
             subtitle:
                 'Use the latest follow-up or recent average values you have.',
+            initiallyExpanded: true,
             child: Column(
               children: [
                 Row(
@@ -679,17 +685,18 @@ class _SetupCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.initiallyExpanded = false,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.96),
         borderRadius: BorderRadius.circular(8),
@@ -702,10 +709,13 @@ class _SetupCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          title: Text(
             title,
             style: const TextStyle(
               fontSize: 16,
@@ -713,8 +723,7 @@ class _SetupCard extends StatelessWidget {
               color: VitaMateTheme.primaryDeep,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
+          subtitle: Text(
             subtitle,
             style: const TextStyle(
               fontSize: 13,
@@ -723,9 +732,8 @@ class _SetupCard extends StatelessWidget {
               height: 1.4,
             ),
           ),
-          const SizedBox(height: 14),
-          child,
-        ],
+          children: [child],
+        ),
       ),
     );
   }

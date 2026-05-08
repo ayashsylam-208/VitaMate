@@ -59,6 +59,13 @@ class FoodItem(models.Model):
     )
     item_type = models.CharField(max_length=20, choices=ITEM_TYPE_CHOICES, default=TYPE_FOOD, db_index=True)
     category = models.CharField(max_length=100, null=True, blank=True)
+    meal_tags = models.CharField(
+        max_length=140,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Comma-separated meal slots such as breakfast,lunch,dinner,snack,dessert,drink.",
+    )
     primary_category = models.ForeignKey(
         FoodCategory,
         on_delete=models.SET_NULL,
@@ -369,6 +376,7 @@ class MealLog(models.Model):
         blank=True,
         related_name="meal_logs",
     )
+    serving_label_snapshot = models.CharField(max_length=80, blank=True, default="")
     consumed_at = models.DateTimeField(null=True, blank=True)
     snapshot_calories_kcal = models.FloatField(null=True, blank=True)
     snapshot_protein_g = models.FloatField(null=True, blank=True)

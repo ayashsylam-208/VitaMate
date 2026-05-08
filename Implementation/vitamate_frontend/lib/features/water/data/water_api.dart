@@ -2,10 +2,29 @@ import 'package:dio/dio.dart';
 
 import '../../../core/network/http_client.dart';
 import '../../../core/config/api_endpoints.dart';
+import '../../../core/network/request_metrics_interceptor.dart';
+import '../../../shared/models/api_result.dart';
 import '../../nutrition/models/food_item.dart';
+import '../models/hydration_summary.dart';
 import '../models/water_log.dart';
 
 class WaterApi {
+  Future<HydrationSummary> getSummary({CancelToken? cancelToken}) async {
+    final response = await HttpClient.dio.get(
+      ApiEndpoints.hydrationSummary,
+      cancelToken: cancelToken,
+      options: RequestMetricsInterceptor.taggedOptions(
+        tag: 'hydration.summary',
+      ),
+    );
+    final envelope = ApiEnvelope<Map<String, dynamic>>.fromJson(
+      response.data,
+      dataParser: (rawData) => asMap(rawData),
+      emptyData: const <String, dynamic>{},
+    );
+    return HydrationSummary.fromJson(envelope.data);
+  }
+
   Future<List<WaterLog>> getTodayLogs() async {
     final res = await HttpClient.dio.get(ApiEndpoints.water);
     _ensureSuccess(res);
@@ -15,12 +34,19 @@ class WaterApi {
         .toList();
   }
 
-  Future<List<FoodItem>> searchBeverages(String query) async {
+  Future<List<FoodItem>> searchBeverages(
+    String query, {
+    int limit = 12,
+    CancelToken? cancelToken,
+  }) async {
     final res = await HttpClient.dio.get(
       ApiEndpoints.foods,
+      cancelToken: cancelToken,
+      options: RequestMetricsInterceptor.taggedOptions(tag: 'hydration.search'),
       queryParameters: {
         'item_type': 'beverage',
         if (query.trim().isNotEmpty) 'q': query.trim(),
+        'limit': limit,
       },
     );
     _ensureSuccess(res);

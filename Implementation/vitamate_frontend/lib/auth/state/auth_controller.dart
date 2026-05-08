@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
+import '../../core/config/api_endpoints.dart';
+import '../../features/chronic_conditions/data/chronic_conditions_api.dart';
 import '../../core/network/network_error_mapper.dart';
 import '../data/auth_api.dart';
 import '../data/auth_repository.dart';
@@ -21,9 +25,24 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _repo.login(username: username, password: password);
-      me = await _repo.getMe();
+      if (kDebugMode) {
+        debugPrint('AuthController.login: start username=$username');
+      }
+      ChronicConditionsApi.invalidateOverviewCache();
+      await _repo
+          .login(username: username, password: password)
+          .timeout(const Duration(seconds: 15));
+      if (kDebugMode) {
+        debugPrint('AuthController.login: token exchange complete');
+      }
+      me = await _repo.getMe().timeout(const Duration(seconds: 15));
+      if (kDebugMode) {
+        debugPrint('AuthController.login: profile loaded');
+      }
       return true;
+    } on TimeoutException {
+      error = 'Sign in took too long. ${ApiEndpoints.connectionHint()}';
+      return false;
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
         e,
@@ -49,14 +68,19 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _repo.register(
-        username: username,
-        password: password,
-        email: email,
-        firstName: firstName,
-        lastName: lastName,
-      );
+      await _repo
+          .register(
+            username: username,
+            password: password,
+            email: email,
+            firstName: firstName,
+            lastName: lastName,
+          )
+          .timeout(const Duration(seconds: 15));
       return true;
+    } on TimeoutException {
+      error = 'Sign up took too long. ${ApiEndpoints.connectionHint()}';
+      return false;
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
         e,
@@ -71,6 +95,7 @@ class AuthController extends ChangeNotifier {
 
   Future<void> logout() async {
     await _repo.logout();
+    ChronicConditionsApi.invalidateOverviewCache();
     me = null;
     notifyListeners();
   }

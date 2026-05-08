@@ -44,6 +44,23 @@ Future<void> _showWaterEnabled(int intervalMinutes) async {
   );
 }
 
+Future<void> _showPostWorkoutHydrationNudge({
+  required String activityName,
+  required int durationMinutes,
+}) async {
+  await NotificationsService.ensurePermission();
+  await NotificationsService._plugin.show(
+    779,
+    'Hydrate after your workout',
+    'You completed $activityName for $durationMinutes min. Remember to drink water.',
+    NotificationsService._details(
+      NotificationChannels.waterId,
+      NotificationChannels.waterName,
+      channelDescription: NotificationChannels.waterDesc,
+    ),
+  );
+}
+
 Future<void> _cancelWater() async {
   for (int i = 1; i <= 250; i++) {
     await NotificationsService._plugin.cancel(NotificationIds.waterBase + i);

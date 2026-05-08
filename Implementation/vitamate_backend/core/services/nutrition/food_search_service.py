@@ -4,7 +4,7 @@ from core.repositories.food_search_read_repository import FoodSearchReadReposito
 
 
 class FoodSearchService:
-    DEFAULT_AUTOCOMPLETE_LIMIT = 12
+    DEFAULT_AUTOCOMPLETE_LIMIT = 8
 
     @classmethod
     def search(
@@ -14,6 +14,7 @@ class FoodSearchService:
         q: str = "",
         item_type: str | None = None,
         category: str | None = None,
+        meal_slot: str | None = None,
         contains_caffeine=None,
         is_hydration_trackable=None,
         limit=None,
@@ -25,6 +26,7 @@ class FoodSearchService:
             q=q,
             item_type=item_type,
             category=category,
+            meal_slot=meal_slot,
             contains_caffeine=contains_caffeine,
             is_hydration_trackable=is_hydration_trackable,
             include_inactive=include_inactive,

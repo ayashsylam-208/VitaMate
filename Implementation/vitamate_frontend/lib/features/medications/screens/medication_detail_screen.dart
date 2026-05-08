@@ -51,7 +51,7 @@ class _MedicationDetailScreenState extends State<MedicationDetailScreen> {
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             onPressed: () async {
-              final saved = await Navigator.of(context).push<bool>(
+              await Navigator.of(context).push<bool>(
                 MaterialPageRoute(
                   builder: (_) => AddEditMedicationScreen(
                     controller: widget.controller,
@@ -59,9 +59,6 @@ class _MedicationDetailScreenState extends State<MedicationDetailScreen> {
                   ),
                 ),
               );
-              if (saved == true) {
-                await widget.controller.refreshAll();
-              }
             },
           ),
         ],

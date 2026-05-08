@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vitamate/core/health/diabetes_sugar_guard_service.dart';
 import 'package:vitamate/features/nutrition/data/nutrition_api.dart';
 import 'package:vitamate/features/nutrition/models/food_item.dart';
 import 'package:vitamate/features/nutrition/models/meal_log.dart';
+import 'package:vitamate/features/nutrition/models/micronutrient_tracking.dart';
 import 'package:vitamate/features/nutrition/models/nutrition_summary.dart';
 import 'package:vitamate/features/nutrition/state/nutrition_controller.dart';
 
@@ -21,7 +23,7 @@ class _FakeNutritionApi extends NutritionApi {
   int _nextId = 20;
 
   @override
-  Future<NutritionSummary> getSummary() async {
+  Future<NutritionSummary> getSummary({CancelToken? cancelToken}) async {
     final consumedCalories = meals.fold<int>(
       0,
       (sum, item) => sum + item.caloriesKcal.round(),
@@ -47,6 +49,80 @@ class _FakeNutritionApi extends NutritionApi {
   }
 
   @override
+  Future<MicronutrientOverview> getMicronutrients({
+    CancelToken? cancelToken,
+  }) async {
+    final calcium = meals.fold<double>(0, (sum, item) => sum + item.calciumMg);
+    final vitaminD = meals.fold<double>(
+      0,
+      (sum, item) => sum + item.vitaminDMcg,
+    );
+    return MicronutrientOverview(
+      date: '2026-05-06',
+      disclaimer: 'Test disclaimer',
+      items: [
+        MicronutrientItem(
+          code: 'calcium_mg',
+          name: 'Calcium',
+          unit: 'mg',
+          category: 'mineral',
+          foodConsumed: calcium,
+          supplementConsumed: 0,
+          totalConsumed: calcium,
+          targetValue: 1000,
+          progressPercent: calcium / 1000 * 100,
+          targetSource: 'profile_derived_default',
+          sourceLabel: 'Default',
+          deficiencyTracked: false,
+          status: calcium >= 1000 ? 'met' : 'in_progress',
+          note: '',
+        ),
+        MicronutrientItem(
+          code: 'vitamin_d_mcg',
+          name: 'Vitamin D',
+          unit: 'mcg',
+          category: 'vitamin',
+          foodConsumed: vitaminD,
+          supplementConsumed: 0,
+          totalConsumed: vitaminD,
+          targetValue: 15,
+          progressPercent: vitaminD / 15 * 100,
+          targetSource: 'profile_derived_default',
+          sourceLabel: 'Default',
+          deficiencyTracked: false,
+          status: vitaminD >= 15 ? 'met' : 'in_progress',
+          note: '',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<MicronutrientOverview> upsertMicronutrientTarget({
+    required String nutrientCode,
+    double? minValue,
+    double? targetValue,
+    double? maxValue,
+    String note = '',
+    String labTestName = '',
+    double? labValue,
+    String labUnit = '',
+    double? labReferenceMin,
+    double? labReferenceMax,
+    String labTestDate = '',
+    double? clinicianRecommendedValue,
+    String currentMedicationName = '',
+    String currentMedicationDose = '',
+    bool createMedicationPlan = false,
+    String supplementName = '',
+    double? supplementAmount,
+    String supplementUnit = '',
+    String scheduleTime = '09:00',
+  }) async {
+    return getMicronutrients();
+  }
+
+  @override
   Future<List<FoodItem>> listFoods({
     String? itemType,
     String? query,
@@ -54,8 +130,22 @@ class _FakeNutritionApi extends NutritionApi {
     bool? containsCaffeine,
     bool? isHydrationTrackable,
     int? limit,
+    CancelToken? cancelToken,
   }) async {
     return List<FoodItem>.from(foods);
+  }
+
+  @override
+  Future<List<FoodItem>> autocompleteFoods({
+    String? itemType,
+    String? query,
+    String? category,
+    bool? containsCaffeine,
+    bool? isHydrationTrackable,
+    int limit = 12,
+    CancelToken? cancelToken,
+  }) async {
+    return List<FoodItem>.from(foods.take(limit));
   }
 
   @override
@@ -71,6 +161,11 @@ class _FakeNutritionApi extends NutritionApi {
     double? quantityGrams,
     double? quantity,
     String? unit,
+    int? servingOptionId,
+    String? servingLabelSnapshot,
+    double? servingGramsEquivalent,
+    double? servingMillilitersEquivalent,
+    DateTime? consumedAt,
   }) async {
     final food = foods.firstWhere((item) => item.id == foodId);
     final amount = quantity ?? quantityGrams ?? 0;
@@ -185,6 +280,7 @@ void main() {
       );
 
       await controller.load();
+      await Future<void>.delayed(Duration.zero);
 
       expect(controller.meals, hasLength(2));
       expect(controller.meals.last.isDrink, isTrue);
@@ -261,12 +357,14 @@ void main() {
       );
 
       await controller.load();
+      await Future<void>.delayed(Duration.zero);
       await controller.logMeal(
         foodId: juice.id,
         mealType: 'drink',
         quantity: 100,
         unit: 'ml',
       );
+      await Future<void>.delayed(Duration.zero);
 
       expect(warnings, hasLength(1));
       expect(warnings.single.limitG, 25);

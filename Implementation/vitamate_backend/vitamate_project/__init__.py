@@ -1,0 +1,9 @@
+from __future__ import annotations
+
+try:  # pragma: no cover - optional when Celery is not installed yet
+    from .celery import app as celery_app
+except Exception:  # pragma: no cover
+    celery_app = None
+
+
+__all__ = ("celery_app",)

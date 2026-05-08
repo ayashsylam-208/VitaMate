@@ -1,7 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/notifications/notifications_service.dart';
-import '../../core/runtime/app_runtime.dart';
 import '../../core/routing/routes.dart';
 import '../../core/testing/app_test_keys.dart';
 import '../../shared/utils/validators.dart';
@@ -45,6 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscure = true;
   bool _loading = false;
+  bool _navigatingAway = false;
 
   @override
   void dispose() {
@@ -55,8 +55,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_loading || _navigatingAway) {
+      if (kDebugMode) {
+        debugPrint('LoginScreen: submit ignored while busy');
+      }
+      return;
+    }
+    if (kDebugMode) {
+      debugPrint('LoginScreen: submit tapped');
+    }
     final isValid = _formKey.currentState?.validate() ?? false;
-    if (!isValid) return;
+    if (!isValid) {
+      if (kDebugMode) {
+        debugPrint('LoginScreen: validation failed');
+      }
+      return;
+    }
 
     FocusScope.of(context).unfocus();
     setState(() => _loading = true);
@@ -78,17 +92,20 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      if (AppRuntime.notificationsEnabled) {
-        try {
-          await NotificationsService.showWelcomeBack();
-        } catch (error) {
-          debugPrint('LoginScreen: welcome notification failed: $error');
-        }
-      }
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, Routes.home);
+      _navigatingAway = true;
+      if (kDebugMode) {
+        debugPrint('LoginScreen: navigating home');
+      }
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        Routes.home,
+        (route) => false,
+      );
+      return;
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && !_navigatingAway) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -130,8 +147,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final disableAndroidAutofill =
+        defaultTargetPlatform == TargetPlatform.android;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF5F0FF),
       resizeToAvoidBottomInset: true,
       body: Container(
         decoration: const BoxDecoration(gradient: _pageBackground),
@@ -140,58 +159,30 @@ class _LoginScreenState extends State<LoginScreen> {
             builder: (context, constraints) {
               final isCompact = constraints.maxHeight < 740;
               final isVeryCompact = constraints.maxHeight < 660;
-              final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-
-              return SingleChildScrollView(
+              return ListView(
+                physics: const ClampingScrollPhysics(),
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: EdgeInsets.fromLTRB(10, 6, 10, 12 + bottomInset),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: _shellBackground,
-                        borderRadius: BorderRadius.circular(40),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.88),
-                          width: 3,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x1A57369A),
-                            blurRadius: 32,
-                            offset: Offset(0, 16),
-                          ),
-                        ],
-                      ),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                children: [
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
                       child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          22,
-                          isVeryCompact
-                              ? 18
+                        padding: EdgeInsets.only(
+                          top: isVeryCompact
+                              ? 8
                               : isCompact
-                              ? 28
-                              : 40,
-                          22,
-                          isVeryCompact
                               ? 18
-                              : isCompact
-                              ? 26
-                              : 36,
+                              : 30,
+                          bottom: isVeryCompact ? 8 : 18,
                         ),
                         child: Form(
                           key: _formKey,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              SizedBox(
-                                height: isVeryCompact
-                                    ? 2
-                                    : isCompact
-                                    ? 8
-                                    : 22,
-                              ),
                               Center(
                                 child: Image.asset(
                                   'assets/images/logo.png',
@@ -238,16 +229,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               SizedBox(height: isVeryCompact ? 20 : 30),
                               Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.84),
+                                  gradient: _shellBackground,
                                   borderRadius: BorderRadius.circular(30),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.65),
-                                  ),
                                   boxShadow: const [
                                     BoxShadow(
                                       color: Color(0x1A57369A),
-                                      blurRadius: 28,
-                                      offset: Offset(0, 12),
+                                      blurRadius: 18,
+                                      offset: Offset(0, 8),
                                     ),
                                   ],
                                 ),
@@ -277,9 +265,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                         ),
                                         controller: _usernameCtrl,
                                         textInputAction: TextInputAction.next,
-                                        autofillHints: const [
-                                          AutofillHints.username,
-                                        ],
+                                        autofillHints: disableAndroidAutofill
+                                            ? null
+                                            : const [AutofillHints.username],
+                                        enableSuggestions:
+                                            !disableAndroidAutofill,
+                                        autocorrect: false,
                                         validator: (value) {
                                           final trimmed = (value ?? '').trim();
                                           if (trimmed.isEmpty) {
@@ -309,9 +300,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                         controller: _passwordCtrl,
                                         obscureText: _obscure,
                                         textInputAction: TextInputAction.done,
-                                        autofillHints: const [
-                                          AutofillHints.password,
-                                        ],
+                                        autofillHints: disableAndroidAutofill
+                                            ? null
+                                            : const [AutofillHints.password],
+                                        enableSuggestions: false,
+                                        autocorrect: false,
+                                        enableInteractiveSelection:
+                                            !disableAndroidAutofill,
                                         validator: Validators.password,
                                         onFieldSubmitted: (_) {
                                           if (!_loading) _submit();
@@ -359,8 +354,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                             boxShadow: const [
                                               BoxShadow(
                                                 color: Color(0x33962CF8),
-                                                blurRadius: 18,
-                                                offset: Offset(0, 8),
+                                                blurRadius: 12,
+                                                offset: Offset(0, 6),
                                               ),
                                             ],
                                           ),
@@ -445,7 +440,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                ),
+                ],
               );
             },
           ),

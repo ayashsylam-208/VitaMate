@@ -92,6 +92,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.middleware.PerformanceInstrumentationMiddleware",
 ]
 
 ROOT_URLCONF = "vitamate_project.urls"
@@ -117,9 +118,24 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    "DEFAULT_SCHEMA_CLASS": "rest_framework.schemas.openapi.AutoSchema",
     # TODO: Consider adding IsAuthenticated globally after explicitly
     # validating every public auth endpoint and any intentionally public API.
 }
+
+PERFORMANCE_INSTRUMENTATION_ENABLED = env_bool(
+    "PERFORMANCE_INSTRUMENTATION_ENABLED",
+    default=True,
+)
+
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_USE_BROKER = env_bool("CELERY_USE_BROKER", default=False)
+CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", default=False)
+CELERY_TASK_EAGER_PROPAGATES = env_bool(
+    "CELERY_TASK_EAGER_PROPAGATES",
+    default=True,
+)
 
 AUTH_PASSWORD_VALIDATORS = [
     {

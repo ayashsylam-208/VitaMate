@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/health/chronic_target_guide.dart';
@@ -37,9 +39,30 @@ class _ChronicConditionDetailScreenState
       widget.controller.conditionById(widget.conditionId);
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final current = widget.controller.conditionById(widget.conditionId);
+      if (current == null || !current.hasDetailPayload) {
+        unawaited(widget.controller.loadConditionDetail(widget.conditionId));
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final item = condition;
     if (item == null) {
+      if (widget.controller.isConditionDetailLoading(widget.conditionId)) {
+        return const Scaffold(
+          backgroundColor: VitaMateTheme.background,
+          bottomNavigationBar: VitaMateBottomNav(currentIndex: -1),
+          body: Center(child: CircularProgressIndicator()),
+        );
+      }
       return Scaffold(
         backgroundColor: VitaMateTheme.background,
         bottomNavigationBar: const VitaMateBottomNav(currentIndex: -1),
@@ -93,10 +116,20 @@ class _ChronicConditionDetailScreenState
                 child: Text('This condition is no longer available.'),
               );
             }
+            final isDetailLoading =
+                !current.hasDetailPayload &&
+                widget.controller.isConditionDetailLoading(widget.conditionId);
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 112),
               children: [
+                if (isDetailLoading) ...[
+                  const _MessageCard(
+                    message:
+                        'Loading readings, targets, medications, and care details in the background.',
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _ConditionOverviewCard(condition: current),
                 const SizedBox(height: 16),
                 Row(
@@ -133,109 +166,167 @@ class _ChronicConditionDetailScreenState
                   ],
                 ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Expanded(child: _Title('Tracking summary')),
-                    _InfoTag(label: current.summaryStatusLabel),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                _ConditionSummaryCard(condition: current),
-                const SizedBox(height: 16),
-                const _Title('Goals and limits'),
-                const SizedBox(height: 8),
-                ...current.targets.map(
-                  (target) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _TargetCard(target: target),
-                  ),
+                _DetailSectionPanel(
+                  title: 'Tracking summary',
+                  trailing: _InfoTag(label: current.summaryStatusLabel),
+                  initiallyExpanded: true,
+                  child: _ConditionSummaryCard(condition: current),
                 ),
                 const SizedBox(height: 16),
-                const _Title('Recent readings'),
-                const SizedBox(height: 8),
-                if (current.indicatorRecords.isEmpty)
-                  const _MessageCard(
-                    key: ValueKey(AppTestKeys.chronicDetailReadingsList),
-                    message:
-                        'No reading has been logged for this condition yet.',
-                  )
-                else
-                  Column(
-                    key: const ValueKey(AppTestKeys.chronicDetailReadingsList),
-                    children: current.indicatorRecords
-                        .take(8)
-                        .map(
-                          (record) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _ReadingCard(record: record),
-                          ),
+                _DetailSectionPanel(
+                  title: 'Goals and limits',
+                  subtitle: 'Targets and guardrails that matter right now.',
+                  child: isDetailLoading && current.targets.isEmpty
+                      ? const _MessageCard(
+                          message: 'Loading active targets and care limits...',
                         )
-                        .toList(),
-                  ),
-                const SizedBox(height: 16),
-                const _Title('Applied care limits'),
-                const SizedBox(height: 8),
-                if (current.constraintSummary.isEmpty)
-                  const _MessageCard(
-                    message:
-                        'No care-limit summary is available for this condition yet.',
-                  )
-                else
-                  ...current.constraintSummary.map(
-                    (summary) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _MessageCard(message: summary),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Expanded(child: _Title('Medications')),
-                    TextButton.icon(
-                      onPressed: () => _openMedicationSheet(item: current),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (current.medications.isEmpty)
-                  const _MessageCard(
-                    message:
-                        'No medication is linked yet. Add one now to enable reminders and daily adherence tracking.',
-                  )
-                else
-                  ...current.medications.map(
-                    (medication) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _MedicationCard(
-                        medication: medication,
-                        controller: widget.controller,
-                        onEdit: () => _openMedicationSheet(
-                          item: current,
-                          medication: medication,
+                      : current.targets.isEmpty
+                      ? const _MessageCard(
+                          message: 'No active targets are available yet.',
+                        )
+                      : Column(
+                          children: current.targets
+                              .map(
+                                (target) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _TargetCard(target: target),
+                                ),
+                              )
+                              .toList(),
                         ),
-                        onDeactivate: () =>
-                            _deactivateMedication(medication.id),
-                      ),
-                    ),
-                  ),
+                ),
                 const SizedBox(height: 16),
-                const _Title('Recent alerts'),
-                const SizedBox(height: 8),
-                if (current.alerts.isEmpty)
-                  const _MessageCard(
-                    message: 'No alerts are open for this condition.',
-                  )
-                else
-                  ...current.alerts.map(
-                    (alert) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _AlertCard(alert: alert),
-                    ),
-                  ),
+                _DetailSectionPanel(
+                  title: 'Recent readings',
+                  subtitle: 'Latest measurements for this condition.',
+                  initiallyExpanded: true,
+                  child: current.indicatorRecords.isEmpty
+                      ? (current.latestReading != null
+                            ? Column(
+                                key: const ValueKey(
+                                  AppTestKeys.chronicDetailReadingsList,
+                                ),
+                                children: [
+                                  _ReadingCard(record: current.latestReading!),
+                                ],
+                              )
+                            : isDetailLoading
+                            ? const _MessageCard(
+                                key: ValueKey(
+                                  AppTestKeys.chronicDetailReadingsList,
+                                ),
+                                message:
+                                    'Loading recent readings and classifications...',
+                              )
+                            : const _MessageCard(
+                                key: ValueKey(
+                                  AppTestKeys.chronicDetailReadingsList,
+                                ),
+                                message:
+                                    'No reading has been logged for this condition yet.',
+                              ))
+                      : Column(
+                          key: const ValueKey(
+                            AppTestKeys.chronicDetailReadingsList,
+                          ),
+                          children: current.indicatorRecords
+                              .take(8)
+                              .map(
+                                (record) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _ReadingCard(record: record),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
                 const SizedBox(height: 16),
-                _MessageCard(message: current.disclaimer),
+                _DetailSectionPanel(
+                  title: 'Applied care limits',
+                  subtitle: 'Condensed restrictions and care guidance.',
+                  child: isDetailLoading && current.constraintSummary.isEmpty
+                      ? const _MessageCard(
+                          message: 'Loading care-limit summary...',
+                        )
+                      : current.constraintSummary.isEmpty
+                      ? const _MessageCard(
+                          message:
+                              'No care-limit summary is available for this condition yet.',
+                        )
+                      : Column(
+                          children: current.constraintSummary
+                              .map(
+                                (summary) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _MessageCard(message: summary),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                _DetailSectionPanel(
+                  title: 'Medications',
+                  trailing: TextButton.icon(
+                    onPressed: () => _openMedicationSheet(item: current),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add'),
+                  ),
+                  child: isDetailLoading && current.medications.isEmpty
+                      ? const _MessageCard(
+                          message:
+                              'Loading linked medications and schedules...',
+                        )
+                      : current.medications.isEmpty
+                      ? const _MessageCard(
+                          message:
+                              'No medication is linked yet. Add one now to enable reminders and daily adherence tracking.',
+                        )
+                      : Column(
+                          children: current.medications
+                              .map(
+                                (medication) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: _MedicationCard(
+                                    medication: medication,
+                                    controller: widget.controller,
+                                    onEdit: () => _openMedicationSheet(
+                                      item: current,
+                                      medication: medication,
+                                    ),
+                                    onDeactivate: () =>
+                                        _deactivateMedication(medication.id),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                _DetailSectionPanel(
+                  title: 'Recent alerts',
+                  child: isDetailLoading && current.alerts.isEmpty
+                      ? const _MessageCard(message: 'Loading recent alerts...')
+                      : current.alerts.isEmpty
+                      ? const _MessageCard(
+                          message: 'No alerts are open for this condition.',
+                        )
+                      : Column(
+                          children: current.alerts
+                              .map(
+                                (alert) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _AlertCard(alert: alert),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                _DetailSectionPanel(
+                  title: 'Support note',
+                  child: _MessageCard(message: current.disclaimer),
+                ),
               ],
             );
           },
@@ -396,11 +487,7 @@ class _ChronicConditionDetailScreenState
       return;
     }
     if (saved == true) {
-      await widget.controller.load();
-      if (!mounted) {
-        medicationsController.dispose();
-        return;
-      }
+      unawaited(widget.controller.reloadCondition(item.id));
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -408,8 +495,8 @@ class _ChronicConditionDetailScreenState
         content: Text(
           saved == true
               ? medication == null
-                    ? 'Medication saved and reminders synced.'
-                    : 'Medication updated and reminders resynced.'
+                    ? 'Medication saved. This condition is refreshing in the background.'
+                    : 'Medication updated. This condition is refreshing in the background.'
               : medicationsController.state.errorMessage ??
                     'Medication was not changed.',
         ),
@@ -438,6 +525,10 @@ class _ChronicConditionDetailScreenState
       isActive: medication.isActive,
       isPrn: false,
       timezone: DateTime.now().timeZoneName,
+      supplementNutrientId: null,
+      supplementNutrientCode: '',
+      supplementNutrientAmount: 0,
+      supplementNutrientUnit: '',
       nextDue: null,
       adherenceSummaryShort: MedicationAdherenceSummary.empty(),
       schedules: medication.schedules

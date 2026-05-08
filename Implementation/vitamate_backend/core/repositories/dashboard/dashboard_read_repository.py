@@ -10,6 +10,8 @@ from core.models import (
     MealLog,
     SleepLog,
     StepLog,
+    UnhealthyHabit,
+    UnhealthyHabitLog,
     UserCondition,
 )
 from core.repositories.hydration.water_log_repository import HydrationRepository
@@ -62,6 +64,20 @@ class DashboardReadRepository:
             date=log_date,
             completed=True,
         ).count()
+        total_habits += UnhealthyHabit.objects.filter(
+            user=user,
+            status=UnhealthyHabit.STATUS_ACTIVE,
+        ).count()
+        completed_habits += (
+            UnhealthyHabitLog.objects.filter(
+                habit__user=user,
+                log_date=log_date,
+                is_within_limit=True,
+            )
+            .values("habit_id")
+            .distinct()
+            .count()
+        )
         return total_habits, completed_habits
 
     @staticmethod

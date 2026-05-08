@@ -76,8 +76,26 @@ SNAPSHOT_TOTAL_KEYS = {
     "cholesterol_mg": "cholesterol_mg",
     "sodium_mg": "sodium_mg",
     "potassium_mg": "potassium_mg",
+    "calcium_mg": "calcium_mg",
+    "iron_mg": "iron_mg",
+    "magnesium_mg": "magnesium_mg",
+    "zinc_mg": "zinc_mg",
+    "phosphorus_mg": "phosphorus_mg",
+    "vitamin_a_mcg": "vitamin_a_mcg",
     "vitamin_c_mg": "vitamin_c_mg",
+    "vitamin_d_mcg": "vitamin_d_mcg",
+    "vitamin_b12_mcg": "vitamin_b12_mcg",
+    "folate_mcg": "folate_mcg",
+    "monounsaturated_fat_g": "monounsaturated_fat_g",
+    "polyunsaturated_fat_g": "polyunsaturated_fat_g",
+    "water_g": "water_g",
     "caffeine_mg": "caffeine_mg",
+    "vitamin_e_mg": "vitamin_e_mg",
+    "vitamin_k_mcg": "vitamin_k_mcg",
+    "vitamin_b1_mg": "vitamin_b1_mg",
+    "vitamin_b2_mg": "vitamin_b2_mg",
+    "vitamin_b3_mg": "vitamin_b3_mg",
+    "vitamin_b6_mg": "vitamin_b6_mg",
 }
 
 
@@ -157,6 +175,9 @@ class NutritionLoggingService:
         quantity=None,
         unit=None,
         serving_option=None,
+        serving_label_snapshot=None,
+        custom_serving_grams=None,
+        custom_serving_milliliters=None,
         consumed_at=None,
         notes="",
         source=MealLog.SOURCE_MANUAL,
@@ -170,9 +191,19 @@ class NutritionLoggingService:
             quantity=quantity,
             unit=unit,
             serving_option=serving_option,
+            custom_serving_grams=custom_serving_grams,
+            custom_serving_milliliters=custom_serving_milliliters,
         )
         snapshot = NutritionLoggingService._calculate_snapshot(food=food, amount=amount)
         consumed_at = consumed_at or timezone.now()
+        effective_serving_label = ""
+        if amount.unit == "serving":
+            effective_serving_label = (
+                str(serving_label_snapshot or "").strip()
+                or getattr(serving_option, "name", "").strip()
+                or str(food.serving_label or "").strip()
+                or "Serving"
+            )
 
         log = MealLogRepository.create_for_user(
             user=user,
@@ -185,6 +216,7 @@ class NutritionLoggingService:
             milliliters_consumed=amount.milliliters,
             servings_consumed=amount.servings,
             serving_option=serving_option,
+            serving_label_snapshot=effective_serving_label,
             consumed_at=consumed_at,
             notes=notes or "",
             source=source or MealLog.SOURCE_MANUAL,
@@ -269,6 +301,7 @@ class NutritionLoggingService:
         item_type: str | None = None,
         query: str = "",
         category: str | None = None,
+        meal_slot: str | None = None,
         contains_caffeine=None,
         is_hydration_trackable=None,
         limit=None,
@@ -280,6 +313,7 @@ class NutritionLoggingService:
             q=query,
             item_type=item_type,
             category=category,
+            meal_slot=meal_slot,
             contains_caffeine=contains_caffeine,
             is_hydration_trackable=is_hydration_trackable,
             limit=limit,
@@ -310,6 +344,9 @@ class NutritionLoggingService:
         quantity=None,
         unit=None,
         serving_option=None,
+        serving_label_snapshot=None,
+        custom_serving_grams=None,
+        custom_serving_milliliters=None,
         consumed_at=None,
         notes=None,
         source=None,
@@ -324,6 +361,8 @@ class NutritionLoggingService:
             quantity=quantity,
             unit=unit,
             serving_option=serving_option,
+            custom_serving_grams=custom_serving_grams,
+            custom_serving_milliliters=custom_serving_milliliters,
         )
         snapshot = NutritionLoggingService._calculate_snapshot(food=food, amount=amount)
         consumed_at = consumed_at or meal_log.consumed_at or timezone.now()
@@ -337,6 +376,19 @@ class NutritionLoggingService:
         meal_log.milliliters_consumed = amount.milliliters
         meal_log.servings_consumed = amount.servings
         meal_log.serving_option = serving_option
+        meal_log.serving_label_snapshot = (
+            str(serving_label_snapshot or "").strip()
+            if amount.unit == "serving"
+            else ""
+        ) or (
+            getattr(serving_option, "name", "").strip()
+            if amount.unit == "serving"
+            else ""
+        ) or (
+            str(food.serving_label or "").strip()
+            if amount.unit == "serving"
+            else ""
+        )
         meal_log.consumed_at = consumed_at
         meal_log.notes = notes if notes is not None else meal_log.notes
         meal_log.source = source or meal_log.source or MealLog.SOURCE_MANUAL
@@ -604,6 +656,8 @@ class NutritionLoggingService:
         quantity,
         unit,
         serving_option: NutritionServingOption | None,
+        custom_serving_grams=None,
+        custom_serving_milliliters=None,
     ) -> ConsumptionAmount:
         if quantity_grams is not None and quantity is None and unit is None:
             quantity = float(quantity_grams)
@@ -632,6 +686,11 @@ class NutritionLoggingService:
                     grams = serving_option.grams_equivalent * quantity
                 if serving_option.milliliters_equivalent is not None:
                     milliliters = serving_option.milliliters_equivalent * quantity
+            elif custom_serving_grams is not None or custom_serving_milliliters is not None:
+                if custom_serving_grams is not None:
+                    grams = float(custom_serving_grams) * quantity
+                if custom_serving_milliliters is not None:
+                    milliliters = float(custom_serving_milliliters) * quantity
             else:
                 default_unit = (food.default_serving_unit or "g").lower()
                 if default_unit == "ml":

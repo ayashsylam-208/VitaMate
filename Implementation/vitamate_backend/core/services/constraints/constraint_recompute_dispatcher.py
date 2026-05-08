@@ -4,6 +4,7 @@ import hashlib
 
 from core.models import ConstraintResolutionRun, ResolvedTrackerConstraint
 from core.services.constraints.constraint_resolution_service import ConstraintResolutionService
+from core.tasks import dispatch_constraint_recompute
 
 
 class ConstraintRecomputeDispatcher:
@@ -46,15 +47,22 @@ class ConstraintRecomputeDispatcher:
             return existing_run
 
         if not synchronous:
-            # TODO: route this through a task queue once background workers are introduced.
-            return ConstraintResolutionRun.objects.create(
+            run = ConstraintResolutionRun.objects.create(
                 user=user,
                 trigger_type=trigger_type,
                 trigger_reference=str(trigger_reference or ""),
                 input_signature=preflight_signature,
-                run_status=ConstraintResolutionRun.STATUS_SKIPPED,
-                error_message="Asynchronous recompute is not configured; no background job was queued.",
+                run_status=ConstraintResolutionRun.STATUS_RUNNING,
+                sync_mode=ConstraintResolutionRun.SYNC_MODE_ASYNC_PLACEHOLDER,
+                metadata={"queued_via": "celery"},
             )
+            dispatch_constraint_recompute(
+                user_id=user.id,
+                trigger_type=trigger_type,
+                trigger_reference=trigger_reference,
+                tracker_type=tracker_type,
+            )
+            return run
 
         if tracker_type:
             return ConstraintResolutionService.recompute_tracker_constraints(

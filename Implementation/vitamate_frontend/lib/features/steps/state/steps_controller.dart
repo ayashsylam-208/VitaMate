@@ -1,17 +1,20 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pedometer/pedometer.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/notifications/notifications_service.dart';
-import '../data/steps_api.dart';
+import '../../../core/sync/health_sync_bus.dart';
+import '../data/steps_repository.dart';
 
 class StepsController extends ChangeNotifier {
-  StepsController({StepsApi? api}) : _api = api ?? StepsApi();
+  StepsController({StepsRepository? repository})
+    : _repository = repository ?? StepsRepository();
 
-  final StepsApi _api;
+  final StepsRepository _repository;
 
   bool loading = false;
   String? error;
@@ -25,6 +28,8 @@ class StepsController extends ChangeNotifier {
   int caloriesBurned = 0;
   double burnRateKcalPerKm = 0;
   DateTime? lastSyncedAt;
+  bool usingDebugStepSimulation = false;
+  int get activeMinutesEstimate => _estimateActiveMinutes(stepsToday);
   int get remainingSteps => (targetSteps - stepsToday).clamp(0, targetSteps);
 
   bool reminderEnabled = false;
@@ -35,6 +40,10 @@ class StepsController extends ChangeNotifier {
   String _baselineDate = '';
   int _serverStepsToday = 0;
   bool _baselineInitialized = false;
+  bool _receivedSensorEvent = false;
+  Timer? _debugFallbackStarter;
+  Timer? _debugFallbackTicker;
+  Timer? _stepNotifyTimer;
 
   Future<void> init({bool requestPermission = true}) async {
     loading = true;
@@ -87,22 +96,15 @@ class StepsController extends ChangeNotifier {
 
   Future<void> _loadDashboard() async {
     try {
-      final d = await _api.getDashboard();
-      final activity = _asMap(d['activity']);
-      targetSteps =
-          _toInt(activity['steps_target'] ?? activity['daily_step_goal'] ?? targetSteps);
-      stepsToday = _toInt(activity['steps'] ?? activity['steps_count'] ?? stepsToday);
+      final summary = await _repository.getSummary();
+      targetSteps = _toInt(summary['target_steps'] ?? targetSteps);
+      stepsToday = _toInt(summary['steps_today'] ?? stepsToday);
       _serverStepsToday = stepsToday;
-      distanceKm = _toDouble(activity['distance_km']);
-      caloriesBurned = _toInt(activity['steps_burned']);
-      burnRateKcalPerKm = _toDouble(activity['steps_burn_rate']);
-      pointsToday = _calcPoints(stepsToday);
-      if (caloriesBurned == 0 && stepsToday > 0) {
-        caloriesBurned = (stepsToday * 0.04).round();
-      }
-      if (burnRateKcalPerKm == 0 && distanceKm > 0) {
-        burnRateKcalPerKm = caloriesBurned / distanceKm;
-      }
+      distanceKm = _toDouble(summary['distance_km']);
+      caloriesBurned = _toInt(summary['calories_burned']);
+      burnRateKcalPerKm = _toDouble(summary['burn_rate_kcal_per_km']);
+      pointsToday = _toInt(summary['points']);
+      _applyDerivedMetrics();
     } catch (_) {
       error ??= 'Failed to load steps data';
     }
@@ -117,9 +119,6 @@ class StepsController extends ChangeNotifier {
       _baseline = 0;
       _baselineDate = '';
       _baselineInitialized = false;
-      _serverStepsToday = 0;
-      stepsToday = 0;
-      pointsToday = 0;
       lastSyncedAt = null;
     } else {
       _baselineInitialized = true;
@@ -137,13 +136,21 @@ class StepsController extends ChangeNotifier {
 
   void _startPedometer() {
     _sub?.cancel();
+    _receivedSensorEvent = false;
+    _stopDebugStepFallback(notify: false);
     try {
-      _sub = Pedometer.stepCountStream.listen(_onStepCount, onError: (e) {
-        error = e.toString();
-        notifyListeners();
-      });
+      _sub = Pedometer.stepCountStream.listen(
+        _onStepCount,
+        onError: (e) {
+          error = e.toString();
+          _scheduleDebugStepFallback();
+          notifyListeners();
+        },
+      );
+      _scheduleDebugStepFallback();
     } catch (e) {
       error = 'Pedometer unavailable: $e';
+      _scheduleDebugStepFallback();
       notifyListeners();
     }
   }
@@ -159,6 +166,8 @@ class StepsController extends ChangeNotifier {
   }
 
   void _onStepCount(StepCount event) {
+    _receivedSensorEvent = true;
+    _stopDebugStepFallback();
     _maybeInitBaseline(event.steps);
 
     final todayKey = _todayKey();
@@ -166,22 +175,30 @@ class StepsController extends ChangeNotifier {
       _saveBaseline(event.steps);
     }
 
-    final current = (event.steps - _baseline).clamp(0, 1000000);
+    final current = (event.steps - _baseline).clamp(0, 1000000).toInt();
     stepsToday = current < _serverStepsToday ? _serverStepsToday : current;
-    pointsToday = _calcPoints(stepsToday);
-    caloriesBurned = (stepsToday * 0.04).round();
-    if (distanceKm > 0) {
-      burnRateKcalPerKm = caloriesBurned / distanceKm;
-    }
-    notifyListeners();
+    _applyDerivedMetrics(preferEstimate: true);
+    _stepNotifyTimer ??= Timer(const Duration(milliseconds: 400), () {
+      _stepNotifyTimer = null;
+      notifyListeners();
+    });
   }
 
   Future<void> syncSteps() async {
     if (!permissionGranted) return;
     try {
-      await _api.logSteps(stepsCount: stepsToday);
+      await _repository.logSteps(
+        stepsCount: stepsToday,
+        distanceKm: distanceKm,
+      );
       await _loadDashboard();
       lastSyncedAt = DateTime.now();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.steps,
+        HealthSyncScope.activity,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
     } catch (_) {
       error = 'Failed to sync steps';
     }
@@ -190,14 +207,22 @@ class StepsController extends ChangeNotifier {
 
   Future<void> addManualSteps(int value) async {
     if (value <= 0) return;
-    stepsToday = (stepsToday + value).clamp(0, 1000000);
-    _serverStepsToday = stepsToday;
-    pointsToday = _calcPoints(stepsToday);
+    stepsToday = (stepsToday + value).clamp(0, 1000000).toInt();
+    _applyDerivedMetrics(preferEstimate: true);
     notifyListeners();
     try {
-      await _api.logSteps(stepsCount: stepsToday);
+      await _repository.logSteps(
+        stepsCount: stepsToday,
+        distanceKm: distanceKm,
+      );
       await _loadDashboard();
       lastSyncedAt = DateTime.now();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.steps,
+        HealthSyncScope.activity,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
     } catch (_) {
       error = 'Failed to sync manual steps';
       notifyListeners();
@@ -237,10 +262,101 @@ class StepsController extends ChangeNotifier {
     await sp.setInt('steps_reminder_minute', reminderTime.minute);
   }
 
-  Map<String, dynamic> _asMap(dynamic v) {
-    if (v is Map<String, dynamic>) return v;
-    if (v is Map) return v.cast<String, dynamic>();
-    return <String, dynamic>{};
+  void _applyDerivedMetrics({bool preferEstimate = false}) {
+    if (stepsToday <= 0) {
+      distanceKm = 0;
+      burnRateKcalPerKm = 0;
+      if (preferEstimate) {
+        caloriesBurned = 0;
+        pointsToday = 0;
+      }
+      return;
+    }
+    final estimatedDistanceKm = _estimateDistanceKm(stepsToday);
+    if (preferEstimate || distanceKm <= 0 || stepsToday != _serverStepsToday) {
+      distanceKm = estimatedDistanceKm;
+    }
+    if (preferEstimate ||
+        caloriesBurned <= 0 ||
+        stepsToday != _serverStepsToday) {
+      caloriesBurned = (stepsToday * 0.04).round();
+    }
+    if (preferEstimate || pointsToday <= 0 || stepsToday != _serverStepsToday) {
+      pointsToday = _calcPoints(stepsToday);
+    }
+    burnRateKcalPerKm = distanceKm > 0 ? caloriesBurned / distanceKm : 0;
+  }
+
+  double _estimateDistanceKm(int steps) {
+    if (steps <= 0) return 0;
+    return (steps * 0.74) / 1000;
+  }
+
+  int _estimateActiveMinutes(int steps) {
+    if (steps <= 0) return 0;
+    return (steps / 105).round();
+  }
+
+  void _scheduleDebugStepFallback() {
+    if (!_supportsDebugStepFallback ||
+        _receivedSensorEvent ||
+        !permissionGranted ||
+        stepsToday > 0 ||
+        _serverStepsToday > 0) {
+      return;
+    }
+    _debugFallbackStarter?.cancel();
+    _debugFallbackStarter = Timer(const Duration(seconds: 4), () {
+      if (_receivedSensorEvent || !permissionGranted) {
+        return;
+      }
+      _beginDebugStepFallback();
+    });
+  }
+
+  void _beginDebugStepFallback() {
+    if (!_supportsDebugStepFallback || _receivedSensorEvent) {
+      return;
+    }
+    usingDebugStepSimulation = true;
+    error = null;
+    _debugFallbackTicker?.cancel();
+    _debugFallbackTicker = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_receivedSensorEvent || !permissionGranted) {
+        _stopDebugStepFallback();
+        return;
+      }
+      final nextIncrement = 6 + ((DateTime.now().second ~/ 3) % 4);
+      stepsToday = (stepsToday + nextIncrement).clamp(0, 1000000).toInt();
+      _applyDerivedMetrics(preferEstimate: true);
+      notifyListeners();
+      if (stepsToday > 0 && stepsToday % 24 <= nextIncrement) {
+        unawaited(syncSteps());
+      }
+    });
+    notifyListeners();
+  }
+
+  void _stopDebugStepFallback({bool notify = true}) {
+    final wasRunning = usingDebugStepSimulation;
+    usingDebugStepSimulation = false;
+    _debugFallbackStarter?.cancel();
+    _debugFallbackStarter = null;
+    _debugFallbackTicker?.cancel();
+    _debugFallbackTicker = null;
+    if (notify && wasRunning) {
+      notifyListeners();
+    }
+  }
+
+  bool get _supportsDebugStepFallback {
+    if (!kDebugMode ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    final binding = WidgetsBinding.instance;
+    return binding == null || !binding.runtimeType.toString().contains('Test');
   }
 
   int _toInt(dynamic v) {
@@ -270,6 +386,9 @@ class StepsController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _debugFallbackStarter?.cancel();
+    _debugFallbackTicker?.cancel();
+    _stepNotifyTimer?.cancel();
     _sub?.cancel();
     super.dispose();
   }

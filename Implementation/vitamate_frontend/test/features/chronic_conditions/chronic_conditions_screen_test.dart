@@ -6,13 +6,30 @@ import 'package:vitamate/features/chronic_conditions/screens/chronic_conditions_
 import 'package:vitamate/features/chronic_conditions/state/chronic_conditions_controller.dart';
 
 class _FakeChronicConditionsApi extends ChronicConditionsApi {
-  _FakeChronicConditionsApi({required this.conditions, required this.catalog});
+  _FakeChronicConditionsApi({
+    required this.conditions,
+    required this.catalog,
+    this.compactConditions,
+  });
 
   final List<ChronicCondition> conditions;
+  final List<ChronicCondition>? compactConditions;
   final List<ChronicConditionType> catalog;
 
   @override
-  Future<List<ChronicCondition>> getConditions() async => conditions;
+  Future<List<ChronicCondition>> getOverviewConditions({
+    bool forceRefresh = false,
+    bool guidanceOnly = false,
+  }) async => compactConditions ?? conditions;
+
+  @override
+  Future<List<ChronicCondition>> getConditions({bool compact = false}) async =>
+      compact ? (compactConditions ?? conditions) : conditions;
+
+  @override
+  Future<ChronicCondition> getCondition(int conditionId) async {
+    return conditions.firstWhere((item) => item.id == conditionId);
+  }
 
   @override
   Future<List<ChronicConditionType>> getConditionTypes() async => catalog;
@@ -56,6 +73,7 @@ void main() {
       final controller = ChronicConditionsController(
         api: _FakeChronicConditionsApi(
           conditions: [_sampleCondition()],
+          compactConditions: [_sampleCompactCondition()],
           catalog: _sampleCatalog(),
         ),
         reminderSync: (_) async {},
@@ -82,6 +100,67 @@ void main() {
       expect(find.text('Recent alerts'), findsOneWidget);
     },
   );
+}
+
+ChronicCondition _sampleCompactCondition() {
+  return ChronicCondition.fromJson({
+    'view': 'compact',
+    'id': 4,
+    'condition_type': {
+      'id': 1,
+      'code': 'diabetes',
+      'slug': 'diabetes',
+      'name': 'Diabetes',
+      'display_name': 'Diabetes',
+      'description': 'Sample condition type',
+      'can_add': false,
+      'is_active_for_user': true,
+      'setup_fields': const [],
+      'measurement_types': const ['glucose'],
+      'supports_direct_daily_reading': true,
+      'severity_options': const [
+        {
+          'code': 'diabetes_managed',
+          'label': 'Managed diabetes',
+          'description': 'Sample severity',
+        },
+      ],
+      'restrictions': const [],
+      'rule_profiles': const [],
+    },
+    'diagnosis_date': '2026-04-11',
+    'condition_status': 'active',
+    'severity': 'diabetes_managed',
+    'notes': 'Clinician approved current plan.',
+    'profile_data': const {'glucose_target': 110},
+    'is_active': true,
+    'daily_medication_count': 1,
+    'daily_pending_doses': 1,
+    'open_alerts_count': 0,
+    'evaluation_status': 'stable',
+    'summary_status_label': 'In range',
+    'summary_subtitle': 'Last glucose reading recorded',
+    'summary_line': '110 mg/dL',
+    'secondary_summary_line':
+        'Open the tracking view for readings, targets, and guidance.',
+    'latest_reading': {
+      'id': 91,
+      'indicator_name': 'fasting_glucose',
+      'indicator_type': 'glucose',
+      'value': 110,
+      'value_1': 110,
+      'value_2': 0,
+      'value_3': 0,
+      'unit': 'mg/dL',
+      'reading_context': 'fasting',
+      'payload': const {'glucose': 110},
+      'classification': 'in_range',
+      'risk_level': 'low',
+      'recorded_at': '2026-04-11T08:30:00Z',
+    },
+    'latest_recorded_at': '2026-04-11T08:30:00Z',
+    'disclaimer': 'Supportive self-management only.',
+  });
 }
 
 List<ChronicConditionType> _sampleCatalog() {

@@ -3,14 +3,16 @@ from .models import (
     FoodCategory, FoodItem, FoodItemAlias,
     MealLog, NutritionFacts, NutritionServingOption, WaterLog,
     Nutrient, ItemNutrientValue,
-    Exercise, ActivityLog, StepLog, 
-    SleepLog, Medicine, MedicineLog, 
+    Exercise, ActivityLog, ActivitySession, StepLog, 
+    SleepLog, SleepPlan, SleepMorningFeedback, Medicine, MedicineLog, 
     Habit, HabitLog,
     ConditionType, UserCondition, ConditionRuleProfile, HealthRestriction,
     ConditionNutrientRule, UserNutrientTarget,
     HealthTarget, HealthIndicatorRecord, ConditionAlert, ConditionDailyEvaluation,
     ConditionMedication, ConditionMedicationSchedule, ConditionMedicationLog,
     ConditionPointsAudit,
+    UnhealthyHabit, UnhealthyHabitBaseline, UnhealthyHabitLog,
+    UnhealthyHabitPlan, UnhealthyHabitPointEvent, UnhealthyHabitReminder,
 )
 
 # --- Nutrition ---
@@ -91,11 +93,36 @@ class WaterLogAdmin(admin.ModelAdmin):
 # --- Fitness ---
 @admin.register(Exercise)
 class ExerciseAdmin(admin.ModelAdmin):
-    list_display = ('name', 'met_value')
+    list_display = (
+        'name',
+        'met_value',
+        'default_duration_minutes',
+        'icon_key',
+        'is_featured',
+        'sort_order',
+    )
+    list_filter = ('is_featured',)
+    search_fields = ('name', 'icon_key')
 
 @admin.register(ActivityLog)
 class ActivityLogAdmin(admin.ModelAdmin):
     list_display = ('user', 'exercise', 'duration_minutes', 'calories_burned', 'date')
+
+
+@admin.register(ActivitySession)
+class ActivitySessionAdmin(admin.ModelAdmin):
+    list_display = (
+        'user',
+        'exercise',
+        'status',
+        'intensity',
+        'target_duration_seconds',
+        'actual_duration_seconds',
+        'calories_burned',
+        'started_at',
+    )
+    list_filter = ('status', 'intensity', 'source')
+    search_fields = ('user__username', 'exercise__name')
 
 @admin.register(StepLog)
 class StepLogAdmin(admin.ModelAdmin):
@@ -105,6 +132,28 @@ class StepLogAdmin(admin.ModelAdmin):
 @admin.register(SleepLog)
 class SleepLogAdmin(admin.ModelAdmin):
     list_display = ('user', 'start_time', 'end_time', 'quality', 'date')
+
+
+@admin.register(SleepPlan)
+class SleepPlanAdmin(admin.ModelAdmin):
+    list_display = (
+        'user',
+        'plan_date',
+        'planned_bed_time',
+        'latest_wake_time',
+        'selected_wake_time',
+        'primary_negative_factor',
+        'status',
+    )
+    list_filter = ('status', 'primary_negative_factor', 'plan_date')
+    search_fields = ('user__username', 'recommendation_reason', 'night_tip')
+
+
+@admin.register(SleepMorningFeedback)
+class SleepMorningFeedbackAdmin(admin.ModelAdmin):
+    list_display = ('user', 'plan', 'quality_rating', 'wake_feeling', 'focus_rating', 'created_at')
+    list_filter = ('wake_feeling', 'quality_rating', 'focus_rating')
+    search_fields = ('user__username', 'disruptor')
 
 # --- Medicine ---
 @admin.register(Medicine)
@@ -123,6 +172,44 @@ class HabitAdmin(admin.ModelAdmin):
 @admin.register(HabitLog)
 class HabitLogAdmin(admin.ModelAdmin):
     list_display = ('habit', 'date', 'completed')
+
+
+@admin.register(UnhealthyHabit)
+class UnhealthyHabitAdmin(admin.ModelAdmin):
+    list_display = ('user', 'habit_type', 'goal_type', 'status', 'start_date', 'target_date')
+    list_filter = ('habit_type', 'goal_type', 'status')
+    search_fields = ('user__username', 'title')
+
+
+@admin.register(UnhealthyHabitBaseline)
+class UnhealthyHabitBaselineAdmin(admin.ModelAdmin):
+    list_display = ('habit', 'initial_frequency', 'initial_quantity', 'unit', 'common_trigger')
+    search_fields = ('habit__user__username', 'common_trigger')
+
+
+@admin.register(UnhealthyHabitPlan)
+class UnhealthyHabitPlanAdmin(admin.ModelAdmin):
+    list_display = ('habit', 'daily_limit', 'weekly_limit', 'cutoff_time', 'plan_stage')
+    search_fields = ('habit__user__username', 'plan_stage')
+
+
+@admin.register(UnhealthyHabitLog)
+class UnhealthyHabitLogAdmin(admin.ModelAdmin):
+    list_display = ('habit', 'logged_at', 'quantity', 'unit', 'is_relapse', 'is_within_limit')
+    list_filter = ('log_date', 'is_relapse', 'is_within_limit', 'source')
+    search_fields = ('habit__user__username', 'food_name', 'trigger')
+
+
+@admin.register(UnhealthyHabitReminder)
+class UnhealthyHabitReminderAdmin(admin.ModelAdmin):
+    list_display = ('habit', 'time_of_day', 'is_active')
+    list_filter = ('is_active',)
+
+
+@admin.register(UnhealthyHabitPointEvent)
+class UnhealthyHabitPointEventAdmin(admin.ModelAdmin):
+    list_display = ('habit', 'event_type', 'event_date', 'points')
+    list_filter = ('event_type', 'event_date')
 
 
 @admin.register(ConditionType)
@@ -162,9 +249,24 @@ class ConditionNutrientRuleAdmin(admin.ModelAdmin):
 
 @admin.register(UserNutrientTarget)
 class UserNutrientTargetAdmin(admin.ModelAdmin):
-    list_display = ('user', 'nutrient', 'period', 'source', 'min_value', 'target_value', 'max_value')
+    list_display = (
+        'user',
+        'nutrient',
+        'period',
+        'source',
+        'min_value',
+        'target_value',
+        'max_value',
+        'calculation_basis',
+    )
     list_filter = ('period', 'source', 'nutrient__category')
-    search_fields = ('user__username', 'nutrient__code', 'nutrient__name')
+    search_fields = (
+        'user__username',
+        'nutrient__code',
+        'nutrient__name',
+        'lab_test_name',
+        'current_medication_name',
+    )
 
 
 @admin.register(HealthTarget)

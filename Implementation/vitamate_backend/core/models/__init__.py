@@ -38,7 +38,23 @@ from core.models.nutrition import (
     NutritionServingOption,
     WaterLog,
 )
-from core.models.tracking import ActivityLog, Exercise, SleepLog, StepLog
+from core.models.tracking import (
+    ActivityLog,
+    ActivitySession,
+    Exercise,
+    SleepLog,
+    SleepMorningFeedback,
+    SleepPlan,
+    StepLog,
+)
+from core.models.unhealthy_habits import (
+    UnhealthyHabit,
+    UnhealthyHabitBaseline,
+    UnhealthyHabitLog,
+    UnhealthyHabitPlan,
+    UnhealthyHabitPointEvent,
+    UnhealthyHabitReminder,
+)
 
 __all__ = [
     "normalize_food_search_text",
@@ -53,8 +69,11 @@ __all__ = [
     "WaterLog",
     "Exercise",
     "ActivityLog",
+    "ActivitySession",
     "StepLog",
     "SleepLog",
+    "SleepPlan",
+    "SleepMorningFeedback",
     "Medicine",
     "MedicineLog",
     "Habit",
@@ -80,4 +99,10 @@ __all__ = [
     "HealthStateDelta",
     "HealthStateComputationRun",
     "NotificationDispatchRecord",
+    "UnhealthyHabit",
+    "UnhealthyHabitBaseline",
+    "UnhealthyHabitPlan",
+    "UnhealthyHabitLog",
+    "UnhealthyHabitReminder",
+    "UnhealthyHabitPointEvent",
 ]

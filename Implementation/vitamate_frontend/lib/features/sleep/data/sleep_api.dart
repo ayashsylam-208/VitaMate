@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/config/api_endpoints.dart';
 import '../../../core/network/http_client.dart';
+import '../../../core/network/request_metrics_interceptor.dart';
+import '../../../shared/models/api_result.dart';
 import '../models/sleep_log.dart';
 import '../models/sleep_summary.dart';
 
@@ -60,11 +62,17 @@ class SleepApi {
     }
   }
 
-  Future<SleepSummary> getSummary() async {
-    final res = await HttpClient.dio.get(ApiEndpoints.dashboard);
-    final data = res.data;
-    if (data is Map<String, dynamic>) return SleepSummary.fromDashboard(data);
-    if (data is Map) return SleepSummary.fromDashboard(Map<String, dynamic>.from(data));
-    return SleepSummary.empty();
+  Future<SleepSummary> getSummary({CancelToken? cancelToken}) async {
+    final response = await HttpClient.dio.get(
+      ApiEndpoints.sleepSummary,
+      cancelToken: cancelToken,
+      options: RequestMetricsInterceptor.taggedOptions(tag: 'sleep.summary'),
+    );
+    final envelope = ApiEnvelope<Map<String, dynamic>>.fromJson(
+      response.data,
+      dataParser: (rawData) => asMap(rawData),
+      emptyData: const <String, dynamic>{},
+    );
+    return SleepSummary.fromSummaryJson(envelope.data);
   }
 }

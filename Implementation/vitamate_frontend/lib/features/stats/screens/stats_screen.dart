@@ -1,57 +1,121 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/routing/vitamate_route_observer.dart';
 import '../../../core/sync/health_sync_bus.dart';
-import '../../activity/screens/activity_screen.dart';
-import '../../nutrition/screens/nutrition_screen.dart';
-import '../../sleep/screens/sleep_screen.dart';
-import '../../steps/screens/steps_screen.dart';
-import '../../water/screens/water_screen.dart';
+import '../../../core/testing/app_test_keys.dart';
+import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
+import '../models/progress_models.dart';
 import '../state/stats_controller.dart';
-import '../data/stats_api.dart';
 
 class StatsScreen extends StatefulWidget {
-  const StatsScreen({super.key});
+  const StatsScreen({super.key, this.controller, this.autoLoad = true});
+
+  final StatsController? controller;
+  final bool autoLoad;
 
   @override
   State<StatsScreen> createState() => _StatsScreenState();
 }
 
-class _StatsScreenState extends State<StatsScreen> {
+class _StatsScreenState extends State<StatsScreen> with RouteAware {
   late final StatsController controller;
-  final StatsApi _statsApi = StatsApi();
+  late final bool _ownsController;
+  PageRoute<dynamic>? _subscribedRoute;
+  bool _routeVisible = true;
+  bool _refreshWhenVisible = false;
 
   @override
   void initState() {
     super.initState();
-    controller = StatsController()..load();
+    controller = widget.controller ?? StatsController();
+    _ownsController = widget.controller == null;
+    if (widget.autoLoad) {
+      unawaited(controller.load());
+    }
     HealthSyncBus.instance.addListener(_handleTrackerRefresh);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    _routeVisible = route?.isCurrent ?? true;
+    if (route is PageRoute<dynamic> && route != _subscribedRoute) {
+      if (_subscribedRoute != null) {
+        vitaMateRouteObserver.unsubscribe(this);
+      }
+      _subscribedRoute = route;
+      vitaMateRouteObserver.subscribe(this, route);
+    }
   }
 
   @override
   void dispose() {
     HealthSyncBus.instance.removeListener(_handleTrackerRefresh);
-    controller.dispose();
+    vitaMateRouteObserver.unsubscribe(this);
+    if (_ownsController) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   void _handleTrackerRefresh() {
-    controller.load();
+    if (!HealthSyncBus.instance.affects(const {
+      HealthSyncScope.progressHistory,
+    })) {
+      return;
+    }
+    if (!_isRouteVisible()) {
+      _refreshWhenVisible = true;
+      return;
+    }
+    unawaited(controller.load());
+  }
+
+  bool _isRouteVisible() {
+    return mounted &&
+        (_routeVisible || (ModalRoute.of(context)?.isCurrent ?? false));
+  }
+
+  @override
+  void didPush() {
+    _routeVisible = true;
+  }
+
+  @override
+  void didPushNext() {
+    _routeVisible = false;
+  }
+
+  @override
+  void didPop() {
+    _routeVisible = false;
+  }
+
+  @override
+  void didPopNext() {
+    _routeVisible = true;
+    if (!_refreshWhenVisible) {
+      return;
+    }
+    _refreshWhenVisible = false;
+    unawaited(controller.load());
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.decimalPattern();
-
     return Scaffold(
       bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
       appBar: AppBar(
         title: const Text('Progress'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
             onPressed: () => controller.load(),
           ),
         ],
@@ -60,57 +124,24 @@ class _StatsScreenState extends State<StatsScreen> {
         child: AnimatedBuilder(
           animation: controller,
           builder: (context, _) {
-            if (controller.loading) {
+            if (controller.loading &&
+                controller.overview.trackerCards.isEmpty) {
               return const Center(child: CircularProgressIndicator());
             }
-            if (controller.error != null) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        controller.error!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton(
-                        onPressed: () => controller.load(),
-                        child: const Text('Try again'),
-                      ),
-                    ],
-                  ),
-                ),
+            if (controller.error != null &&
+                controller.overview.trackerCards.isEmpty) {
+              return _ErrorState(
+                message: controller.error!,
+                onRetry: controller.load,
               );
             }
-
             return RefreshIndicator(
               onRefresh: controller.load,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 112),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _todayCard(cs, fmt),
-                    const SizedBox(height: 14),
-                    _grid(cs, fmt),
-                    if (controller.chronicConditionCount > 0) ...[
-                      const SizedBox(height: 18),
-                      _chronicSection(cs),
-                    ],
-                    const SizedBox(height: 18),
-                    _progressChart(cs),
-                    const SizedBox(height: 18),
-                    _trackerCharts(cs),
-                    const SizedBox(height: 18),
-                    _timeline(cs, fmt),
-                    const SizedBox(height: 18),
-                    _shortcuts(cs),
-                  ],
-                ),
+              child: _ProgressOverviewBody(
+                overview: controller.overview,
+                historyCount: controller.history.length,
+                isStale: controller.isStale,
+                onOpenDetail: _openDetail,
               ),
             );
           },
@@ -119,898 +150,773 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _todayCard(ColorScheme cs, NumberFormat fmt) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Today',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      DateFormat.MMMMEEEEd().format(DateTime.now()),
-                      style: TextStyle(color: cs.outline),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.stars, color: cs.primary, size: 18),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${controller.pointsTotal} pts',
-                        style: TextStyle(
-                          color: cs.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: cs.primary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          'Lvl ${controller.level}',
-                          style: TextStyle(color: cs.primary),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                _chip(
-                  cs,
-                  Icons.local_fire_department,
-                  'Calories rem.',
-                  '${fmt.format(controller.caloriesRemaining)} kcal',
-                ),
-                _chip(
-                  cs,
-                  Icons.local_fire_department,
-                  'Burn',
-                  '${fmt.format(controller.burnCurrent)} / ${fmt.format(controller.burnTarget)} kcal',
-                ),
-                _chip(
-                  cs,
-                  Icons.water_drop,
-                  'Water',
-                  '${controller.waterCurrent.toStringAsFixed(2)} / ${controller.waterTarget.toStringAsFixed(2)} L',
-                ),
-                _chip(
-                  cs,
-                  Icons.directions_walk,
-                  'Steps',
-                  '${fmt.format(controller.stepsCurrent)} / ${fmt.format(controller.stepsTarget)}',
-                ),
-                _chip(
-                  cs,
-                  Icons.bedtime,
-                  'Sleep',
-                  '${controller.sleepLoggedHours.toStringAsFixed(1)} / ${controller.sleepGoalHours.toStringAsFixed(1)} h',
-                ),
-              ],
+  void _openDetail(ProgressTrackerCard card) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => ProgressDetailScreen(card: card)));
+  }
+}
+
+class _ProgressOverviewBody extends StatelessWidget {
+  const _ProgressOverviewBody({
+    required this.overview,
+    required this.historyCount,
+    required this.isStale,
+    required this.onOpenDetail,
+  });
+
+  final ProgressOverview overview;
+  final int historyCount;
+  final bool isStale;
+  final ValueChanged<ProgressTrackerCard> onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = overview.trackerCards;
+    return SingleChildScrollView(
+      key: const ValueKey(AppTestKeys.statsScreen),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _TodayProgressCard(
+            overview: overview,
+            cards: cards.take(5).toList(growable: false),
+            onOpenDetail: onOpenDetail,
+          ),
+          const SizedBox(height: 14),
+          _OverallScoreCard(overview: overview, isStale: isStale),
+          const SizedBox(height: 14),
+          _TrackerRows(cards: cards, onOpenDetail: onOpenDetail),
+          const SizedBox(height: 14),
+          _FeaturedTrackerSection(
+            title: 'Nutrition progress',
+            subtitle: 'Track meals and build better eating habits.',
+            card: _findCard(cards, 'nutrition'),
+            onOpenDetail: onOpenDetail,
+          ),
+          const SizedBox(height: 14),
+          _FeaturedTrackerSection(
+            title: 'Habit quitting progress',
+            subtitle: 'Build a healthier you, one day at a time.',
+            card: _findCard(cards, 'habits'),
+            onOpenDetail: onOpenDetail,
+          ),
+          const SizedBox(height: 14),
+          _FeaturedTrackerSection(
+            title: 'Medication adherence',
+            subtitle: 'Stay consistent with your medications.',
+            card: _findCard(cards, 'medications'),
+            onOpenDetail: onOpenDetail,
+          ),
+          const SizedBox(height: 14),
+          _TimelineSection(days: overview.timeline),
+          const SizedBox(height: 14),
+          _FeaturedTrackerSection(
+            title: 'Chronic condition adherence',
+            subtitle: 'Care plans, limits, and latest history.',
+            card: _findCard(cards, 'chronic'),
+            onOpenDetail: onOpenDetail,
+          ),
+          if (historyCount == 0) ...[
+            const SizedBox(height: 14),
+            _TipCard(
+              title: 'Start today',
+              message:
+                  'Log one meal, drink, activity, or dose to build your first progress timeline.',
             ),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _grid(ColorScheme cs, NumberFormat fmt) {
-    final items = [
-      _metricCard(
-        cs,
-        title: 'Water',
-        icon: Icons.water_drop,
-        current: controller.waterCurrent,
-        target: controller.waterTarget,
-        unit: 'L',
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => WaterScreen(
-              targetValueFromBackend: controller.waterTarget,
-              targetIsLiters: true,
-            ),
-          ),
-        ),
-      ),
-      _metricCard(
-        cs,
-        title: 'Sleep',
-        icon: Icons.bedtime,
-        current: controller.sleepLoggedHours,
-        target: controller.sleepGoalHours,
-        unit: 'h',
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const SleepScreen())),
-      ),
-      _metricCard(
-        cs,
-        title: 'Calories',
-        icon: Icons.restaurant,
-        current: controller.caloriesConsumed.toDouble(),
-        target: controller.caloriesTarget.toDouble(),
-        unit: 'kcal',
-        warnIfOver: true,
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const NutritionScreen())),
-      ),
-      _metricCard(
-        cs,
-        title: 'Activity',
-        icon: Icons.fitness_center,
-        current: controller.burnCurrent.toDouble(),
-        target: controller.burnTarget.toDouble(),
-        unit: 'kcal',
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const ActivityScreen())),
-      ),
-      _metricCard(
-        cs,
-        title: 'Steps',
-        icon: Icons.directions_walk,
-        current: controller.stepsCurrent.toDouble(),
-        target: controller.stepsTarget.toDouble(),
-        unit: 'steps',
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const StepsScreen())),
-      ),
-    ];
-
-    return Wrap(spacing: 12, runSpacing: 12, children: items);
-  }
-
-  Widget _metricCard(
-    ColorScheme cs, {
-    required String title,
-    required IconData icon,
-    required double current,
-    required double target,
-    required String unit,
-    bool warnIfOver = false,
-    VoidCallback? onTap,
-  }) {
-    final double pct = target <= 0 ? 0 : (current / target).clamp(0.0, 1.0);
-    final over = warnIfOver && target > 0 && current > target;
-    final displayCurrent = unit == 'steps'
-        ? NumberFormat.decimalPattern().format(current.round())
-        : current.toStringAsFixed(unit == 'h' ? 1 : 2);
-    final displayTarget = unit == 'steps'
-        ? NumberFormat.decimalPattern().format(target.round())
-        : target.toStringAsFixed(unit == 'h' ? 1 : 2);
-
-    return SizedBox(
-      width: MediaQuery.of(context).size.width / 2 - 22,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(icon, color: cs.primary),
-                    const SizedBox(width: 8),
-                    Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '$displayCurrent / $displayTarget $unit',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: pct,
-                    minHeight: 8,
-                    color: over ? cs.error : cs.primary,
-                    backgroundColor: cs.surfaceContainerHighest.withValues(
-                      alpha: 0.6,
-                    ),
-                  ),
-                ),
-                if (over)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      'Over target',
-                      style: TextStyle(color: cs.error),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _progressChart(ColorScheme cs) {
-    if (controller.history.isEmpty) {
-      return Card(
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('No history yet to chart.'),
-        ),
-      );
+  static ProgressTrackerCard? _findCard(
+    List<ProgressTrackerCard> cards,
+    String code,
+  ) {
+    for (final card in cards) {
+      if (card.code == code) {
+        return card;
+      }
     }
-
-    final points = controller.history
-        .map((e) => e.pointsEstimate.toDouble())
-        .toList();
-    final dates = controller.history
-        .map((e) => DateFormat.E().format(e.date))
-        .toList();
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Points trend (7 days)',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 140,
-              width: double.infinity,
-              child: CustomPaint(
-                painter: _LineChartPainter(points: points, color: cs.primary),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Low: ${points.reduce((a, b) => a < b ? a : b)} pts',
-                  style: TextStyle(color: cs.outline),
-                ),
-                Text(
-                  'High: ${points.reduce((a, b) => a > b ? a : b)} pts',
-                  style: TextStyle(color: cs.outline),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: dates
-                  .map(
-                    (d) => Expanded(
-                      child: Text(
-                        d,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: cs.outline, fontSize: 12),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
-        ),
-      ),
-    );
+    return null;
   }
+}
 
-  Widget _chronicSection(ColorScheme cs) {
-    final latest = controller.history.isNotEmpty
-        ? controller.history.last
-        : null;
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Chronic condition adherence',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                _chip(
-                  cs,
-                  Icons.health_and_safety_outlined,
-                  'Active plans',
-                  '${controller.chronicConditionCount}',
-                ),
-                _chip(
-                  cs,
-                  Icons.task_alt_outlined,
-                  'Adherence',
-                  '${controller.chronicAdherencePercent.toStringAsFixed(0)}%',
-                ),
-                _chip(
-                  cs,
-                  Icons.schedule_outlined,
-                  'Pending doses',
-                  '${controller.chronicPendingDoses}',
-                ),
-                if (latest != null)
-                  _chip(
-                    cs,
-                    Icons.insights_outlined,
-                    'Latest history',
-                    '${latest.conditionAdherencePercent.toStringAsFixed(0)}%',
-                  ),
-              ],
-            ),
-            if (controller.chronicSummaries.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...controller.chronicSummaries
-                  .take(3)
-                  .map(
-                    (summary) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(summary),
-                    ),
-                  ),
-            ],
-            if (controller.chronicDisclaimer.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                controller.chronicDisclaimer,
-                style: TextStyle(color: cs.outline),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+class _TodayProgressCard extends StatelessWidget {
+  const _TodayProgressCard({
+    required this.overview,
+    required this.cards,
+    required this.onOpenDetail,
+  });
 
-  Widget _timeline(ColorScheme cs, NumberFormat fmt) {
-    if (controller.history.isEmpty) {
-      return Card(
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'No history yet. Log water, meals, sleep, or steps to start.',
-          ),
-        ),
-      );
-    }
+  final ProgressOverview overview;
+  final List<ProgressTrackerCard> cards;
+  final ValueChanged<ProgressTrackerCard> onOpenDetail;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          '7-day timeline',
-          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 360,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: controller.history.length,
-            separatorBuilder: (_, index) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final day = controller.history[index];
-              final dateLabel = DateFormat.E().format(day.date);
-              final dayNum = day.date.day;
-              final kcalLabel =
-                  '${fmt.format(day.caloriesIn)} / ${fmt.format(day.caloriesTarget)}';
-              return SizedBox(
-                width: 220,
-                height: double.infinity,
-                child: Card(
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(
-                      color: cs.outlineVariant.withValues(alpha: 0.45),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '$dateLabel $dayNum',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: cs.primary.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                '+${day.pointsEstimate} pts',
-                                style: TextStyle(color: cs.primary),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Expanded(
-                          child: SingleChildScrollView(
-                            physics: const ClampingScrollPhysics(),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _timelineBar(
-                                  cs,
-                                  'Water',
-                                  Icons.water_drop,
-                                  day.waterProgress.clamp(0.0, 1.0).toDouble(),
-                                  '${day.waterCurrent.toStringAsFixed(2)} / ${day.waterTarget.toStringAsFixed(2)} L',
-                                ),
-                                _timelineBar(
-                                  cs,
-                                  'Calories',
-                                  Icons.restaurant,
-                                  day.caloriesProgress
-                                      .clamp(0.0, 1.0)
-                                      .toDouble(),
-                                  '$kcalLabel kcal',
-                                  warn:
-                                      day.caloriesTarget > 0 &&
-                                      day.caloriesIn > day.caloriesTarget,
-                                ),
-                                _timelineBar(
-                                  cs,
-                                  'Burn',
-                                  Icons.local_fire_department,
-                                  day.burnProgress.clamp(0.0, 1.0).toDouble(),
-                                  '${fmt.format(day.caloriesBurned)} / ${fmt.format(day.burnTarget)} kcal',
-                                ),
-                                _timelineBar(
-                                  cs,
-                                  'Steps',
-                                  Icons.directions_walk,
-                                  day.stepsProgress.clamp(0.0, 1.0).toDouble(),
-                                  '${fmt.format(day.steps)} / ${fmt.format(day.stepsTarget)}',
-                                ),
-                                _timelineBar(
-                                  cs,
-                                  'Sleep',
-                                  Icons.bedtime,
-                                  day.sleepProgress.clamp(0.0, 1.0).toDouble(),
-                                  '${day.sleepHours.toStringAsFixed(1)} / ${day.sleepTarget.toStringAsFixed(1)} h',
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _timelineBar(
-    ColorScheme cs,
-    String title,
-    IconData icon,
-    double value,
-    String subtitle, {
-    bool warn = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    return _ProgressCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: warn ? cs.error : cs.primary),
-              const SizedBox(width: 6),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Today',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: VitaMateTheme.primaryDeep,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      DateFormat('EEEE, MMM d').format(now),
+                      style: const TextStyle(
+                        color: VitaMateTheme.textMuted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _PointsBadge(points: overview.points, level: overview.level),
             ],
           ),
-          const SizedBox(height: 3),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: value,
-              minHeight: 8,
-              color: warn ? cs.error : cs.primary,
-              backgroundColor: cs.surfaceContainerHighest.withValues(
-                alpha: 0.6,
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 126,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: cards.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 10),
+              itemBuilder: (context, index) => _CompactTrackerTile(
+                card: cards[index],
+                onTap: () => onOpenDetail(cards[index]),
               ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(subtitle, style: TextStyle(color: cs.outline)),
         ],
       ),
     );
   }
+}
 
-  // مخططات فرعية لكل متتبع لعرض التقدم اليومي خلال ٧ أيام
-  Widget _trackerCharts(ColorScheme cs) {
-    if (controller.history.isEmpty) {
-      return const SizedBox.shrink();
-    }
+class _OverallScoreCard extends StatelessWidget {
+  const _OverallScoreCard({required this.overview, required this.isStale});
 
-    final waterSeries = controller.history
-        .map((e) => e.waterProgress.clamp(0.0, 1.5).toDouble())
-        .toList();
-    final caloriesSeries = controller.history
-        .map((e) => e.caloriesProgress.clamp(0.0, 2.0).toDouble())
-        .toList();
-    final stepsSeries = controller.history
-        .map((e) => e.stepsProgress.clamp(0.0, 2.0).toDouble())
-        .toList();
-    final sleepSeries = controller.history
-        .map((e) => e.sleepProgress.clamp(0.0, 1.5).toDouble())
-        .toList();
-    final burnSeries = controller.history
-        .map((e) => e.burnProgress.clamp(0.0, 2.0).toDouble())
-        .toList();
+  final ProgressOverview overview;
+  final bool isStale;
 
-    List<Widget> cards = [
-      _miniChart(cs, 'Water progress', waterSeries, cs.primary),
-      _miniChart(cs, 'Calories progress', caloriesSeries, cs.error),
-      _miniChart(cs, 'Steps progress', stepsSeries, cs.primary),
-      _miniChart(cs, 'Sleep progress', sleepSeries, cs.tertiary),
-      _miniChart(cs, 'Burn progress', burnSeries, cs.secondary),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Tracker charts',
-          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: cards
-              .map(
-                (w) => SizedBox(
-                  width: MediaQuery.of(context).size.width / 2 - 22,
-                  child: w,
+  @override
+  Widget build(BuildContext context) {
+    return _ProgressCard(
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _ProgressRing(
+                percent: overview.overallScore,
+                color: VitaMateTheme.success,
+                label: '${overview.overallScore}%',
+                caption: 'Wellness',
+                size: 112,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Great progress!',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: VitaMateTheme.primaryDeep,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      overview.insight.message,
+                      style: const TextStyle(
+                        color: VitaMateTheme.textMuted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (isStale) ...[
+                      const SizedBox(height: 8),
+                      const _MiniPill(
+                        label: 'Refreshing snapshot',
+                        color: VitaMateTheme.warning,
+                      ),
+                    ],
+                  ],
                 ),
-              )
-              .toList(),
-        ),
-      ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _WeeklyConsistency(consistency: overview.weeklyConsistency),
+        ],
+      ),
     );
   }
+}
 
-  Widget _miniChart(
-    ColorScheme cs,
-    String title,
-    List<double> series,
-    Color color,
-  ) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+class _TrackerRows extends StatelessWidget {
+  const _TrackerRows({required this.cards, required this.onOpenDetail});
+
+  final List<ProgressTrackerCard> cards;
+  final ValueChanged<ProgressTrackerCard> onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    if (cards.isEmpty) {
+      return const _TipCard(
+        title: 'No progress data yet',
+        message: 'Your tracker snapshots will appear here after the first log.',
+      );
+    }
+    return _ProgressCard(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        children: [
+          for (final card in cards)
+            _TrackerRow(card: card, onTap: () => onOpenDetail(card)),
+        ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+    );
+  }
+}
+
+class _FeaturedTrackerSection extends StatelessWidget {
+  const _FeaturedTrackerSection({
+    required this.title,
+    required this.subtitle,
+    required this.card,
+    required this.onOpenDetail,
+  });
+
+  final String title;
+  final String subtitle;
+  final ProgressTrackerCard? card;
+  final ValueChanged<ProgressTrackerCard> onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = card;
+    if (item == null) {
+      return const SizedBox.shrink();
+    }
+    final color = _trackerColor(item.code);
+    return _ProgressCard(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => onOpenDetail(item),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 90,
-              child: CustomPaint(
-                painter: _LineChartPainter(points: series, color: color),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: VitaMateTheme.primaryDeep,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: VitaMateTheme.textMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => onOpenDetail(item),
+                  child: const Text('View all'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _ProgressRing(
+                  percent: item.percent,
+                  color: color,
+                  label: '${item.percent}%',
+                  caption: item.status,
+                  size: 96,
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _LabeledValue(
+                        label: item.title,
+                        value: _formatCardValue(item),
+                        color: color,
+                      ),
+                      const SizedBox(height: 12),
+                      _ProgressBar(value: item.percent / 100, color: color),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          item.summary,
+                          style: const TextStyle(
+                            color: VitaMateTheme.textMuted,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  /// نافذة إدخال نوم يدوي (وقت بداية ونهاية + جودة).
-  Future<void> _showSleepLogSheet(ColorScheme cs) async {
-    TimeOfDay start = const TimeOfDay(hour: 23, minute: 0);
-    TimeOfDay end = const TimeOfDay(hour: 7, minute: 0);
-    String quality = 'Deep';
+class _TimelineSection extends StatelessWidget {
+  const _TimelineSection({required this.days});
 
-    if (!mounted) return;
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 18,
-                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Log sleep',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                  ),
-                  const SizedBox(height: 12),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.nightlight),
-                    title: const Text('Start time'),
-                    subtitle: Text(start.format(ctx)),
-                    onTap: () async {
-                      final picked = await showTimePicker(
-                        context: ctx,
-                        initialTime: start,
-                      );
-                      if (picked != null) setState(() => start = picked);
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.wb_sunny),
-                    title: const Text('End time'),
-                    subtitle: Text(end.format(ctx)),
-                    onTap: () async {
-                      final picked = await showTimePicker(
-                        context: ctx,
-                        initialTime: end,
-                      );
-                      if (picked != null) setState(() => end = picked);
-                    },
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: quality,
-                    decoration: const InputDecoration(labelText: 'Quality'),
-                    items: const [
-                      DropdownMenuItem(value: 'Deep', child: Text('Deep')),
-                      DropdownMenuItem(value: 'Light', child: Text('Light')),
-                      DropdownMenuItem(
-                        value: 'Interrupted',
-                        child: Text('Interrupted'),
-                      ),
-                    ],
-                    onChanged: (v) => setState(() => quality = v ?? 'Deep'),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        final now = DateTime.now();
-                        var startDt = DateTime(
-                          now.year,
-                          now.month,
-                          now.day,
-                          start.hour,
-                          start.minute,
-                        );
-                        var endDt = DateTime(
-                          now.year,
-                          now.month,
-                          now.day,
-                          end.hour,
-                          end.minute,
-                        );
-                        if (endDt.isBefore(startDt)) {
-                          endDt = endDt.add(const Duration(days: 1));
-                        }
-                        try {
-                          await _statsApi.logSleep(
-                            start: startDt,
-                            end: endDt,
-                            quality: quality,
-                          );
-                          if (ctx.mounted) Navigator.of(ctx).pop();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Sleep logged successfully'),
-                              ),
-                            );
-                            controller.load();
-                          }
-                        } catch (_) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Failed to log sleep'),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                      child: const Text('Save'),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
+  final List<ProgressTimelineDay> days;
 
-  Widget _shortcuts(ColorScheme cs) {
-    final shortcuts = [
-      _shortcutTile(cs, 'Log water', Icons.water_drop, () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => WaterScreen(
-              targetValueFromBackend: controller.waterTarget,
-              targetIsLiters: true,
-            ),
-          ),
-        );
-      }),
-      _shortcutTile(cs, 'Log meal', Icons.restaurant, () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const NutritionScreen()));
-      }),
-      _shortcutTile(cs, 'Log activity', Icons.fitness_center, () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const ActivityScreen()));
-      }),
-      _shortcutTile(cs, 'Log steps', Icons.directions_walk, () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const StepsScreen()));
-      }),
-      _shortcutTile(cs, 'Log sleep (manual)', Icons.hotel, () async {
-        await _showSleepLogSheet(cs);
-      }),
-      _shortcutTile(cs, 'Sleep reminders', Icons.bedtime, () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const SleepScreen()));
-      }),
-    ];
-
+  @override
+  Widget build(BuildContext context) {
+    if (days.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Quick actions',
-          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+          '7-day timeline',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+            color: VitaMateTheme.primaryDeep,
+          ),
         ),
         const SizedBox(height: 10),
-        Wrap(spacing: 12, runSpacing: 12, children: shortcuts),
+        SizedBox(
+          height: 164,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: days.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 10),
+            itemBuilder: (context, index) => _TimelineDayTile(day: days[index]),
+          ),
+        ),
       ],
     );
   }
+}
 
-  Widget _shortcutTile(
-    ColorScheme cs,
-    String title,
-    IconData icon,
-    VoidCallback onTap,
-  ) {
-    return SizedBox(
-      width: MediaQuery.of(context).size.width / 2 - 22,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
+class ProgressDetailScreen extends StatefulWidget {
+  const ProgressDetailScreen({super.key, required this.card});
+
+  final ProgressTrackerCard card;
+
+  @override
+  State<ProgressDetailScreen> createState() => _ProgressDetailScreenState();
+}
+
+class _ProgressDetailScreenState extends State<ProgressDetailScreen> {
+  late final ProgressDetailController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = ProgressDetailController(tracker: widget.card.code);
+    unawaited(controller.load());
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.card.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () => controller.load(),
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
+        ],
+      ),
+      body: SafeArea(
+        child: AnimatedBuilder(
+          animation: controller,
+          builder: (context, _) {
+            if (controller.loading && controller.data.title.isEmpty) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (controller.error != null && controller.data.title.isEmpty) {
+              return _ErrorState(
+                message: controller.error!,
+                onRetry: controller.load,
+              );
+            }
+            return RefreshIndicator(
+              onRefresh: controller.load,
+              child: _ProgressDetailBody(
+                card: widget.card,
+                detail: controller.data,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressDetailBody extends StatelessWidget {
+  const _ProgressDetailBody({required this.card, required this.detail});
+
+  final ProgressTrackerCard card;
+  final ProgressDetailPayload detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _trackerColor(card.code);
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ProgressCard(
             child: Row(
               children: [
-                Icon(icon, color: cs.primary),
-                const SizedBox(width: 10),
+                _ProgressRing(
+                  percent: detail.score,
+                  color: color,
+                  label: '${detail.score}%',
+                  caption: detail.status,
+                  size: 116,
+                ),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    detail.insight.isEmpty ? card.summary : detail.insight,
+                    style: const TextStyle(
+                      color: VitaMateTheme.textMuted,
+                      fontWeight: FontWeight.w800,
+                      height: 1.35,
+                    ),
                   ),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SummaryCardGrid(cards: detail.summaryCards, color: color),
+          const SizedBox(height: 14),
+          _TrendCard(points: detail.trend, color: color),
+          const SizedBox(height: 14),
+          _MetricList(metrics: detail.metrics, color: color),
+          for (final section in detail.sections) ...[
+            const SizedBox(height: 14),
+            _GenericSection(section: section, color: color),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryCardGrid extends StatelessWidget {
+  const _SummaryCardGrid({required this.cards, required this.color});
+
+  final List<ProgressSummaryCard> cards;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (cards.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: cards
+          .map(
+            (card) => SizedBox(
+              width: MediaQuery.of(context).size.width / 2 - 21,
+              child: _ProgressCard(
+                padding: const EdgeInsets.all(14),
+                child: _LabeledValue(
+                  label: card.label,
+                  value: _formatValue(card.current, card.target, card.unit),
+                  color: color,
+                ),
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class _TrendCard extends StatelessWidget {
+  const _TrendCard({required this.points, required this.color});
+
+  final List<ProgressTrendPoint> points;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (points.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _ProgressCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Weekly trend',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: VitaMateTheme.primaryDeep,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 150,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _TrendPainter(
+                values: points
+                    .map((point) => point.percent / 100)
+                    .toList(growable: false),
+                color: color,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: points
+                .map(
+                  (point) => Expanded(
+                    child: Text(
+                      DateFormat.E().format(point.date),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: VitaMateTheme.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricList extends StatelessWidget {
+  const _MetricList({required this.metrics, required this.color});
+
+  final List<ProgressMetric> metrics;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (metrics.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _ProgressCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Detailed progress',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: VitaMateTheme.primaryDeep,
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (final metric in metrics) ...[
+            _MetricRow(
+              metric: metric,
+              color: metric.limit ? _limitColor(metric) : color,
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _GenericSection extends StatelessWidget {
+  const _GenericSection({required this.section, required this.color});
+
+  final ProgressDetailSection section;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (section.items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _ProgressCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            section.title,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: VitaMateTheme.primaryDeep,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: section.items
+                .take(8)
+                .map((item) {
+                  final label =
+                      item['label']?.toString() ??
+                      item['title']?.toString() ??
+                      item['habit_type']?.toString() ??
+                      'Item';
+                  final progress = item['progress'];
+                  final percent = progress is Map
+                      ? (progress['adherence_percent'] as num?)?.round()
+                      : null;
+                  return _MiniPill(
+                    label: percent == null ? label : '$label $percent%',
+                    color: color,
+                  );
+                })
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressCard extends StatelessWidget {
+  const _ProgressCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: VitaMateTheme.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: VitaMateTheme.border),
+        boxShadow: const [
+          BoxShadow(
+            color: VitaMateTheme.shadow,
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _CompactTrackerTile extends StatelessWidget {
+  const _CompactTrackerTile({required this.card, required this.onTap});
+
+  final ProgressTrackerCard card;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _trackerColor(card.code);
+    return SizedBox(
+      width: 132,
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: VitaMateTheme.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(_trackerIcon(card.code), color: color),
+                const SizedBox(height: 8),
+                Text(
+                  card.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: VitaMateTheme.primaryDeep,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${card.percent}%',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _ProgressBar(value: card.percent / 100, color: color),
               ],
             ),
           ),
@@ -1018,83 +924,618 @@ class _StatsScreenState extends State<StatsScreen> {
       ),
     );
   }
+}
 
-  Widget _chip(ColorScheme cs, IconData icon, String title, String value) {
-    return Chip(
-      avatar: Icon(icon, size: 18, color: cs.primary),
-      label: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: TextStyle(color: cs.outline)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-        ],
+class _TrackerRow extends StatelessWidget {
+  const _TrackerRow({required this.card, required this.onTap});
+
+  final ProgressTrackerCard card;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _trackerColor(card.code);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Icon(_trackerIcon(card.code), color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card.title,
+                    style: const TextStyle(
+                      color: VitaMateTheme.primaryDeep,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    card.summary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: VitaMateTheme.textMuted,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 96,
+              child: _ProgressBar(value: card.percent / 100, color: color),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '${card.percent}%',
+              style: TextStyle(color: color, fontWeight: FontWeight.w900),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: VitaMateTheme.textMuted,
+            ),
+          ],
+        ),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
     );
   }
 }
 
-class _LineChartPainter extends CustomPainter {
-  _LineChartPainter({required this.points, required this.color});
+class _WeeklyConsistency extends StatelessWidget {
+  const _WeeklyConsistency({required this.consistency});
 
-  final List<double> points;
+  final ProgressWeeklyConsistency consistency;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: VitaMateTheme.softSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: VitaMateTheme.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'You completed ${consistency.daysMet} of ${consistency.totalDays} days',
+              style: const TextStyle(
+                color: VitaMateTheme.primaryDeep,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          _MiniPill(
+            label: '${consistency.percent}% consistent',
+            color: VitaMateTheme.success,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineDayTile extends StatelessWidget {
+  const _TimelineDayTile({required this.day});
+
+  final ProgressTimelineDay day;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = day.complete ? VitaMateTheme.success : VitaMateTheme.primary;
+    return Container(
+      width: 88,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: VitaMateTheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: day.complete ? color : VitaMateTheme.border,
+          width: day.complete ? 1.4 : 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          Text(
+            DateFormat.E().format(day.date),
+            style: const TextStyle(
+              color: VitaMateTheme.primaryDeep,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            DateFormat.MMMd().format(day.date),
+            style: const TextStyle(
+              color: VitaMateTheme.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const Spacer(),
+          _ProgressRing(
+            percent: day.score,
+            color: color,
+            label: day.complete ? 'OK' : '${day.score}%',
+            caption: '',
+            size: 44,
+            strokeWidth: 4,
+          ),
+          const Spacer(),
+          Text(
+            '+${day.points} pts',
+            style: TextStyle(color: color, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressRing extends StatelessWidget {
+  const _ProgressRing({
+    required this.percent,
+    required this.color,
+    required this.label,
+    required this.caption,
+    required this.size,
+    this.strokeWidth = 9,
+  });
+
+  final int percent;
+  final Color color;
+  final String label;
+  final String caption;
+  final double size;
+  final double strokeWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _RingPainter(
+          value: percent.clamp(0, 100) / 100,
+          color: color,
+          strokeWidth: strokeWidth,
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: size > 60 ? 22 : 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (caption.isNotEmpty)
+                Text(
+                  caption,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: VitaMateTheme.primaryDeep,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressBar extends StatelessWidget {
+  const _ProgressBar({required this.value, required this.color});
+
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: LinearProgressIndicator(
+        value: value.clamp(0, 1),
+        minHeight: 8,
+        color: color,
+        backgroundColor: color.withValues(alpha: 0.16),
+      ),
+    );
+  }
+}
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.metric, required this.color});
+
+  final ProgressMetric metric;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                metric.label,
+                style: const TextStyle(
+                  color: VitaMateTheme.primaryDeep,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            Text(
+              _formatValue(metric.current, metric.target, metric.unit),
+              style: const TextStyle(
+                color: VitaMateTheme.primaryDeep,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        _ProgressBar(value: metric.percent / 100, color: color),
+      ],
+    );
+  }
+}
+
+class _LabeledValue extends StatelessWidget {
+  const _LabeledValue({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: VitaMateTheme.textMuted,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w900,
+            fontSize: 20,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PointsBadge extends StatelessWidget {
+  const _PointsBadge({required this.points, required this.level});
+
+  final int points;
+  final int level;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: VitaMateTheme.softSurface,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.stars_rounded, color: VitaMateTheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            '$points pts',
+            style: const TextStyle(
+              color: VitaMateTheme.primary,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 8),
+          _MiniPill(label: 'Lvl $level', color: VitaMateTheme.primary),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniPill extends StatelessWidget {
+  const _MiniPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontWeight: FontWeight.w900),
+      ),
+    );
+  }
+}
+
+class _TipCard extends StatelessWidget {
+  const _TipCard({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProgressCard(
+      child: Row(
+        children: [
+          const Icon(Icons.auto_awesome_rounded, color: VitaMateTheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: VitaMateTheme.primaryDeep,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: VitaMateTheme.textMuted,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter({
+    required this.value,
+    required this.color,
+    required this.strokeWidth,
+  });
+
+  final double value;
+  final Color color;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = (math.min(size.width, size.height) - strokeWidth) / 2;
+    final base = Paint()
+      ..color = color.withValues(alpha: 0.13)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    final progress = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, base);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      math.pi * 2 * value.clamp(0, 1),
+      false,
+      progress,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingPainter oldDelegate) {
+    return oldDelegate.value != value ||
+        oldDelegate.color != color ||
+        oldDelegate.strokeWidth != strokeWidth;
+  }
+}
+
+class _TrendPainter extends CustomPainter {
+  const _TrendPainter({required this.values, required this.color});
+
+  final List<double> values;
   final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (points.isEmpty) return;
-
-    final paintLine = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-
-    final paintFill = Paint()
-      ..color = color.withValues(alpha: 0.15)
-      ..style = PaintingStyle.fill;
-
-    final maxVal = points.reduce((a, b) => a > b ? a : b);
-    final minVal = points.reduce((a, b) => a < b ? a : b);
-    final span = (maxVal - minVal).abs() < 1 ? 1 : (maxVal - minVal);
-
-    final stepX = points.length == 1 ? 0.0 : size.width / (points.length - 1);
+    if (values.isEmpty) {
+      return;
+    }
+    final grid = Paint()
+      ..color = VitaMateTheme.border
+      ..strokeWidth = 1;
+    for (var i = 0; i < 4; i++) {
+      final y = size.height * i / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
     final path = Path();
-    final fillPath = Path();
-
-    for (int i = 0; i < points.length; i++) {
-      final x = points.length == 1 ? size.width / 2 : i * stepX;
-      final norm = (points[i] - minVal) / span;
-      final y = size.height - (norm * size.height);
+    final fill = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = values.length == 1
+          ? size.width / 2
+          : size.width * i / (values.length - 1);
+      final y = size.height - (values[i].clamp(0, 1) * size.height);
       if (i == 0) {
         path.moveTo(x, y);
-        fillPath.moveTo(x, size.height);
-        fillPath.lineTo(x, y);
+        fill.moveTo(x, size.height);
+        fill.lineTo(x, y);
       } else {
         path.lineTo(x, y);
-        fillPath.lineTo(x, y);
-      }
-      if (i == points.length - 1) {
-        fillPath.lineTo(x, size.height);
-        fillPath.close();
+        fill.lineTo(x, y);
       }
     }
-
-    canvas.drawPath(fillPath, paintFill);
-    canvas.drawPath(path, paintLine);
-
-    // Draw points
-    for (int i = 0; i < points.length; i++) {
-      final x = points.length == 1 ? size.width / 2 : i * stepX;
-      final norm = (points[i] - minVal) / span;
-      final y = size.height - (norm * size.height);
-      canvas.drawCircle(Offset(x, y), 3, Paint()..color = color);
+    fill.lineTo(size.width, size.height);
+    fill.close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..color = color.withValues(alpha: 0.09)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round,
+    );
+    for (var i = 0; i < values.length; i++) {
+      final x = values.length == 1
+          ? size.width / 2
+          : size.width * i / (values.length - 1);
+      final y = size.height - (values[i].clamp(0, 1) * size.height);
+      canvas.drawCircle(Offset(x, y), 4, Paint()..color = color);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _LineChartPainter oldDelegate) {
-    return oldDelegate.points != points || oldDelegate.color != color;
+  bool shouldRepaint(covariant _TrendPainter oldDelegate) {
+    return oldDelegate.values != values || oldDelegate.color != color;
   }
+}
+
+IconData _trackerIcon(String code) {
+  switch (code) {
+    case 'nutrition':
+      return Icons.restaurant_rounded;
+    case 'hydration':
+      return Icons.water_drop_rounded;
+    case 'activity':
+      return Icons.local_fire_department_rounded;
+    case 'steps':
+      return Icons.directions_walk_rounded;
+    case 'sleep':
+      return Icons.nightlight_round;
+    case 'medications':
+      return Icons.medication_rounded;
+    case 'chronic':
+      return Icons.health_and_safety_rounded;
+    case 'habits':
+      return Icons.flag_rounded;
+  }
+  return Icons.insights_rounded;
+}
+
+Color _trackerColor(String code) {
+  switch (code) {
+    case 'nutrition':
+      return VitaMateTheme.success;
+    case 'hydration':
+      return const Color(0xFF258BEF);
+    case 'activity':
+      return VitaMateTheme.danger;
+    case 'steps':
+      return const Color(0xFF34A853);
+    case 'sleep':
+      return VitaMateTheme.primary;
+    case 'medications':
+      return VitaMateTheme.primary;
+    case 'chronic':
+      return const Color(0xFF5B4BE8);
+    case 'habits':
+      return VitaMateTheme.warning;
+  }
+  return VitaMateTheme.primary;
+}
+
+Color _limitColor(ProgressMetric metric) {
+  if (metric.target != null && metric.current > metric.target!) {
+    return VitaMateTheme.danger;
+  }
+  return VitaMateTheme.warning;
+}
+
+String _formatCardValue(ProgressTrackerCard card) {
+  return _formatValue(card.current, card.target, card.unit);
+}
+
+String _formatValue(double current, double? target, String unit) {
+  final currentText = _formatNumber(current, unit);
+  if (target == null || target <= 0) {
+    return '$currentText $unit'.trim();
+  }
+  return '$currentText / ${_formatNumber(target, unit)} $unit'.trim();
+}
+
+String _formatNumber(double value, String unit) {
+  if (unit == 'steps' || unit == 'kcal' || unit == 'doses') {
+    return NumberFormat.decimalPattern().format(value.round());
+  }
+  if (unit == '%') {
+    return '${value.round()}';
+  }
+  return value.toStringAsFixed(value >= 10 ? 0 : 2);
 }

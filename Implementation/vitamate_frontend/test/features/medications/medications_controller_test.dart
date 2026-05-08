@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vitamate/core/notifications/notifications_service.dart';
+import 'package:vitamate/features/medications/data/medications_api.dart';
 import 'package:vitamate/features/medications/data/medications_repository.dart';
 import 'package:vitamate/features/medications/models/medication_adherence_summary.dart';
 import 'package:vitamate/features/medications/models/medication_dose_log.dart';
@@ -44,6 +47,10 @@ class _FakeMedicationsRepository extends MedicationsRepository {
       isActive: true,
       isPrn: false,
       timezone: 'Asia/Damascus',
+      supplementNutrientId: null,
+      supplementNutrientCode: '',
+      supplementNutrientAmount: 0,
+      supplementNutrientUnit: '',
       nextDue: DateTime(2026, 4, 17, 8),
       adherenceSummaryShort: adherence,
       schedules: const [
@@ -108,6 +115,63 @@ class _FakeMedicationsRepository extends MedicationsRepository {
   }
 }
 
+class _EnvelopeMedicationsApi extends MedicationsApi {
+  @override
+  Future<Map<String, dynamic>> fetchOverview() async {
+    return {
+      'data': {
+        'medications': [
+          {
+            'id': 7,
+            'display_name': 'Vitamin D',
+            'source_type': 'manual',
+            'dose_amount': '1000',
+            'dose_unit': 'IU',
+            'form': 'capsule',
+            'is_active': true,
+            'is_prn': false,
+            'timezone': 'Asia/Damascus',
+            'adherence_summary_short': {
+              'expected_doses': 1,
+              'taken_doses': 0,
+              'pending_doses': 1,
+              'adherence_percent': 0,
+            },
+            'schedules': [
+              {
+                'id': 11,
+                'schedule_type': 'daily',
+                'time': '09:00',
+                'meal_relation': 'after_meal',
+              },
+            ],
+          },
+        ],
+        'today_plan': [
+          {
+            'log_id': 99,
+            'medication_id': 7,
+            'display_name': 'Vitamin D',
+            'scheduled_for': '2026-05-05T09:00:00',
+            'status': 'pending',
+            'dose_amount': '1000',
+            'dose_unit': 'IU',
+            'form': 'capsule',
+          },
+        ],
+        'overall_adherence': {
+          'expected_doses': 1,
+          'taken_doses': 0,
+          'pending_doses': 1,
+          'adherence_percent': 0,
+        },
+        'reminder_sync': {'items': []},
+      },
+      'meta': {'is_stale': false, 'request_id': 'test'},
+    };
+  }
+}
+
 void main() {
   test('medication models parse backend payload', () {
     final item = MedicationItem.fromJson({
@@ -149,6 +213,17 @@ void main() {
     expect(item.adherenceSummaryShort.expectedDoses, 2);
   });
 
+  test('repository unwraps medications overview envelope', () async {
+    final repository = MedicationsRepository(api: _EnvelopeMedicationsApi());
+
+    final overview = await repository.getOverview();
+
+    expect(overview.medications, hasLength(1));
+    expect(overview.medications.single.displayName, 'Vitamin D');
+    expect(overview.todayPlan, hasLength(1));
+    expect(overview.overallAdherence.pendingDoses, 1);
+  });
+
   test('controller creates medication and syncs reminders', () async {
     final repo = _FakeMedicationsRepository();
     final plans = <ChronicMedicationReminderPlan>[];
@@ -173,8 +248,38 @@ void main() {
     expect(saved, isTrue);
     expect(repo.createdPayloads, hasLength(1));
     expect(controller.state.medications.single.displayName, 'Metformin');
+    await Future<void>.delayed(Duration.zero);
     expect(plans.single.medicationName, 'Metformin');
     expect(plans.single.recurrenceDays, [0, 2]);
+  });
+
+  test('controller does not block save on reminder sync', () async {
+    final repo = _FakeMedicationsRepository();
+    final syncCompleter = Completer<void>();
+    final controller = MedicationsController(
+      repository: repo,
+      reminderSyncer: (_) => syncCompleter.future,
+    );
+
+    final saved = await controller.createMedication({
+      'display_name': 'Metformin',
+      'source_type': 'condition',
+      'user_condition_id': 2,
+      'dose_amount': '500',
+      'dose_unit': 'mg',
+      'form': 'tablet',
+      'instructions': 'After food',
+      'schedules': [
+        {'schedule_type': 'daily', 'time': '08:00'},
+      ],
+    });
+
+    expect(saved, isTrue);
+    expect(controller.state.isSaving, isFalse);
+    expect(controller.state.medications.single.displayName, 'Metformin');
+
+    syncCompleter.complete();
+    await Future<void>.delayed(Duration.zero);
   });
 
   test('controller refreshes today plan after dose action', () async {

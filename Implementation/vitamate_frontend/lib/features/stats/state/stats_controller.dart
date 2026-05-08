@@ -1,18 +1,24 @@
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 
-import '../data/stats_api.dart';
+import '../../../core/network/network_error_mapper.dart';
+import '../../../core/network/request_manager.dart';
+import '../data/stats_repository.dart';
 import '../models/day_stat.dart';
+import '../models/progress_models.dart';
 
 class StatsController extends ChangeNotifier {
-  StatsController({StatsApi? api}) : _api = api ?? StatsApi();
+  StatsController({StatsRepository? repository, RequestManager? requestManager})
+    : _repository = repository ?? StatsRepository(),
+      _requestManager = requestManager ?? RequestManager();
 
-  final StatsApi _api;
+  final StatsRepository _repository;
+  final RequestManager _requestManager;
 
   bool loading = false;
   String? error;
+  bool isStale = false;
 
-  // Dashboard snapshot
   int pointsTotal = 0;
   int level = 1;
   double waterTarget = 0;
@@ -37,24 +43,44 @@ class StatsController extends ChangeNotifier {
   double chronicAdherencePercent = 0;
   List<String> chronicSummaries = const [];
   String chronicDisclaimer = '';
-
-  // History
-  List<DayStat> history = [];
+  List<DayStat> history = <DayStat>[];
+  ProgressOverview overview = ProgressOverview.empty();
 
   Future<void> load() async {
+    final overviewLease = _requestManager.beginLatest('progress.overview');
+    final historyLease = _requestManager.beginLatest('progress.history');
     loading = true;
     error = null;
     notifyListeners();
 
     try {
-      final dashboard = await _api.getDashboard();
-      _parseDashboard(dashboard);
+      final snapshot = await _repository.getProgress(
+        overviewCancelToken: overviewLease.cancelToken,
+        historyCancelToken: historyLease.cancelToken,
+      );
+      if (!_requestManager.isCurrent(overviewLease) ||
+          !_requestManager.isCurrent(historyLease)) {
+        return;
+      }
 
-      final hist = await _api.getHistory();
-      history = hist.map((e) => DayStat.fromJson(_asMap(e))).toList();
-    } catch (_) {
-      error = 'Failed to load progress data';
+      _parseDashboard(snapshot.overview);
+      history = snapshot.history;
+      overview = ProgressOverview.fromJson(
+        snapshot.overview,
+        fallbackHistory: history,
+      );
+      isStale = snapshot.isStale;
+    } catch (e) {
+      if (NetworkErrorMapper.isCanceled(e)) {
+        return;
+      }
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Failed to load progress data',
+      );
     } finally {
+      _requestManager.complete(overviewLease);
+      _requestManager.complete(historyLease);
       loading = false;
       notifyListeners();
     }
@@ -109,7 +135,7 @@ class StatsController extends ChangeNotifier {
 
   List<String> _asStringList(dynamic value) {
     if (value is List) {
-      return value.map((item) => item.toString()).toList();
+      return value.map((item) => item.toString()).toList(growable: false);
     }
     return const <String>[];
   }
@@ -126,5 +152,69 @@ class StatsController extends ChangeNotifier {
     if (v is double) return v;
     if (v is int) return v.toDouble();
     return double.tryParse(v.toString()) ?? 0;
+  }
+
+  @override
+  void dispose() {
+    _requestManager.cancelAll();
+    super.dispose();
+  }
+}
+
+class ProgressDetailController extends ChangeNotifier {
+  ProgressDetailController({
+    required this.tracker,
+    StatsRepository? repository,
+    RequestManager? requestManager,
+  }) : _repository = repository ?? StatsRepository(),
+       _requestManager = requestManager ?? RequestManager();
+
+  final String tracker;
+  final StatsRepository _repository;
+  final RequestManager _requestManager;
+
+  bool loading = false;
+  String? error;
+  ProgressDetailPayload data = ProgressDetailPayload.empty('');
+
+  Future<void> load({int rangeDays = 7}) async {
+    final lease = _requestManager.beginLatest('progress.detail.$tracker');
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      final payload = await _repository.getDetail(
+        tracker: tracker,
+        rangeDays: rangeDays,
+        cancelToken: lease.cancelToken,
+      );
+      if (!_requestManager.isCurrent(lease)) {
+        return;
+      }
+      data = payload;
+    } catch (e) {
+      if (NetworkErrorMapper.isCanceled(e)) {
+        return;
+      }
+      debugPrint('ProgressDetailController.load failed: tracker=$tracker error=$e');
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Failed to load $tracker progress detail',
+        statusMessages: <int, String>{
+          401: 'Session expired while loading $tracker progress. Sign in again.',
+          404: 'Progress detail endpoint is missing for $tracker. Restart the Django backend.',
+        },
+      );
+    } finally {
+      _requestManager.complete(lease);
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _requestManager.cancelAll();
+    super.dispose();
   }
 }

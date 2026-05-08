@@ -45,3 +45,19 @@ class PointsService:
         if goal_hours and duration_hours >= 0.9 * goal_hours:
             return PointsService.add_points(user, 10)
         return None
+
+    @staticmethod
+    def award_unhealthy_habit_log(user):
+        return PointsService.add_points(user, 2)
+
+    @staticmethod
+    def award_unhealthy_habit_within_limit(user):
+        return PointsService.add_points(user, 3)
+
+    @staticmethod
+    def award_unhealthy_habit_improvement(user):
+        return PointsService.add_points(user, 5)
+
+    @staticmethod
+    def award_unhealthy_habit_replacement(user):
+        return PointsService.add_points(user, 4)

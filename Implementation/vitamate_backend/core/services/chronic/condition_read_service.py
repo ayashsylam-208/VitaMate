@@ -10,8 +10,18 @@ class ConditionReadService:
         return ConditionReadRepository.condition_types_queryset()
 
     @staticmethod
-    def get_user_conditions(*, user):
+    def get_user_conditions(*, user, compact: bool = False):
+        if compact:
+            return ConditionReadRepository.user_conditions_compact_queryset(user=user)
         return ConditionReadRepository.user_conditions_queryset(user=user)
+
+    @staticmethod
+    def get_user_conditions_home(*, user):
+        return ConditionReadRepository.user_conditions_home_queryset(user=user)
+
+    @staticmethod
+    def get_user_conditions_guidance(*, user):
+        return ConditionReadRepository.user_conditions_guidance_queryset(user=user)
 
     @staticmethod
     def get_condition_medications(*, user, user_condition_id=None):

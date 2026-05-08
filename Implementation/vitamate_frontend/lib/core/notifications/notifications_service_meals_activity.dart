@@ -90,7 +90,7 @@ Future<void> _cancelMeals() async {
 Future<void> _scheduleActivityEveryXHours(int hours) async {
   await NotificationsService.ensurePermission();
   await NotificationsService.ensureExactAlarmPermission();
-  await _cancelActivity();
+  await _cancelActivityIntervals();
 
   final now = tz.TZDateTime.now(tz.local);
   for (int i = 1; i <= 8; i++) {
@@ -112,17 +112,25 @@ Future<void> _scheduleActivityEveryXHours(int hours) async {
   }
 }
 
-Future<void> _cancelActivity() async {
+Future<void> _cancelActivityIntervals() async {
   for (int i = 1; i <= 100; i++) {
     await NotificationsService._plugin.cancel(NotificationIds.activityBase + i);
   }
+}
+
+Future<void> _cancelDailyActivityReminder() async {
   await NotificationsService._plugin.cancel(NotificationIds.activityDaily);
+}
+
+Future<void> _cancelActivity() async {
+  await _cancelActivityIntervals();
+  await _cancelDailyActivityReminder();
 }
 
 Future<void> _scheduleDailyActivityReminder({required DateTime time}) async {
   await NotificationsService.ensurePermission();
   await NotificationsService.ensureExactAlarmPermission();
-  await _cancelActivity();
+  await _cancelDailyActivityReminder();
 
   final scheduled = NotificationsService._nextTimeTodayOrTomorrow(
     hour: time.hour,

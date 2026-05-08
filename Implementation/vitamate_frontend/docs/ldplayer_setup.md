@@ -6,7 +6,7 @@ From `Implementation/vitamate_backend`:
 
 ```powershell
 python manage.py migrate
-python manage.py runserver 0.0.0.0:8000
+.\scripts\start_dev_backend.ps1
 ```
 
 Keep this terminal open.
@@ -45,4 +45,3 @@ Open in emulator browser:
 Expected:
 - `401/403` without token is normal (means network path works).
 - `ERR_CONNECTION_REFUSED` means backend not running or wrong host/IP.
-

@@ -12,6 +12,10 @@ class ChronicGuideCardData {
     this.sourceLabel = '',
     this.supportingText = '',
     this.priority = 0,
+    this.minValue,
+    this.maxValue,
+    this.unit = '',
+    this.evaluationMode = '',
   });
 
   final String metricKey;
@@ -21,6 +25,10 @@ class ChronicGuideCardData {
   final String sourceLabel;
   final String supportingText;
   final int priority;
+  final double? minValue;
+  final double? maxValue;
+  final String unit;
+  final String evaluationMode;
 }
 
 class ChronicTargetGuideService {
@@ -32,7 +40,7 @@ class ChronicTargetGuideService {
   Future<List<ChronicGuideCardData>> loadForScope(
     ChronicGuideScope scope,
   ) async {
-    final conditions = await _api.getConditions();
+    final conditions = await _api.getOverviewConditions(guidanceOnly: true);
     return ChronicTargetGuideBuilder.cardsForScope(scope, conditions);
   }
 }
@@ -112,6 +120,10 @@ class ChronicTargetGuideBuilder {
         title: shortTitleForTarget(target),
         badgeLabel: badgeLabelForTarget(target),
         valueLabel: valueLabelForTarget(target),
+        minValue: target.minValue,
+        maxValue: target.maxValue,
+        unit: target.unit,
+        evaluationMode: target.evaluationMode,
         supportingText: currentLabel.isNotEmpty
             ? currentLabel
             : target.guidance,
@@ -369,6 +381,10 @@ class _GuideAggregate {
       sourceLabel: _sourceSummary(sourceLabels.toList()),
       supportingText: supportingText,
       priority: priority,
+      minValue: minValue,
+      maxValue: maxValue,
+      unit: unit,
+      evaluationMode: evaluationMode,
     );
   }
 }

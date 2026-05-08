@@ -1,5 +1,7 @@
 import '../../../core/config/api_endpoints.dart';
 import '../../../core/network/http_client.dart';
+import '../../../core/network/request_metrics_interceptor.dart';
+import '../../../shared/models/api_result.dart';
 import '../models/chronic_condition.dart';
 
 class ChronicMedicationPayload {
@@ -118,13 +120,89 @@ class ConditionTargetOverridePayload {
 class ChronicConditionsApi {
   const ChronicConditionsApi();
 
-  Future<List<ChronicCondition>> getConditions() async {
-    final res = await HttpClient.dio.get(ApiEndpoints.chronicUserConditions);
+  static const Duration _overviewCacheTtl = Duration(seconds: 45);
+  static final Map<String, List<ChronicCondition>> _overviewCache = {};
+  static final Map<String, DateTime> _overviewCachedAt = {};
+  static final Map<String, Future<List<ChronicCondition>>> _overviewInFlight =
+      {};
+
+  static void invalidateOverviewCache() {
+    _overviewCache.clear();
+    _overviewCachedAt.clear();
+    _overviewInFlight.clear();
+  }
+
+  Future<List<ChronicCondition>> getOverviewConditions({
+    bool forceRefresh = false,
+    bool guidanceOnly = false,
+  }) async {
+    final cacheKey = guidanceOnly ? 'guidance' : 'center';
+    final now = DateTime.now();
+    final cached = _overviewCache[cacheKey];
+    final cachedAt = _overviewCachedAt[cacheKey];
+    if (!forceRefresh &&
+        cached != null &&
+        cachedAt != null &&
+        now.difference(cachedAt) <= _overviewCacheTtl) {
+      return cached;
+    }
+    if (!forceRefresh && _overviewInFlight[cacheKey] != null) {
+      return _overviewInFlight[cacheKey]!;
+    }
+
+    final future = _fetchOverviewConditions(guidanceOnly: guidanceOnly);
+    _overviewInFlight[cacheKey] = future;
+    try {
+      final conditions = List<ChronicCondition>.unmodifiable(await future);
+      _overviewCache[cacheKey] = conditions;
+      _overviewCachedAt[cacheKey] = DateTime.now();
+      return conditions;
+    } finally {
+      if (identical(_overviewInFlight[cacheKey], future)) {
+        _overviewInFlight.remove(cacheKey);
+      }
+    }
+  }
+
+  Future<List<ChronicCondition>> _fetchOverviewConditions({
+    required bool guidanceOnly,
+  }) async {
+    final res = await HttpClient.dio.get(
+      ApiEndpoints.chronicOverview,
+      queryParameters: guidanceOnly ? const {'view': 'guidance'} : null,
+      options: RequestMetricsInterceptor.taggedOptions(
+        tag: guidanceOnly ? 'chronic.guidance' : 'chronic.center',
+      ),
+    );
+    final envelope = ApiEnvelope<Map<String, dynamic>>.fromJson(
+      res.data,
+      dataParser: (rawData) => asMap(rawData),
+      emptyData: const <String, dynamic>{},
+    );
+    return _readList(envelope.data['conditions'])
+        .map(
+          (item) => ChronicCondition.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<ChronicCondition>> getConditions({bool compact = false}) async {
+    final res = await HttpClient.dio.get(
+      ApiEndpoints.chronicUserConditions,
+      queryParameters: compact ? const {'view': 'compact'} : null,
+    );
     return _readList(res.data)
         .map(
           (item) => ChronicCondition.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
+  }
+
+  Future<ChronicCondition> getCondition(int conditionId) async {
+    final res = await HttpClient.dio.get(
+      '${ApiEndpoints.chronicUserConditions}$conditionId/',
+    );
+    return ChronicCondition.fromJson(Map<String, dynamic>.from(res.data));
   }
 
   Future<List<ChronicConditionType>> getConditionTypes() async {
@@ -161,7 +239,7 @@ class ChronicConditionsApi {
         .toList();
   }
 
-  Future<void> createCondition({
+  Future<ChronicCondition> createCondition({
     required int conditionTypeId,
     DateTime? diagnosisDate,
     required String severityCode,
@@ -171,8 +249,9 @@ class ChronicConditionsApi {
     bool isActive = true,
     List<ConditionTargetOverridePayload> targetOverrides = const [],
   }) async {
-    await HttpClient.dio.post(
+    final res = await HttpClient.dio.post(
       ApiEndpoints.chronicUserConditions,
+      queryParameters: const {'view': 'compact'},
       data: {
         'condition_type': conditionTypeId,
         'diagnosis_date': _formatDate(diagnosisDate),
@@ -188,9 +267,10 @@ class ChronicConditionsApi {
             .toList(),
       },
     );
+    return ChronicCondition.fromJson(Map<String, dynamic>.from(res.data));
   }
 
-  Future<void> updateCondition({
+  Future<ChronicCondition> updateCondition({
     required int conditionId,
     required int conditionTypeId,
     DateTime? diagnosisDate,
@@ -219,10 +299,12 @@ class ChronicConditionsApi {
           .map((item) => item.toJson())
           .toList();
     }
-    await HttpClient.dio.patch(
+    final res = await HttpClient.dio.patch(
       '${ApiEndpoints.chronicUserConditions}$conditionId/',
+      queryParameters: const {'view': 'compact'},
       data: data,
     );
+    return ChronicCondition.fromJson(Map<String, dynamic>.from(res.data));
   }
 
   Future<void> deactivateCondition(int conditionId) async {

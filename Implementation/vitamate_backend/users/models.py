@@ -58,6 +58,10 @@ class UserProfile(models.Model):
     )
     enable_activity_reminders = models.BooleanField(default=True)
     activity_reminder_interval_hours = models.IntegerField(default=2)
+    activity_reminder_time = models.TimeField(default=time(10, 0))
+    activity_reminder_days = models.JSONField(default=list, blank=True)
+    inactive_reminder_enabled = models.BooleanField(default=False)
+    inactive_reminder_hours = models.IntegerField(default=3)
     enable_water_reminders = models.BooleanField(default=True)
     water_reminder_interval_minutes = models.IntegerField(default=60)
 

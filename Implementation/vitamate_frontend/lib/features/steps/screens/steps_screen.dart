@@ -1,12 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../../core/testing/app_test_keys.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../state/steps_controller.dart';
 
 class StepsScreen extends StatefulWidget {
-  const StepsScreen({super.key});
+  const StepsScreen({super.key, this.controller, this.autoInit = true});
+
+  final StepsController? controller;
+  final bool autoInit;
 
   @override
   State<StepsScreen> createState() => _StepsScreenState();
@@ -14,18 +20,25 @@ class StepsScreen extends StatefulWidget {
 
 class _StepsScreenState extends State<StepsScreen> {
   late final StepsController controller;
+  late final bool _ownsController;
   final TextEditingController _manualController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    controller = StepsController()..init();
+    controller = widget.controller ?? StepsController();
+    _ownsController = widget.controller == null;
+    if (widget.autoInit) {
+      unawaited(controller.init());
+    }
   }
 
   @override
   void dispose() {
     _manualController.dispose();
-    controller.dispose();
+    if (_ownsController) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -35,7 +48,7 @@ class _StepsScreenState extends State<StepsScreen> {
     final fmt = NumberFormat.decimalPattern();
 
     return Scaffold(
-      bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
+      bottomNavigationBar: const VitaMateBottomNav(currentIndex: -1),
       appBar: AppBar(
         title: const Text('Steps'),
         actions: [
@@ -64,11 +77,14 @@ class _StepsScreenState extends State<StepsScreen> {
 
             final steps = controller.stepsToday;
             final target = controller.targetSteps;
-            final progress = target == 0 ? 0.0 : (steps / target).clamp(0.0, 1.0);
+            final progress = target == 0
+                ? 0.0
+                : (steps / target).clamp(0.0, 1.0);
 
             return RefreshIndicator(
               onRefresh: controller.refresh,
               child: SingleChildScrollView(
+                key: const ValueKey(AppTestKeys.stepsScreen),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 112),
                 child: Column(
@@ -91,7 +107,13 @@ class _StepsScreenState extends State<StepsScreen> {
     );
   }
 
-  Widget _summaryCard(ColorScheme cs, NumberFormat fmt, int steps, int target, double progress) {
+  Widget _summaryCard(
+    ColorScheme cs,
+    NumberFormat fmt,
+    int steps,
+    int target,
+    double progress,
+  ) {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -111,7 +133,10 @@ class _StepsScreenState extends State<StepsScreen> {
                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: cs.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
@@ -141,30 +166,48 @@ class _StepsScreenState extends State<StepsScreen> {
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 10,
-              ),
+              child: LinearProgressIndicator(value: progress, minHeight: 10),
             ),
             const SizedBox(height: 10),
             Text(
               'Remaining: ${fmt.format(controller.remainingSteps)} steps',
               style: TextStyle(color: cs.outline),
             ),
+            if (controller.usingDebugStepSimulation) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Emulator estimate mode is active for step counting.',
+                style: TextStyle(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             Wrap(
               spacing: 12,
               runSpacing: 6,
               children: [
-                _statChip(cs, Icons.directions_walk, '${fmt.format(steps)} steps'),
-                _statChip(cs, Icons.flag, 'Goal: ${fmt.format(target)}'),
-                _statChip(cs, Icons.map, '${controller.distanceKm.toStringAsFixed(2)} km'),
-                _statChip(cs, Icons.local_fire_department,
-                    '${fmt.format(controller.caloriesBurned)} kcal burned'),
                 _statChip(
                   cs,
-                  Icons.speed,
-                  '${controller.burnRateKcalPerKm.toStringAsFixed(1)} kcal/km',
+                  Icons.directions_walk,
+                  '${fmt.format(steps)} steps',
+                ),
+                _statChip(cs, Icons.flag, 'Goal: ${fmt.format(target)}'),
+                _statChip(
+                  cs,
+                  Icons.map,
+                  '${controller.distanceKm.toStringAsFixed(2)} km est.',
+                ),
+                _statChip(
+                  cs,
+                  Icons.local_fire_department,
+                  '${fmt.format(controller.caloriesBurned)} kcal burned',
+                ),
+                _statChip(
+                  cs,
+                  Icons.timer_outlined,
+                  '${fmt.format(controller.activeMinutesEstimate)} min active',
                 ),
                 if (controller.lastSyncedAt != null)
                   _statChip(
@@ -258,7 +301,10 @@ class _StepsScreenState extends State<StepsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Log steps manually', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const Text(
+              'Log steps manually',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _manualController,
@@ -304,9 +350,15 @@ class _StepsScreenState extends State<StepsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Sync steps', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const Text(
+              'Sync steps',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
             const SizedBox(height: 8),
-            Text('Current: ${fmt.format(steps)}', style: TextStyle(color: cs.outline)),
+            Text(
+              'Current: ${fmt.format(steps)}',
+              style: TextStyle(color: cs.outline),
+            ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -344,12 +396,15 @@ class _StepsScreenState extends State<StepsScreen> {
               child: ElevatedButton(
                 onPressed: () async {
                   await controller.init(requestPermission: true);
-                  if (!controller.permissionGranted && controller.permissionPermanentlyDenied) {
+                  if (!controller.permissionGranted &&
+                      controller.permissionPermanentlyDenied) {
                     await openAppSettings();
                   }
                 },
                 child: Text(
-                  controller.permissionPermanentlyDenied ? 'Open settings' : 'Grant permission',
+                  controller.permissionPermanentlyDenied
+                      ? 'Open settings'
+                      : 'Grant permission',
                 ),
               ),
             ),

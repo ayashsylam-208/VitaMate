@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+import json
+import logging
+import time
 
 from core.models import UnifiedHealthState
 from core.repositories.health_state_repository import HealthStateRepository
@@ -10,6 +13,9 @@ from core.services.orchestration.health_state_projection_service import HealthSt
 from core.services.orchestration.notification_decision_service import NotificationDecisionService
 from core.services.orchestration.notification_dispatcher import NotificationDispatcher
 from core.services.orchestration.tracker_dependency_map import TrackerDependencyMap
+
+
+logger = logging.getLogger("vitamate.performance")
 
 
 class HealthStateOrchestrator:
@@ -29,6 +35,7 @@ class HealthStateOrchestrator:
         self._notification_dispatcher = notification_dispatcher or NotificationDispatcher()
 
     def handle_event(self, *, user, trigger_type: str, payload=None, synchronous: bool = True):
+        started = time.perf_counter()
         payload = dict(payload or {})
         today = payload.get("today")
         if not isinstance(today, date):
@@ -93,6 +100,20 @@ class HealthStateOrchestrator:
                 run,
                 affected_domains=list(plan.affected_trackers),
             )
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "health_state_recompute",
+                        "user_id": user.id,
+                        "trigger_type": trigger_type,
+                        "run_id": run.id,
+                        "status": "completed",
+                        "duration_ms": duration_ms,
+                        "affected_domains": list(plan.affected_trackers),
+                    }
+                )
+            )
             return {
                 "run": run,
                 "deltas": deltas,
@@ -102,6 +123,21 @@ class HealthStateOrchestrator:
                 run,
                 error_message=str(exc),
                 affected_domains=list(plan.affected_trackers),
+            )
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "health_state_recompute",
+                        "user_id": user.id,
+                        "trigger_type": trigger_type,
+                        "run_id": run.id,
+                        "status": "failed",
+                        "duration_ms": duration_ms,
+                        "affected_domains": list(plan.affected_trackers),
+                        "error": str(exc),
+                    }
+                )
             )
             return {
                 "run": run,

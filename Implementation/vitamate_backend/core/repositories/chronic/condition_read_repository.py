@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from core.models import (
+    ConditionAlert,
+    ConditionDailyEvaluation,
     ConditionMedication,
     ConditionMedicationLog,
     ConditionMedicationSchedule,
     ConditionType,
+    HealthTarget,
     HealthIndicatorRecord,
     UserCondition,
 )
@@ -29,6 +33,79 @@ class ConditionReadRepository:
                 "medications__schedules__logs",
                 "indicator_records",
                 "alerts",
+            )
+        )
+
+    @staticmethod
+    def user_conditions_compact_queryset(*, user):
+        return (
+            UserCondition.objects.filter(user=user)
+            .select_related("condition_type")
+            .prefetch_related(
+                Prefetch(
+                    "targets",
+                    queryset=HealthTarget.objects.order_by("priority", "-id"),
+                ),
+                Prefetch(
+                    "indicator_records",
+                    queryset=HealthIndicatorRecord.objects.order_by(
+                        "-recorded_at",
+                        "-id",
+                    ),
+                ),
+                Prefetch(
+                    "alerts",
+                    queryset=ConditionAlert.objects.order_by("-created_at", "-id"),
+                ),
+                Prefetch(
+                    "daily_evaluations",
+                    queryset=ConditionDailyEvaluation.objects.order_by(
+                        "-evaluation_date",
+                        "-id",
+                    ),
+                ),
+                Prefetch(
+                    "medications",
+                    queryset=ConditionMedication.objects.filter(is_active=True)
+                    .prefetch_related("schedules__logs")
+                    .order_by("id"),
+                ),
+            )
+        )
+
+    @staticmethod
+    def user_conditions_home_queryset(*, user):
+        return (
+            UserCondition.objects.filter(user=user)
+            .select_related("condition_type")
+            .prefetch_related(
+                Prefetch(
+                    "daily_evaluations",
+                    queryset=ConditionDailyEvaluation.objects.order_by(
+                        "-evaluation_date",
+                        "-id",
+                    ),
+                ),
+            )
+        )
+
+    @staticmethod
+    def user_conditions_guidance_queryset(*, user):
+        return (
+            UserCondition.objects.filter(user=user)
+            .select_related("condition_type")
+            .prefetch_related(
+                Prefetch(
+                    "targets",
+                    queryset=HealthTarget.objects.order_by("priority", "-id"),
+                ),
+                Prefetch(
+                    "daily_evaluations",
+                    queryset=ConditionDailyEvaluation.objects.order_by(
+                        "-evaluation_date",
+                        "-id",
+                    ),
+                ),
             )
         )
 

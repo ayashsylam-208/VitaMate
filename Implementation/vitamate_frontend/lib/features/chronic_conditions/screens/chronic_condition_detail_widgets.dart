@@ -117,11 +117,7 @@ class _ConditionSummaryCard extends StatelessWidget {
     final recommendations =
         summary?.recommendations ?? evaluation.recommendations;
     final trackerImpacts = summary?.trackerImpacts ?? evaluation.trackerImpacts;
-    final latestReading =
-        summary?.latestReading ??
-        (condition.indicatorRecords.isNotEmpty
-            ? condition.indicatorRecords.first
-            : null);
+    final latestReading = condition.latestReading;
     final statusLabel = _statusLabel(summary?.status ?? evaluation.status);
 
     return Card(
@@ -756,16 +752,67 @@ class _TargetCard extends StatelessWidget {
   }
 }
 
-class _Title extends StatelessWidget {
-  const _Title(this.value);
+class _DetailSectionPanel extends StatelessWidget {
+  const _DetailSectionPanel({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.trailing,
+    this.initiallyExpanded = false,
+  });
 
-  final String value;
+  final String title;
+  final String? subtitle;
+  final Widget child;
+  final Widget? trailing;
+  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      value,
-      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: VitaMateTheme.border),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: VitaMateTheme.primaryDeep,
+            ),
+          ),
+          subtitle: subtitle == null
+              ? null
+              : Text(
+                  subtitle!,
+                  style: const TextStyle(
+                    color: VitaMateTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+          trailing: trailing == null
+              ? Icon(Icons.expand_more_rounded, color: colorScheme.primary)
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    trailing!,
+                    const SizedBox(width: 4),
+                    Icon(Icons.expand_more_rounded, color: colorScheme.primary),
+                  ],
+                ),
+          children: [child],
+        ),
+      ),
     );
   }
 }

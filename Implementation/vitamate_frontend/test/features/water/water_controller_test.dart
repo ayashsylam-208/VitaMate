@@ -1,9 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vitamate/core/health/diabetes_sugar_guard_service.dart';
 import 'package:vitamate/features/nutrition/data/nutrition_api.dart';
 import 'package:vitamate/features/nutrition/models/food_item.dart';
 import 'package:vitamate/features/nutrition/models/nutrition_summary.dart';
 import 'package:vitamate/features/water/data/water_api.dart';
+import 'package:vitamate/features/water/models/hydration_summary.dart';
 import 'package:vitamate/features/water/models/water_log.dart';
 import 'package:vitamate/features/water/state/water_controller.dart';
 
@@ -12,12 +14,14 @@ class _FakeWaterApi extends WaterApi {
     required this.logs,
     required this.catalog,
     this.failReadsAfterWrite = false,
+    this.summaryConsumedMlOverride,
   });
 
   List<WaterLog> logs;
   final List<FoodItem> catalog;
   bool failReads = false;
   final bool failReadsAfterWrite;
+  final int? summaryConsumedMlOverride;
   int _nextId = 10;
 
   @override
@@ -29,10 +33,34 @@ class _FakeWaterApi extends WaterApi {
   }
 
   @override
-  Future<List<FoodItem>> searchBeverages(String query) async {
+  Future<HydrationSummary> getSummary({CancelToken? cancelToken}) async {
+    if (failReads) {
+      throw Exception('read failed');
+    }
+    final consumedMl =
+        summaryConsumedMlOverride ??
+        logs.fold<int>(
+          0,
+          (sum, item) =>
+              sum + (item.hydrationMl > 0 ? item.hydrationMl : item.amountMl),
+        );
+    return HydrationSummary(
+      targetMl: 2400,
+      consumedMl: consumedMl,
+      remainingMl: (2400 - consumedMl).clamp(0, 2400),
+      progressPercent: ((consumedMl / 2400) * 100).round(),
+    );
+  }
+
+  @override
+  Future<List<FoodItem>> searchBeverages(
+    String query, {
+    int limit = 12,
+    CancelToken? cancelToken,
+  }) async {
     final target = query.trim().toLowerCase();
     if (target.isEmpty) {
-      return List<FoodItem>.from(catalog);
+      return List<FoodItem>.from(catalog).take(limit).toList();
     }
     return catalog
         .where(
@@ -40,6 +68,7 @@ class _FakeWaterApi extends WaterApi {
               item.name.toLowerCase().contains(target) ||
               item.category.toLowerCase().contains(target),
         )
+        .take(limit)
         .toList();
   }
 
@@ -99,7 +128,7 @@ class _FakeWaterNutritionApi extends NutritionApi {
   int _index = 0;
 
   @override
-  Future<NutritionSummary> getSummary() async {
+  Future<NutritionSummary> getSummary({CancelToken? cancelToken}) async {
     if (_summaries.isEmpty) {
       return NutritionSummary.empty();
     }
@@ -150,6 +179,7 @@ void main() {
       );
 
       await controller.load(targetMlFromBackend: 2400);
+      await Future<void>.delayed(Duration.zero);
       await controller.searchBeverages('coffee');
 
       expect(controller.consumedMl, 250);
@@ -203,6 +233,7 @@ void main() {
     );
 
     await controller.load(targetMlFromBackend: 2400);
+    await Future<void>.delayed(Duration.zero);
     final saved = await controller.addCatalogBeverage(
       foodItemId: tea.id,
       amountMl: 200,
@@ -212,6 +243,38 @@ void main() {
     expect(controller.error, 'Could not save beverage log.');
     expect(controller.consumedMl, 250);
   });
+
+  test(
+    'water controller uses water logs when hydration summary snapshot is stale',
+    () async {
+      final api = _FakeWaterApi(
+        logs: [
+          WaterLog(
+            id: 1,
+            amountLiter: 0.5,
+            hydrationMl: 500,
+            beverageType: 'water',
+            beverageName: 'Water',
+            date: DateTime(2026, 5, 5),
+          ),
+        ],
+        catalog: const [],
+        summaryConsumedMlOverride: 0,
+      );
+      final controller = WaterController(
+        api: api,
+        diabetesSugarGuardService: const _NullDiabetesSugarGuardService(),
+      );
+
+      await controller.load(targetMlFromBackend: 2300);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.logs, hasLength(1));
+      expect(controller.consumedMl, 500);
+      expect(controller.remainingMl, 1800);
+      expect(controller.progress, closeTo(500 / 2300, 0.001));
+    },
+  );
 
   test(
     'water controller warns when a sugary drink crosses diabetes limit',
@@ -261,11 +324,13 @@ void main() {
       );
 
       await controller.load(targetMlFromBackend: 2400);
+      await Future<void>.delayed(Duration.zero);
       await controller.searchBeverages('orange');
       final saved = await controller.addCatalogBeverage(
         foodItemId: juice.id,
         amountMl: 250,
       );
+      await Future<void>.delayed(Duration.zero);
 
       expect(saved, isTrue);
       expect(warnings, hasLength(1));

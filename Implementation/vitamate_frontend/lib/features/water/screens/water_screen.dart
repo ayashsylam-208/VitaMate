@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/notifications/notifications_service.dart';
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/chronic_guide_card.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
@@ -17,10 +18,14 @@ class WaterScreen extends StatefulWidget {
     super.key,
     required this.targetValueFromBackend,
     this.targetIsLiters = true,
+    this.controller,
+    this.autoLoad = true,
   });
 
   final double targetValueFromBackend;
   final bool targetIsLiters;
+  final WaterController? controller;
+  final bool autoLoad;
 
   @override
   State<WaterScreen> createState() => _WaterScreenState();
@@ -28,6 +33,7 @@ class WaterScreen extends StatefulWidget {
 
 class _WaterScreenState extends State<WaterScreen> {
   late final WaterController controller;
+  late final bool _ownsController;
   bool remindersEnabled = false;
   int intervalMinutes = 60;
 
@@ -41,12 +47,18 @@ class _WaterScreenState extends State<WaterScreen> {
   @override
   void initState() {
     super.initState();
-    controller = WaterController()..load(targetMlFromBackend: _targetToMl());
+    controller = widget.controller ?? WaterController();
+    _ownsController = widget.controller == null;
+    if (widget.autoLoad) {
+      unawaited(controller.load(targetMlFromBackend: _targetToMl()));
+    }
   }
 
   @override
   void dispose() {
-    controller.dispose();
+    if (_ownsController) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -54,7 +66,7 @@ class _WaterScreenState extends State<WaterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: VitaMateTheme.background,
-      bottomNavigationBar: const VitaMateBottomNav(currentIndex: 1),
+      bottomNavigationBar: const VitaMateBottomNav(currentIndex: -1),
       appBar: AppBar(
         title: const Text('Hydration'),
         actions: [
@@ -107,6 +119,7 @@ class _WaterScreenState extends State<WaterScreen> {
               onRefresh: () =>
                   controller.load(targetMlFromBackend: _targetToMl()),
               child: ListView(
+                key: const ValueKey(AppTestKeys.waterScreen),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
                 children: [
@@ -176,6 +189,9 @@ class _WaterScreenState extends State<WaterScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
+                            key: const ValueKey(
+                              AppTestKeys.waterAddBeverageButton,
+                            ),
                             onPressed: controller.saving
                                 ? null
                                 : () => _openAddBeverageSheet(),
@@ -733,7 +749,7 @@ class _AddBeverageSheet extends StatefulWidget {
 
 class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   final _searchController = TextEditingController();
-  final _amountController = TextEditingController();
+  final _countController = TextEditingController();
   final _customNameController = TextEditingController();
   final _caloriesController = TextEditingController(text: '0');
   final _proteinController = TextEditingController(text: '0');
@@ -747,21 +763,35 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   Timer? _searchDebounce;
   _BeverageSheetMode _mode = _BeverageSheetMode.catalog;
   FoodItem? _selectedItem;
+  _BeverageServingChoice? _selectedCatalogServing;
+  _BeverageServingChoice? _selectedCustomServing;
   String _customType = 'Other';
   bool _saveForReuse = true;
 
-  int get _amountMl => int.tryParse(_amountController.text.trim()) ?? 0;
+  int get _servingCount => int.tryParse(_countController.text.trim()) ?? 0;
+  _BeverageServingChoice? get _activeServingChoice =>
+      _mode == _BeverageSheetMode.catalog
+      ? _selectedCatalogServing
+      : _selectedCustomServing;
+  int get _amountMl {
+    final serving = _activeServingChoice;
+    if (serving == null || _servingCount <= 0) {
+      return 0;
+    }
+    return serving.amountMl * _servingCount;
+  }
 
   @override
   void initState() {
     super.initState();
     _mode = widget.initialMode;
     _searchController.text = widget.initialQuery;
-    _amountController.text = widget.initialAmountMl.toString();
+    _countController.text = '1';
     _customNameController.text = widget.initialQuery;
     _searchController.addListener(_handleSearchInput);
+    _selectedCustomServing = _customServingChoices(_customType).first;
     for (final controller in [
-      _amountController,
+      _countController,
       _customNameController,
       _caloriesController,
       _proteinController,
@@ -784,7 +814,7 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   void dispose() {
     _searchDebounce?.cancel();
     _searchController.dispose();
-    _amountController.dispose();
+    _countController.dispose();
     _customNameController.dispose();
     _caloriesController.dispose();
     _proteinController.dispose();
@@ -803,6 +833,7 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
     return FractionallySizedBox(
       heightFactor: 0.92,
       child: Container(
+        key: const ValueKey(AppTestKeys.waterAddBeverageSheet),
         decoration: const BoxDecoration(
           color: VitaMateTheme.background,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -856,8 +887,12 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
                       child: _SheetModeButton(
                         label: 'Catalog',
                         selected: _mode == _BeverageSheetMode.catalog,
-                        onTap: () =>
-                            setState(() => _mode = _BeverageSheetMode.catalog),
+                        onTap: () => setState(() {
+                          _mode = _BeverageSheetMode.catalog;
+                          _selectedCatalogServing ??= _firstServingChoice(
+                            _catalogServingChoices(_selectedItem),
+                          );
+                        }),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -865,8 +900,12 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
                       child: _SheetModeButton(
                         label: 'Custom',
                         selected: _mode == _BeverageSheetMode.custom,
-                        onTap: () =>
-                            setState(() => _mode = _BeverageSheetMode.custom),
+                        onTap: () => setState(() {
+                          _mode = _BeverageSheetMode.custom;
+                          _selectedCustomServing ??= _firstServingChoice(
+                            _customServingChoices(_customType),
+                          );
+                        }),
                       ),
                     ),
                   ],
@@ -891,154 +930,221 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   }
 
   Widget _buildCatalogMode() {
-    final results = widget.controller.beverageCatalog;
-    final groupedResults = _groupCatalogItems(results);
-    final previewItem = _selectedItem;
+    final searchQuery = _searchController.text.trim();
+    final results = _dedupeFoodItemsById(widget.controller.beverageCatalog);
+    final waitingForQuery = searchQuery.isNotEmpty && searchQuery.length < 2;
+    final selectedItem = _findFoodItemById(results, _selectedItem?.id);
+    final selectedItemId = selectedItem?.id;
     final factor = _amountMl <= 0 ? 0 : _amountMl / 100.0;
+    final servingChoices = _catalogServingChoices(selectedItem);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _searchController,
-          textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(
-            labelText: 'Search beverages',
-            prefixIcon: Icon(Icons.search_rounded),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _amountController,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Amount',
-            suffixText: 'ml',
-          ),
-        ),
-        if (previewItem != null) ...[
-          const SizedBox(height: 12),
-          _PreviewBlock(
-            title: previewItem.name,
-            subtitle: previewItem.supportingLabel,
-            metrics: [
-              _PreviewMetric(
-                'Calories',
-                '${(previewItem.calories100g * factor).round()} kcal',
-              ),
-              _PreviewMetric(
-                'Carbs',
-                '${_formatMetric(previewItem.carbs100g * factor)} g',
-              ),
-              _PreviewMetric(
-                'Sugars',
-                '${_formatMetric(previewItem.sugars100g * factor)} g',
-              ),
-              if (previewItem.hydrationContributionMl(_amountMl) != null)
-                _PreviewMetric(
-                  'Hydration',
-                  '${previewItem.hydrationContributionMl(_amountMl)} ml',
-                ),
-              _PreviewMetric(
-                'Caffeine',
-                '${(previewItem.caffeineMg * factor).round()} mg',
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Text(
-              'Catalog',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: VitaMateTheme.primaryDeep,
-              ),
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            key: const ValueKey(AppTestKeys.waterSearchField),
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            decoration: const InputDecoration(
+              labelText: 'Search beverages',
+              prefixIcon: Icon(Icons.search_rounded),
+              helperText: 'Browse top drinks or type 2+ letters.',
             ),
-            const Spacer(),
-            if (widget.controller.catalogLoading)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: results.isEmpty
-              ? _HydrationInfoCard(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.controller.catalogError ??
-                            'No beverage matched this search.',
-                        style: const TextStyle(
-                          color: VitaMateTheme.primaryDeep,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Create a custom beverage to keep hydration and nutrition connected.',
-                        style: TextStyle(
-                          color: VitaMateTheme.textMuted,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () {
-                          setState(() {
-                            _mode = _BeverageSheetMode.custom;
-                            if (_customNameController.text.trim().isEmpty) {
-                              _customNameController.text = _searchController
-                                  .text
-                                  .trim();
-                            }
-                          });
-                        },
-                        child: const Text('Create custom beverage'),
-                      ),
-                    ],
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<int>(
+            key: ValueKey(
+              'water-beverage:${results.map((item) => item.id).join(',')}:$selectedItemId',
+            ),
+            isExpanded: true,
+            initialValue: selectedItemId,
+            decoration: const InputDecoration(
+              labelText: 'Beverage',
+              prefixIcon: Icon(Icons.local_drink_outlined),
+            ),
+            hint: Text(
+              waitingForQuery ? 'Type 2+ letters first' : 'Choose beverage',
+            ),
+            items: results
+                .map(
+                  (item) => DropdownMenuItem<int>(
+                    value: item.id,
+                    child: Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 )
-              : ListView.separated(
-                  itemCount: groupedResults.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final section = groupedResults[index];
-                    return _CatalogGroupSection(
-                      section: section,
-                      selectedItemId: _selectedItem?.id,
-                      onTapItem: (item) => setState(() => _selectedItem = item),
-                    );
+                .toList(),
+            onChanged: widget.controller.catalogLoading || results.isEmpty
+                ? null
+                : (foodItemId) {
+                    final selected = _findFoodItemById(results, foodItemId);
+                    setState(() {
+                      _selectedItem = selected;
+                      _selectedCatalogServing = _firstServingChoice(
+                        _catalogServingChoices(selected),
+                      );
+                    });
                   },
-                ),
-        ),
-        if (widget.controller.error != null) ...[
+          ),
+          if (widget.controller.catalogLoading) ...[
+            const SizedBox(height: 12),
+            const LinearProgressIndicator(minHeight: 3),
+          ],
           const SizedBox(height: 12),
-          Text(
-            widget.controller.error!,
-            style: const TextStyle(
-              color: VitaMateTheme.danger,
-              fontWeight: FontWeight.w700,
+          if (selectedItem == null)
+            _HydrationInfoCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    waitingForQuery
+                        ? 'Type at least 2 letters to narrow the beverage list.'
+                        : (widget.controller.catalogError ??
+                              'Choose a beverage from the catalog.'),
+                    style: const TextStyle(
+                      color: VitaMateTheme.primaryDeep,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'If the catalog is too narrow, switch to Custom and keep only the essentials.',
+                    style: TextStyle(
+                      color: VitaMateTheme.textMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: () {
+                      setState(() {
+                        _mode = _BeverageSheetMode.custom;
+                        if (_customNameController.text.trim().isEmpty) {
+                          _customNameController.text = searchQuery;
+                        }
+                      });
+                    },
+                    child: const Text('Create custom beverage'),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            Text(
+              selectedItem.supportingLabel,
+              style: const TextStyle(
+                color: VitaMateTheme.textMuted,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<_BeverageServingChoice>(
+              isExpanded: true,
+              initialValue: _selectedCatalogServing,
+              decoration: const InputDecoration(
+                labelText: 'Serving type',
+                prefixIcon: Icon(Icons.local_cafe_outlined),
+              ),
+              items: servingChoices
+                  .map(
+                    (choice) => DropdownMenuItem<_BeverageServingChoice>(
+                      value: choice,
+                      child: Text(
+                        choice.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) =>
+                  setState(() => _selectedCatalogServing = value),
+            ),
+            if (_selectedCatalogServing != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Example: 1 ${_selectedCatalogServing!.shortLabel.toLowerCase()}',
+                style: const TextStyle(
+                  color: VitaMateTheme.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _countController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Serving count',
+                suffixText: _selectedCatalogServing?.shortLabel ?? 'serving',
+              ),
+            ),
+            if (_amountMl > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Total $_amountMl ml',
+                style: const TextStyle(
+                  color: VitaMateTheme.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            _PreviewBlock(
+              title: selectedItem.name,
+              subtitle: '${selectedItem.supportingLabel} - $_amountMl ml',
+              metrics: [
+                _PreviewMetric(
+                  'Calories',
+                  '${(selectedItem.calories100g * factor).round()} kcal',
+                ),
+                _PreviewMetric(
+                  'Carbs',
+                  '${_formatMetric(selectedItem.carbs100g * factor)} g',
+                ),
+                _PreviewMetric(
+                  'Sugars',
+                  '${_formatMetric(selectedItem.sugars100g * factor)} g',
+                ),
+                if (selectedItem.hydrationContributionMl(_amountMl) != null)
+                  _PreviewMetric(
+                    'Hydration',
+                    '${selectedItem.hydrationContributionMl(_amountMl)} ml',
+                  ),
+                _PreviewMetric(
+                  'Caffeine',
+                  '${(selectedItem.caffeineMg * factor).round()} mg',
+                ),
+              ],
+            ),
+          ],
+          if (widget.controller.error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              widget.controller.error!,
+              style: const TextStyle(
+                color: VitaMateTheme.danger,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              key: const ValueKey(AppTestKeys.waterCatalogSaveButton),
+              onPressed: widget.controller.saving || selectedItem == null
+                  ? null
+                  : _saveCatalog,
+              child: const Text('Save beverage'),
             ),
           ),
         ],
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: widget.controller.saving ? null : _saveCatalog,
-            child: const Text('Save beverage'),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1064,64 +1170,94 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
               DropdownMenuItem(value: 'Smoothie', child: Text('Smoothie')),
               DropdownMenuItem(value: 'Other', child: Text('Other')),
             ],
-            onChanged: (value) =>
-                setState(() => _customType = value ?? 'Other'),
+            onChanged: (value) {
+              final nextType = value ?? 'Other';
+              setState(() {
+                _customType = nextType;
+                _selectedCustomServing = _firstServingChoice(
+                  _customServingChoices(nextType),
+                );
+              });
+            },
           ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<_BeverageServingChoice>(
+            isExpanded: true,
+            initialValue: _selectedCustomServing,
+            decoration: const InputDecoration(
+              labelText: 'Serving type',
+              prefixIcon: Icon(Icons.local_cafe_outlined),
+            ),
+            items: _customServingChoices(_customType)
+                .map(
+                  (choice) => DropdownMenuItem<_BeverageServingChoice>(
+                    value: choice,
+                    child: Text(
+                      choice.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) =>
+                setState(() => _selectedCustomServing = value),
+          ),
+          if (_selectedCustomServing != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Example: 1 ${_selectedCustomServing!.shortLabel.toLowerCase()}',
+              style: const TextStyle(
+                color: VitaMateTheme.textMuted,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
-            controller: _amountController,
+            controller: _countController,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Amount',
-              suffixText: 'ml',
+            decoration: InputDecoration(
+              labelText: 'Serving count',
+              suffixText: _selectedCustomServing?.shortLabel ?? 'serving',
             ),
           ),
-          const SizedBox(height: 14),
-          const Text(
-            'Per 100 ml',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: VitaMateTheme.primaryDeep,
+          if (_amountMl > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Total $_amountMl ml',
+              style: const TextStyle(
+                color: VitaMateTheme.textMuted,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricInput(
-                  controller: _caloriesController,
-                  label: 'Calories',
-                  suffix: 'kcal',
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricInput(
-                  controller: _proteinController,
-                  label: 'Protein',
-                  suffix: 'g',
-                ),
-              ),
-            ],
-          ),
+          ],
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricInput(
-                  controller: _carbsController,
-                  label: 'Carbs',
-                  suffix: 'g',
-                ),
+          _PreviewBlock(
+            title: _customNameController.text.trim().isEmpty
+                ? 'Custom beverage'
+                : _customNameController.text.trim(),
+            subtitle: '$_customType - $_amountMl ml',
+            metrics: [
+              _PreviewMetric(
+                'Calories',
+                '${(_parseMetric(_caloriesController.text) * factor).round()} kcal',
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricInput(
-                  controller: _fatController,
-                  label: 'Fat',
-                  suffix: 'g',
-                ),
+              _PreviewMetric(
+                'Carbs',
+                '${_formatMetric(_parseMetric(_carbsController.text) * factor)} g',
+              ),
+              _PreviewMetric(
+                'Sugars',
+                '${_formatMetric(_parseMetric(_sugarsController.text) * factor)} g',
+              ),
+              _PreviewMetric(
+                'Hydration',
+                '${(_parseMetric(_waterController.text) * factor).round()} ml',
+              ),
+              _PreviewMetric(
+                'Caffeine',
+                '${(_parseMetric(_caffeineController.text) * factor).round()} mg',
               ),
             ],
           ),
@@ -1131,20 +1267,60 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
             child: ExpansionTile(
               tilePadding: EdgeInsets.zero,
               title: const Text(
-                'Advanced nutrition',
+                'Nutrition details',
                 style: TextStyle(
                   fontWeight: FontWeight.w800,
                   color: VitaMateTheme.primaryDeep,
                 ),
               ),
               subtitle: const Text(
-                'Sugars, fiber, sodium, hydration, caffeine',
+                'Optional values per 100 ml.',
                 style: TextStyle(
                   color: VitaMateTheme.textMuted,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MetricInput(
+                        controller: _caloriesController,
+                        label: 'Calories',
+                        suffix: 'kcal',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MetricInput(
+                        controller: _proteinController,
+                        label: 'Protein',
+                        suffix: 'g',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MetricInput(
+                        controller: _carbsController,
+                        label: 'Carbs',
+                        suffix: 'g',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MetricInput(
+                        controller: _fatController,
+                        label: 'Fat',
+                        suffix: 'g',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -1218,34 +1394,6 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
             ),
             onChanged: (value) => setState(() => _saveForReuse = value),
           ),
-          _PreviewBlock(
-            title: _customNameController.text.trim().isEmpty
-                ? 'Custom beverage'
-                : _customNameController.text.trim(),
-            subtitle: _customType,
-            metrics: [
-              _PreviewMetric(
-                'Calories',
-                '${(_parseMetric(_caloriesController.text) * factor).round()} kcal',
-              ),
-              _PreviewMetric(
-                'Carbs',
-                '${_formatMetric(_parseMetric(_carbsController.text) * factor)} g',
-              ),
-              _PreviewMetric(
-                'Sugars',
-                '${_formatMetric(_parseMetric(_sugarsController.text) * factor)} g',
-              ),
-              _PreviewMetric(
-                'Hydration',
-                '${(_parseMetric(_waterController.text) * factor).round()} ml',
-              ),
-              _PreviewMetric(
-                'Caffeine',
-                '${(_parseMetric(_caffeineController.text) * factor).round()} mg',
-              ),
-            ],
-          ),
           if (widget.controller.error != null) ...[
             const SizedBox(height: 12),
             Text(
@@ -1260,6 +1408,7 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
+              key: const ValueKey(AppTestKeys.waterCustomSaveButton),
               onPressed: widget.controller.saving ? null : _saveCustom,
               child: const Text('Save beverage'),
             ),
@@ -1272,13 +1421,13 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   void _handleSearchInput() {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(
-      const Duration(milliseconds: 250),
+      const Duration(milliseconds: 350),
       () => _searchCatalog(_searchController.text),
     );
   }
 
   Future<void> _searchCatalog(String query) async {
-    await widget.controller.searchBeverages(query);
+    await widget.controller.searchBeverages(query, limit: 12);
     if (!mounted) {
       return;
     }
@@ -1290,7 +1439,12 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
     }
     next ??= _findExactCatalogItem(results, query);
     next ??= results.isEmpty ? null : results.first;
-    setState(() => _selectedItem = next);
+    setState(() {
+      _selectedItem = next;
+      _selectedCatalogServing = _firstServingChoice(
+        _catalogServingChoices(next),
+      );
+    });
   }
 
   Future<void> _saveCatalog() async {
@@ -1355,6 +1509,226 @@ class _AddBeverageSheetState extends State<_AddBeverageSheet> {
   }
 }
 
+class _BeverageServingChoice {
+  const _BeverageServingChoice({
+    required this.label,
+    required this.shortLabel,
+    required this.amountMl,
+  });
+
+  final String label;
+  final String shortLabel;
+  final int amountMl;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is _BeverageServingChoice &&
+        other.label == label &&
+        other.shortLabel == shortLabel &&
+        other.amountMl == amountMl;
+  }
+
+  @override
+  int get hashCode => Object.hash(label, shortLabel, amountMl);
+}
+
+_BeverageServingChoice? _firstServingChoice(
+  List<_BeverageServingChoice> choices,
+) => choices.isEmpty ? null : choices.first;
+
+List<FoodItem> _dedupeFoodItemsById(Iterable<FoodItem> items) {
+  final deduped = <int, FoodItem>{};
+  for (final item in items) {
+    deduped.putIfAbsent(item.id, () => item);
+  }
+  return deduped.values.toList(growable: false);
+}
+
+FoodItem? _findFoodItemById(Iterable<FoodItem> items, int? id) {
+  if (id == null) {
+    return null;
+  }
+  for (final item in items) {
+    if (item.id == id) {
+      return item;
+    }
+  }
+  return null;
+}
+
+List<_BeverageServingChoice> _catalogServingChoices(FoodItem? item) {
+  if (item == null) {
+    return const [];
+  }
+  final choices = <_BeverageServingChoice>[
+    for (final option in item.servingOptions)
+      if (_choiceFromServingOption(option) case final choice?) choice,
+    if (item.defaultServingUnit.toLowerCase().contains('ml') &&
+        item.defaultServingSize > 0)
+      _BeverageServingChoice(
+        label:
+            '${item.defaultServingDisplayLabel} (${item.defaultServingSize.round()} ml)',
+        shortLabel: item.defaultServingDisplayLabel,
+        amountMl: item.defaultServingSize.round(),
+      ),
+    if (item.servingGrams > 0)
+      _BeverageServingChoice(
+        label: '${item.servingLabel} (${item.servingGrams} ml)',
+        shortLabel: item.servingLabel,
+        amountMl: item.servingGrams,
+      ),
+  ];
+  if (choices.isEmpty) {
+    choices.addAll(_genericServingChoices('${item.name} ${item.category}'));
+  }
+  return _dedupeServingChoices(choices);
+}
+
+List<_BeverageServingChoice> _customServingChoices(String beverageType) {
+  return _dedupeServingChoices(_genericServingChoices(beverageType));
+}
+
+_BeverageServingChoice? _choiceFromServingOption(
+  NutritionServingOption option,
+) {
+  final amount =
+      option.millilitersEquivalent ??
+      option.gramsEquivalent ??
+      (option.unit.toLowerCase().contains('ml') ? option.amount : null);
+  if (amount == null || amount <= 0) {
+    return null;
+  }
+  final ml = amount.round();
+  return _BeverageServingChoice(
+    label: '${option.displayLabel} ($ml ml)',
+    shortLabel: option.displayLabel,
+    amountMl: ml,
+  );
+}
+
+List<_BeverageServingChoice> _genericServingChoices(String hint) {
+  final normalized = hint.toLowerCase();
+  if (normalized.contains('coffee')) {
+    return const [
+      _BeverageServingChoice(
+        label: 'Small cup (150 ml)',
+        shortLabel: 'Small cup',
+        amountMl: 150,
+      ),
+      _BeverageServingChoice(
+        label: 'Cup (240 ml)',
+        shortLabel: 'Cup',
+        amountMl: 240,
+      ),
+      _BeverageServingChoice(
+        label: 'Large cup (350 ml)',
+        shortLabel: 'Large cup',
+        amountMl: 350,
+      ),
+    ];
+  }
+  if (normalized.contains('tea')) {
+    return const [
+      _BeverageServingChoice(
+        label: 'Small cup (180 ml)',
+        shortLabel: 'Small cup',
+        amountMl: 180,
+      ),
+      _BeverageServingChoice(
+        label: 'Cup (250 ml)',
+        shortLabel: 'Cup',
+        amountMl: 250,
+      ),
+      _BeverageServingChoice(
+        label: 'Pot (400 ml)',
+        shortLabel: 'Pot',
+        amountMl: 400,
+      ),
+    ];
+  }
+  if (normalized.contains('juice') || normalized.contains('smoothie')) {
+    return const [
+      _BeverageServingChoice(
+        label: 'Small glass (180 ml)',
+        shortLabel: 'Small glass',
+        amountMl: 180,
+      ),
+      _BeverageServingChoice(
+        label: 'Glass (250 ml)',
+        shortLabel: 'Glass',
+        amountMl: 250,
+      ),
+      _BeverageServingChoice(
+        label: 'Bottle (450 ml)',
+        shortLabel: 'Bottle',
+        amountMl: 450,
+      ),
+    ];
+  }
+  if (normalized.contains('water')) {
+    return const [
+      _BeverageServingChoice(
+        label: 'Cup (250 ml)',
+        shortLabel: 'Cup',
+        amountMl: 250,
+      ),
+      _BeverageServingChoice(
+        label: 'Glass (330 ml)',
+        shortLabel: 'Glass',
+        amountMl: 330,
+      ),
+      _BeverageServingChoice(
+        label: 'Bottle (500 ml)',
+        shortLabel: 'Bottle',
+        amountMl: 500,
+      ),
+      _BeverageServingChoice(
+        label: 'Large bottle (750 ml)',
+        shortLabel: 'Large bottle',
+        amountMl: 750,
+      ),
+    ];
+  }
+  return const [
+    _BeverageServingChoice(
+      label: 'Small cup (150 ml)',
+      shortLabel: 'Small cup',
+      amountMl: 150,
+    ),
+    _BeverageServingChoice(
+      label: 'Cup (250 ml)',
+      shortLabel: 'Cup',
+      amountMl: 250,
+    ),
+    _BeverageServingChoice(
+      label: 'Glass (330 ml)',
+      shortLabel: 'Glass',
+      amountMl: 330,
+    ),
+    _BeverageServingChoice(
+      label: 'Bottle (500 ml)',
+      shortLabel: 'Bottle',
+      amountMl: 500,
+    ),
+  ];
+}
+
+List<_BeverageServingChoice> _dedupeServingChoices(
+  Iterable<_BeverageServingChoice> choices,
+) {
+  final deduped = <String, _BeverageServingChoice>{};
+  for (final choice in choices) {
+    final key = '${choice.amountMl}:${choice.shortLabel.toLowerCase()}';
+    deduped.putIfAbsent(key, () => choice);
+  }
+  final values = deduped.values.toList()
+    ..sort((a, b) => a.amountMl.compareTo(b.amountMl));
+  return values;
+}
+
 class _SheetModeButton extends StatelessWidget {
   const _SheetModeButton({
     required this.label,
@@ -1389,115 +1763,6 @@ class _SheetModeButton extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _CatalogResultTile extends StatelessWidget {
-  const _CatalogResultTile({
-    required this.item,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final FoodItem item;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: selected
-              ? VitaMateTheme.softSurface
-              : Colors.white.withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: selected ? VitaMateTheme.primary : VitaMateTheme.border,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: VitaMateTheme.primary.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(_catalogItemIcon(item), color: VitaMateTheme.primary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    style: const TextStyle(
-                      color: VitaMateTheme.primaryDeep,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _catalogSubtitle(item),
-                    style: const TextStyle(
-                      color: VitaMateTheme.textMuted,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (item.isUserOwned)
-              const _ScorePill(label: 'Private', color: VitaMateTheme.accent),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CatalogGroupSection extends StatelessWidget {
-  const _CatalogGroupSection({
-    required this.section,
-    required this.selectedItemId,
-    required this.onTapItem,
-  });
-
-  final _CatalogSection section;
-  final int? selectedItemId;
-  final ValueChanged<FoodItem> onTapItem;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            section.label,
-            style: const TextStyle(
-              color: VitaMateTheme.primaryDeep,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-        for (var i = 0; i < section.items.length; i++) ...[
-          _CatalogResultTile(
-            item: section.items[i],
-            selected: section.items[i].id == selectedItemId,
-            onTap: () => onTapItem(section.items[i]),
-          ),
-          if (i != section.items.length - 1) const SizedBox(height: 10),
-        ],
-      ],
     );
   }
 }
@@ -1614,13 +1879,6 @@ class _PreviewMetric {
   final String value;
 }
 
-class _CatalogSection {
-  const _CatalogSection({required this.label, required this.items});
-
-  final String label;
-  final List<FoodItem> items;
-}
-
 IconData _beverageIcon(String type) {
   switch (type) {
     case 'tea':
@@ -1666,75 +1924,6 @@ FoodItem? _findExactCatalogItem(List<FoodItem> items, String query) {
     }
   }
   return null;
-}
-
-List<_CatalogSection> _groupCatalogItems(List<FoodItem> items) {
-  final grouped = <String, List<FoodItem>>{};
-  for (final item in items) {
-    final label = _catalogGroupLabel(item);
-    grouped.putIfAbsent(label, () => <FoodItem>[]).add(item);
-  }
-  final sections = grouped.entries
-      .map((entry) => _CatalogSection(label: entry.key, items: entry.value))
-      .toList();
-  sections.sort((a, b) {
-    final weightDiff =
-        _catalogGroupSortWeight(a.label) - _catalogGroupSortWeight(b.label);
-    if (weightDiff != 0) {
-      return weightDiff;
-    }
-    return a.label.compareTo(b.label);
-  });
-  return sections;
-}
-
-String _catalogGroupLabel(FoodItem item) {
-  final category = item.supportingLabel.trim();
-  if (category.isNotEmpty) {
-    return category;
-  }
-  return 'Beverages';
-}
-
-int _catalogGroupSortWeight(String label) {
-  switch (label.trim().toLowerCase()) {
-    case 'water':
-      return 0;
-    case 'tea':
-      return 1;
-    case 'coffee':
-      return 2;
-    case 'juice':
-      return 3;
-    case 'smoothie':
-      return 4;
-    default:
-      return 99;
-  }
-}
-
-String _catalogSubtitle(FoodItem item) {
-  final parts = <String>[
-    item.supportingLabel,
-    '${item.calories100g} kcal/100 ml',
-  ];
-  final hydrationRatio = item.hydrationRatio;
-  if (hydrationRatio != null) {
-    parts.add('${(hydrationRatio * 100).round()}% hydration');
-  }
-  return parts.where((part) => part.trim().isNotEmpty).join(' - ');
-}
-
-IconData _catalogItemIcon(FoodItem item) {
-  final text = '${item.name} ${item.category}'.toLowerCase();
-  if (text.contains('water')) return Icons.water_drop_outlined;
-  if (text.contains('tea')) return Icons.emoji_food_beverage_outlined;
-  if (text.contains('coffee')) return Icons.coffee_outlined;
-  if (text.contains('juice')) return Icons.local_bar_outlined;
-  if (text.contains('smoothie') || text.contains('shake')) {
-    return Icons.blender_outlined;
-  }
-  return Icons.local_drink_outlined;
 }
 
 double _parseMetric(String raw) {

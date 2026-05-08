@@ -17,6 +17,10 @@ class MedicationItem {
   final bool isActive;
   final bool isPrn;
   final String timezone;
+  final int? supplementNutrientId;
+  final String supplementNutrientCode;
+  final double supplementNutrientAmount;
+  final String supplementNutrientUnit;
   final DateTime? nextDue;
   final MedicationAdherenceSummary adherenceSummaryShort;
   final List<MedicationSchedule> schedules;
@@ -37,6 +41,10 @@ class MedicationItem {
     required this.isActive,
     required this.isPrn,
     required this.timezone,
+    required this.supplementNutrientId,
+    required this.supplementNutrientCode,
+    required this.supplementNutrientAmount,
+    required this.supplementNutrientUnit,
     required this.nextDue,
     required this.adherenceSummaryShort,
     required this.schedules,
@@ -61,6 +69,14 @@ class MedicationItem {
       isActive: _asBool(json['is_active'], fallback: true),
       isPrn: _asBool(json['is_prn']),
       timezone: (json['timezone'] ?? 'UTC').toString(),
+      supplementNutrientId: json['supplement_nutrient_id'] == null
+          ? null
+          : _asInt(json['supplement_nutrient_id']),
+      supplementNutrientCode: (json['supplement_nutrient_code'] ?? '')
+          .toString(),
+      supplementNutrientAmount: _asDouble(json['supplement_nutrient_amount']),
+      supplementNutrientUnit: (json['supplement_nutrient_unit'] ?? '')
+          .toString(),
       nextDue: DateTime.tryParse((json['next_due'] ?? '').toString()),
       adherenceSummaryShort: MedicationAdherenceSummary.fromJson(
         _asMap(json['adherence_summary_short']),
@@ -95,6 +111,12 @@ bool _asBool(dynamic value, {bool fallback = false}) {
   if (text == 'true') return true;
   if (text == 'false') return false;
   return fallback;
+}
+
+double _asDouble(dynamic value) {
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 Map<String, dynamic> _asMap(dynamic value) {

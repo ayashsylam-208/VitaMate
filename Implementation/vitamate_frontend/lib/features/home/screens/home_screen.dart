@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../auth/data/auth_api.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../core/routing/routes.dart';
+import '../../../core/routing/vitamate_route_observer.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
@@ -16,38 +19,117 @@ import '../models/dashboard_data.dart';
 import '../state/home_controller.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({
+    super.key,
+    this.controller,
+    this.chronicController,
+    this.authRepository,
+    this.autoLoad = true,
+  });
+
+  final HomeController? controller;
+  final ChronicConditionsController? chronicController;
+  final AuthRepository? authRepository;
+  final bool autoLoad;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   late final HomeController controller;
   late final ChronicConditionsController chronicController;
-  final AuthRepository _authRepository = AuthRepository(AuthApi());
+  late final AuthRepository _authRepository;
+  late final bool _ownsHomeController;
+  late final bool _ownsChronicController;
 
   String _displayName = 'there';
+  PageRoute<dynamic>? _subscribedRoute;
+  bool _routeVisible = true;
+  bool _refreshWhenVisible = false;
 
   @override
   void initState() {
     super.initState();
-    controller = HomeController()..load();
-    chronicController = ChronicConditionsController()..load();
+    controller = widget.controller ?? HomeController();
+    chronicController =
+        widget.chronicController ?? ChronicConditionsController();
+    _authRepository = widget.authRepository ?? AuthRepository(AuthApi());
+    _ownsHomeController = widget.controller == null;
+    _ownsChronicController = widget.chronicController == null;
     HealthSyncBus.instance.addListener(_handleTrackerRefresh);
-    _loadDisplayName();
+    if (widget.autoLoad) {
+      unawaited(controller.load());
+      unawaited(_loadDisplayName());
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    _routeVisible = route?.isCurrent ?? true;
+    if (route is PageRoute<dynamic> && route != _subscribedRoute) {
+      if (_subscribedRoute != null) {
+        vitaMateRouteObserver.unsubscribe(this);
+      }
+      _subscribedRoute = route;
+      vitaMateRouteObserver.subscribe(this, route);
+    }
   }
 
   @override
   void dispose() {
     HealthSyncBus.instance.removeListener(_handleTrackerRefresh);
-    controller.dispose();
-    chronicController.dispose();
+    vitaMateRouteObserver.unsubscribe(this);
+    if (_ownsHomeController) {
+      controller.dispose();
+    }
+    if (_ownsChronicController) {
+      chronicController.dispose();
+    }
     super.dispose();
   }
 
   void _handleTrackerRefresh() {
-    controller.load();
+    if (!HealthSyncBus.instance.affects(const {HealthSyncScope.homeOverview})) {
+      return;
+    }
+    if (!_isRouteVisible()) {
+      _refreshWhenVisible = true;
+      return;
+    }
+    unawaited(controller.load());
+  }
+
+  bool _isRouteVisible() {
+    return mounted &&
+        (_routeVisible || (ModalRoute.of(context)?.isCurrent ?? false));
+  }
+
+  @override
+  void didPush() {
+    _routeVisible = true;
+  }
+
+  @override
+  void didPushNext() {
+    _routeVisible = false;
+  }
+
+  @override
+  void didPop() {
+    _routeVisible = false;
+  }
+
+  @override
+  void didPopNext() {
+    _routeVisible = true;
+    if (!_refreshWhenVisible) {
+      return;
+    }
+    _refreshWhenVisible = false;
+    unawaited(controller.load());
   }
 
   Future<void> _loadDisplayName() async {
@@ -66,20 +148,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshAll() async {
-    await Future.wait([controller.load(), chronicController.load()]);
-    await _loadDisplayName();
+    await controller.load();
+    unawaited(_loadDisplayName());
   }
 
-  Future<void> _openConditionsCenter() {
-    return Navigator.of(context).push(
+  Future<void> _openConditionsCenter() async {
+    if (chronicController.catalog.isEmpty && !chronicController.loading) {
+      unawaited(chronicController.loadCenter());
+    }
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChronicConditionsScreen(controller: chronicController),
       ),
     );
   }
 
-  Future<void> _openCondition(int conditionId) {
-    return Navigator.of(context).push(
+  Future<void> _openCondition(int conditionId) async {
+    if (chronicController.conditionById(conditionId) == null) {
+      await chronicController.loadCenter(includeCatalog: false);
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChronicConditionDetailScreen(
           controller: chronicController,
@@ -104,7 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: SafeArea(
           child: AnimatedBuilder(
-            animation: Listenable.merge([controller, chronicController]),
+            animation: controller,
             builder: (context, _) {
               if (_isInitialDashboardLoad()) {
                 return const Center(child: CircularProgressIndicator());
@@ -121,6 +212,7 @@ class _HomeScreenState extends State<HomeScreen> {
               return RefreshIndicator(
                 onRefresh: _refreshAll,
                 child: ListView(
+                  key: const ValueKey(AppTestKeys.homeScreen),
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(14, 18, 14, 116),
                   children: [
@@ -140,7 +232,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     const _SectionTitle('Conditions Center'),
                     const SizedBox(height: 12),
                     _ConditionsHomeSection(
-                      controller: chronicController,
+                      conditions: controller.conditionsCenter,
+                      error: controller.error,
+                      loading: controller.loading,
                       onAddCondition: _openConditionsCenter,
                       onOpenCenter: _openConditionsCenter,
                       onOpenCondition: _openCondition,
@@ -157,9 +251,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _insightMessage(DashboardData data) {
     final hydrationProgress = (data.waterMl / 2500).clamp(0.0, 1.4);
-    if (chronicController.activeConditions.isNotEmpty &&
-        chronicController.activeConditions.first.needsAttention) {
-      return chronicController.activeConditions.first.secondarySummaryLine;
+    if (controller.conditionsCenter.isNotEmpty &&
+        controller.conditionsCenter.first.needsAttention) {
+      return controller.conditionsCenter.first.secondarySummaryLine;
     }
     if (hydrationProgress < 0.85) {
       return 'Your hydration is lower than usual. Drinking a glass of water now will help you reach your daily goal.';
@@ -178,6 +272,7 @@ class _HomeScreenState extends State<HomeScreen> {
         data.waterMl != 0 ||
         data.sleepMinutes != 0 ||
         data.calories != 0 ||
+        controller.conditionsCenter.isNotEmpty ||
         data.chronicSummary.hasAny;
   }
 }
@@ -281,7 +376,10 @@ class _DailyScoreCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = _TrackerMetrics.fromDashboard(data);
-    final score = metrics.healthScore;
+    final score = (metrics.healthScore + data.dailyPoints)
+        .clamp(0, 100)
+        .toInt();
+    final level = data.level > 0 ? data.level : metrics.level;
 
     return _SurfaceCard(
       padding: const EdgeInsets.all(18),
@@ -300,7 +398,7 @@ class _DailyScoreCard extends StatelessWidget {
                   ),
                 ),
               ),
-              _PillLabel(label: 'Level ${metrics.level}'),
+              _PillLabel(label: 'Level $level'),
             ],
           ),
           const SizedBox(height: 18),
@@ -358,6 +456,15 @@ class _DailyScoreCard extends StatelessWidget {
                         height: 1.35,
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _ScoreChip(label: '+${data.dailyPoints} pts today'),
+                        _ScoreChip(label: '${data.points} pts total'),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -386,6 +493,31 @@ class _DailyScoreCard extends StatelessWidget {
       return 'A couple of small tracker updates will lift your day further.';
     }
     return 'Start with one tracker update and the rest will follow.';
+  }
+}
+
+class _ScoreChip extends StatelessWidget {
+  const _ScoreChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: VitaMateTheme.softSurface,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: VitaMateTheme.primary,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
   }
 }
 
@@ -447,6 +579,16 @@ class _TrackingGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final metrics = _TrackerMetrics.fromDashboard(data);
     final numberFormat = NumberFormat.decimalPattern();
+    final activityValue = data.activityBurnedKcal > 0
+        ? '${numberFormat.format(data.activityBurnedKcal)} kcal'
+        : numberFormat.format(data.todaySteps);
+    final activityTarget = data.activityBurnedKcal > 0
+        ? (data.burnTargetKcal > 0
+              ? '/ ${numberFormat.format(data.burnTargetKcal)} kcal'
+              : ' burned')
+        : (data.stepTarget > 0
+              ? '/ ${_compactSteps(data.stepTarget)}'
+              : '/ 10k');
 
     return GridView.count(
       crossAxisCount: 2,
@@ -460,8 +602,8 @@ class _TrackingGrid extends StatelessWidget {
           icon: Icons.multiline_chart_rounded,
           title: 'Activity',
           progressPercent: metrics.activityPercent,
-          value: numberFormat.format(data.todaySteps),
-          target: '/ 10k',
+          value: activityValue,
+          target: activityTarget,
           accent: VitaMateTheme.primary,
           route: Routes.activities,
         ),
@@ -602,31 +744,35 @@ class _TrackerCard extends StatelessWidget {
 
 class _ConditionsHomeSection extends StatelessWidget {
   const _ConditionsHomeSection({
-    required this.controller,
+    required this.conditions,
+    required this.error,
+    required this.loading,
     required this.onAddCondition,
     required this.onOpenCenter,
     required this.onOpenCondition,
   });
 
-  final ChronicConditionsController controller;
+  final List<ChronicCondition> conditions;
+  final String? error;
+  final bool loading;
   final Future<void> Function() onAddCondition;
   final Future<void> Function() onOpenCenter;
   final Future<void> Function(int conditionId) onOpenCondition;
 
   @override
   Widget build(BuildContext context) {
-    if (controller.loading && controller.catalog.isEmpty) {
+    if (loading && conditions.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 28),
         child: Center(child: CircularProgressIndicator()),
       );
     }
 
-    if (controller.error != null && controller.catalog.isEmpty) {
+    if (error != null && conditions.isEmpty) {
       return _SurfaceCard(
         padding: const EdgeInsets.all(18),
         child: Text(
-          controller.error!,
+          error!,
           style: const TextStyle(
             color: VitaMateTheme.primaryDeep,
             fontWeight: FontWeight.w800,
@@ -635,7 +781,7 @@ class _ConditionsHomeSection extends StatelessWidget {
       );
     }
 
-    if (controller.activeConditions.isEmpty) {
+    if (conditions.isEmpty) {
       return _SurfaceCard(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
         child: Column(
@@ -687,13 +833,12 @@ class _ConditionsHomeSection extends StatelessWidget {
 
     return Column(
       children: [
-        for (final condition in controller.activeConditions) ...[
+        for (final condition in conditions) ...[
           _ConditionSummaryCard(
             condition: condition,
             onOpen: () => onOpenCondition(condition.id),
           ),
-          if (condition != controller.activeConditions.last)
-            const SizedBox(height: 12),
+          if (condition != conditions.last) const SizedBox(height: 12),
         ],
         const SizedBox(height: 12),
         Align(
@@ -811,11 +956,7 @@ class _ConditionSummaryCard extends StatelessWidget {
 }
 
 class _SurfaceCard extends StatelessWidget {
-  const _SurfaceCard({
-    super.key,
-    required this.child,
-    required this.padding,
-  });
+  const _SurfaceCard({super.key, required this.child, required this.padding});
 
   final Widget child;
   final EdgeInsetsGeometry padding;
@@ -966,7 +1107,17 @@ class _TrackerMetrics {
   final int level;
 
   factory _TrackerMetrics.fromDashboard(DashboardData data) {
-    final activity = ((data.todaySteps / 10000) * 100).clamp(0, 100).round();
+    final stepTarget = data.stepTarget > 0 ? data.stepTarget : 10000;
+    final burnTarget = data.burnTargetKcal > 0 ? data.burnTargetKcal : 0;
+    final stepsProgress = ((data.todaySteps / stepTarget) * 100)
+        .clamp(0, 100)
+        .round();
+    final burnProgress = burnTarget > 0
+        ? ((data.activityBurnedKcal / burnTarget) * 100).clamp(0, 100).round()
+        : (data.activityBurnedKcal > 0 ? 12 : 0);
+    final activity = stepsProgress > burnProgress
+        ? stepsProgress
+        : burnProgress;
     final hydration = ((data.waterMl / 2500) * 100).clamp(0, 100).round();
     final nutrition = ((data.calories / 2600) * 100).clamp(0, 100).round();
     final sleep = ((data.sleepMinutes / 480) * 100).clamp(0, 100).round();
@@ -981,6 +1132,16 @@ class _TrackerMetrics {
       level: level,
     );
   }
+}
+
+String _compactSteps(int steps) {
+  if (steps >= 1000 && steps % 1000 == 0) {
+    return '${steps ~/ 1000}k';
+  }
+  if (steps >= 1000) {
+    return '${(steps / 1000).toStringAsFixed(1)}k';
+  }
+  return steps.toString();
 }
 
 String _durationLabel(int minutes) {

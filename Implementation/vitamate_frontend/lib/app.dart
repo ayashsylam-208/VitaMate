@@ -4,6 +4,7 @@ import 'auth/screens/login_screen.dart';
 import 'auth/screens/onboarding_wizard/onboarding_wizard_screen.dart';
 import 'auth/screens/signup_screen.dart';
 import 'core/routing/routes.dart';
+import 'core/routing/vitamate_route_observer.dart';
 import 'core/theme/vitamate_theme.dart';
 import 'features/activity/screens/activity_screen.dart';
 import 'features/chronic_conditions/screens/chronic_conditions_screen.dart';
@@ -22,40 +23,57 @@ import 'features/water/screens/water_screen.dart';
 import 'shared/widgets/vitamate_bottom_nav.dart';
 
 class VitaMateApp extends StatelessWidget {
-  const VitaMateApp({super.key});
+  const VitaMateApp({
+    super.key,
+    this.initialRoute = Routes.login,
+    this.routeOverrides = const <String, WidgetBuilder>{},
+  });
+
+  final String initialRoute;
+  final Map<String, WidgetBuilder> routeOverrides;
+
+  Map<String, WidgetBuilder> _defaultRoutes() {
+    return <String, WidgetBuilder>{
+      Routes.login: (_) => const LoginScreen(),
+      Routes.signup: (_) => const SignUpScreen(),
+      Routes.onboarding: (_) => const OnboardingWizardScreen(),
+      Routes.home: (_) => const HomeScreen(),
+      Routes.progress: (_) => const StatsScreen(),
+      Routes.meds: (_) => const MedicationsScreen(),
+      Routes.medsAdd: (_) =>
+          AddEditMedicationScreen(controller: MedicationsController()),
+      Routes.medsToday: (_) => MedicationTodayPlanScreen(
+        controller: MedicationsController()..refreshAll(),
+      ),
+      Routes.sleep: (_) => const SleepScreen(),
+      Routes.water: (_) => const WaterScreen(
+        targetValueFromBackend: 2.3,
+        targetIsLiters: true,
+      ),
+      Routes.meals: (_) => const NutritionScreen(),
+      Routes.activities: (_) => const ActivityScreen(),
+      Routes.habits: (_) => const HabitsScreen(),
+      Routes.steps: (_) => const StepsScreen(),
+      Routes.chronicConditions: (_) => const ChronicConditionsScreen(),
+      Routes.goal: (_) => const GoalsScreen(),
+      Routes.score: (_) => const _ScoreSummaryScreen(),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
+    final routes = <String, WidgetBuilder>{
+      ..._defaultRoutes(),
+      ...routeOverrides,
+    };
+
     return MaterialApp(
       title: 'VitaMate',
       debugShowCheckedModeBanner: false,
       theme: VitaMateTheme.light(),
-      initialRoute: Routes.login,
-      routes: {
-        Routes.login: (_) => const LoginScreen(),
-        Routes.signup: (_) => const SignUpScreen(),
-        Routes.onboarding: (_) => const OnboardingWizardScreen(),
-        Routes.home: (_) => const HomeScreen(),
-        Routes.progress: (_) => const StatsScreen(),
-        Routes.meds: (_) => const MedicationsScreen(),
-        Routes.medsAdd: (_) =>
-            AddEditMedicationScreen(controller: MedicationsController()),
-        Routes.medsToday: (_) => MedicationTodayPlanScreen(
-          controller: MedicationsController()..refreshAll(),
-        ),
-        Routes.sleep: (_) => const SleepScreen(),
-        Routes.water: (_) => const WaterScreen(
-          targetValueFromBackend: 2.3,
-          targetIsLiters: true,
-        ),
-        Routes.meals: (_) => const NutritionScreen(),
-        Routes.activities: (_) => const ActivityScreen(),
-        Routes.habits: (_) => const HabitsScreen(),
-        Routes.steps: (_) => const StepsScreen(),
-        Routes.chronicConditions: (_) => const ChronicConditionsScreen(),
-        Routes.goal: (_) => const GoalsScreen(),
-        Routes.score: (_) => const _ScoreSummaryScreen(),
-      },
+      navigatorObservers: [vitaMateRouteObserver],
+      initialRoute: initialRoute,
+      routes: routes,
     );
   }
 }

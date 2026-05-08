@@ -40,7 +40,7 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
       if (!mounted) {
         return;
       }
-      controller.load();
+      controller.loadCenter();
     });
   }
 
@@ -185,7 +185,7 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
       return;
     }
     if (!type.canAdd) {
-      await controller.load();
+      await controller.loadCenter();
       if (!mounted) {
         return;
       }
@@ -249,6 +249,7 @@ class _ChronicConditionsScreenState extends State<ChronicConditionsScreen> {
       final readingResult = await controller.logReading(
         conditionId: created.id,
         payload: result.initialReadingPayload,
+        refreshDetail: false,
       );
       if (!mounted) {
         return;

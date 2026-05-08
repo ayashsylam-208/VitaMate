@@ -7,6 +7,7 @@ from core.models import ConstraintResolutionRun
 
 
 class HealthStateTriggers:
+    READ_MODEL_REFRESH_REQUESTED = "read_model_refresh_requested"
     MEAL_LOGGED = "meal_logged"
     MEAL_UPDATED = "meal_updated"
     MEAL_DELETED = "meal_deleted"
@@ -28,6 +29,7 @@ class HealthStateTriggers:
     MEDICATION_PLAN_CHANGED = "medication_plan_changed"
     MEDICATION_ADHERENCE_CHANGED = "medication_adherence_changed"
     USER_NUTRIENT_TARGET_CHANGED = "user_nutrient_target_changed"
+    UNHEALTHY_HABIT_CHANGED = "unhealthy_habit_changed"
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,8 @@ class TrackerDependencyMap:
         HealthStateTriggers.MEDICATION_PLAN_CHANGED,
         HealthStateTriggers.MEDICATION_ADHERENCE_CHANGED,
         HealthStateTriggers.USER_NUTRIENT_TARGET_CHANGED,
+        HealthStateTriggers.UNHEALTHY_HABIT_CHANGED,
+        HealthStateTriggers.READ_MODEL_REFRESH_REQUESTED,
     }
 
     TRIGGER_RULES = {
@@ -189,6 +193,18 @@ class TrackerDependencyMap:
             "constraint_trigger_type": ConstraintResolutionRun.TRIGGER_USER_NUTRIENT_TARGET,
             "constraint_tracker_type": "nutrition",
             "reason": "User nutrient targets changed nutrition constraints.",
+        },
+        HealthStateTriggers.UNHEALTHY_HABIT_CHANGED: {
+            "trackers": ("habit", "nutrition", "hydration", "sleep", "monitoring"),
+            "sync_active_conditions": True,
+            "recompute_constraints": False,
+            "reason": "Unhealthy habit plan or log changed.",
+        },
+        HealthStateTriggers.READ_MODEL_REFRESH_REQUESTED: {
+            "trackers": ("nutrition", "hydration", "activity", "steps", "sleep", "medication", "habit", "monitoring"),
+            "sync_active_conditions": True,
+            "recompute_constraints": False,
+            "reason": "Read model refresh requested.",
         },
     }
 

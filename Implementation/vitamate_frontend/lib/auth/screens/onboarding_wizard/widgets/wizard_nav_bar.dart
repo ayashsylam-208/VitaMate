@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/testing/app_test_keys.dart';
 import 'wizard_step_container.dart';
 
 class WizardNavBar extends StatelessWidget {
@@ -30,6 +31,7 @@ class WizardNavBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: IconButton(
+                  key: const ValueKey(AppTestKeys.onboardingBackButton),
                   onPressed: onBack,
                   icon: const Icon(
                     Icons.chevron_left_rounded,

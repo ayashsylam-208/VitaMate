@@ -87,4 +87,19 @@ class NotificationMessages {
         'Move a bit now to stay on track.',
         'Your daily step streak is waiting for you.',
       ]);
+  static String habitSupportTitle(String habitLabel) => '$habitLabel check-in';
+
+  static String habitSupportBody() => _pick([
+    'Pause for a moment and choose the option that matches your plan.',
+    'A small replacement action can help you stay in control.',
+    'Log the trigger first. That pattern is useful progress.',
+  ]);
+
+  static String caffeineCutoffTitle() => 'Caffeine timing';
+  static String caffeineCutoffBody() =>
+      'This may be late enough to affect sleep. Consider a lower-caffeine option.';
+
+  static String fastFoodLimitTitle() => 'Fast-food plan check';
+  static String fastFoodLimitBody() =>
+      'You are close to your weekly target. Choose a planned alternative if possible.';
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../models/medication_item.dart';
 import '../state/medications_controller.dart';
@@ -39,6 +40,7 @@ class _AddEditMedicationScreenState extends State<AddEditMedicationScreen> {
   @override
   void initState() {
     super.initState();
+    widget.controller.addListener(_handleControllerChanged);
     final med = widget.medication;
     _name = TextEditingController(text: med?.displayName ?? '');
     _amount = TextEditingController(text: med?.doseAmount ?? '');
@@ -66,12 +68,19 @@ class _AddEditMedicationScreenState extends State<AddEditMedicationScreen> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
     _name.dispose();
     _amount.dispose();
     _unit.dispose();
     _form.dispose();
     _instructions.dispose();
     super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _addTime() async {
@@ -138,6 +147,7 @@ class _AddEditMedicationScreenState extends State<AddEditMedicationScreen> {
     final linkedName =
         widget.medication?.linkedConditionName ?? widget.linkedConditionName;
     return Scaffold(
+      key: const ValueKey(AppTestKeys.medicationsAddScreen),
       backgroundColor: VitaMateTheme.background,
       appBar: AppBar(
         title: Text(
@@ -257,6 +267,7 @@ class _AddEditMedicationScreenState extends State<AddEditMedicationScreen> {
               ],
               const SizedBox(height: 22),
               FilledButton(
+                key: const ValueKey(AppTestKeys.medicationsSaveButton),
                 onPressed: widget.controller.state.isSaving ? null : _save,
                 child: Text(
                   widget.controller.state.isSaving

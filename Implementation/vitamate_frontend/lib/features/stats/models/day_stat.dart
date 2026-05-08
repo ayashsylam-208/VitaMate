@@ -80,11 +80,14 @@ class DayStat {
   }
 
   double get waterProgress => progress(waterCurrent, waterTarget);
-  double get stepsProgress => progress(steps.toDouble(), stepsTarget.toDouble());
-  double get caloriesProgress =>
-      caloriesTarget <= 0 ? 0 : (caloriesIn / caloriesTarget).clamp(0, 2); // allow >100%
+  double get stepsProgress =>
+      progress(steps.toDouble(), stepsTarget.toDouble());
+  double get caloriesProgress => caloriesTarget <= 0
+      ? 0
+      : (caloriesIn / caloriesTarget).clamp(0, 2); // allow >100%
   double get sleepProgress => progress(sleepHours, sleepTarget);
-  double get burnProgress => progress(caloriesBurned.toDouble(), burnTarget.toDouble());
+  double get burnProgress =>
+      progress(caloriesBurned.toDouble(), burnTarget.toDouble());
 
   static int _toInt(dynamic v) {
     if (v == null) return 0;

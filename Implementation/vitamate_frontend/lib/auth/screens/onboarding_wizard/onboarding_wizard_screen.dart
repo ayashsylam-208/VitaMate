@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../core/config/api_endpoints.dart';
 import '../../../core/network/http_client.dart';
 import '../../../core/routing/routes.dart';
+import '../../../core/testing/app_test_keys.dart';
 import 'onboarding_state.dart';
 import 'steps/step_01_basic_info.dart';
 import 'steps/step_02_activity_level.dart';
@@ -194,7 +195,8 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      key: const ValueKey(AppTestKeys.onboardingScreen),
+      backgroundColor: const Color(0xFFF5F0FF),
       resizeToAvoidBottomInset: true,
       body: Container(
         decoration: const BoxDecoration(gradient: wizardPageBackground),
@@ -207,27 +209,12 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
                   : constraints.maxHeight;
 
               return Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 420),
-                    child: Container(
+                    child: SizedBox(
                       height: shellHeight,
-                      decoration: BoxDecoration(
-                        gradient: wizardShellBackground,
-                        borderRadius: BorderRadius.circular(40),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.88),
-                          width: 3,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x1A57369A),
-                            blurRadius: 32,
-                            offset: Offset(0, 16),
-                          ),
-                        ],
-                      ),
                       child: Column(
                         children: [
                           WizardNavBar(
@@ -258,33 +245,19 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
                               ),
                             ),
                           ),
-                          Container(
+                          Padding(
                             padding: EdgeInsets.fromLTRB(
-                              20,
+                              16,
                               12,
-                              20,
-                              isCompact ? 18 : 22,
-                            ),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.white.withValues(alpha: 0),
-                                  Colors.white.withValues(alpha: 0.84),
-                                  Colors.white.withValues(alpha: 0.98),
-                                ],
-                              ),
-                              borderRadius: const BorderRadius.only(
-                                bottomLeft: Radius.circular(36),
-                                bottomRight: Radius.circular(36),
-                              ),
+                              16,
+                              isCompact ? 12 : 18,
                             ),
                             child: AnimatedOpacity(
                               duration: const Duration(milliseconds: 180),
                               opacity: _isCurrentStepValid ? 1 : 0.45,
                               child: SizedBox(
                                 height: isCompact ? 48 : 52,
+                                width: double.infinity,
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
                                     gradient: wizardButtonGradient,
@@ -298,6 +271,9 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
                                     ],
                                   ),
                                   child: ElevatedButton(
+                                    key: const ValueKey(
+                                      AppTestKeys.onboardingContinueButton,
+                                    ),
                                     onPressed: _saving || !_isCurrentStepValid
                                         ? null
                                         : _handleNext,

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from django.db.models import Sum
+
 from core.models import ConditionMedication, ConditionMedicationLog, UserCondition
 from core.repositories.medication_repository import MedicationRepository
 
@@ -30,6 +32,13 @@ class MedicationAdherenceService:
     ON_TIME_STATUSES = {
         ConditionMedicationLog.STATUS_TAKEN,
         ConditionMedicationLog.STATUS_TAKEN_ON_TIME,
+    }
+    POINT_STATUSES = {
+        ConditionMedicationLog.STATUS_TAKEN,
+        ConditionMedicationLog.STATUS_TAKEN_ON_TIME,
+        ConditionMedicationLog.STATUS_TAKEN_LATE,
+        ConditionMedicationLog.STATUS_MISSED,
+        ConditionMedicationLog.STATUS_SKIPPED,
     }
 
     @classmethod
@@ -193,6 +202,19 @@ class MedicationAdherenceService:
             "overdue_today": overdue,
             "skipped_today": skipped,
         }
+
+    @classmethod
+    def points_for_day(cls, *, user, target_date: date) -> int:
+        total = (
+            MedicationRepository.logs_for_user_on_date(
+                user=user,
+                target_date=target_date,
+            )
+            .filter(status__in=cls.POINT_STATUSES)
+            .aggregate(total=Sum("points_applied"))
+            .get("total")
+        )
+        return int(total or 0)
 
     @classmethod
     def next_due(cls, *, user):

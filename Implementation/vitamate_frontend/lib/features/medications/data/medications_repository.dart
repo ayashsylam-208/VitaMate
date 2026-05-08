@@ -4,10 +4,69 @@ import '../models/medication_item.dart';
 import '../models/reminder_sync_payload.dart';
 import 'medications_api.dart';
 
+class MedicationsOverviewData {
+  const MedicationsOverviewData({
+    required this.medications,
+    required this.todayPlan,
+    required this.overallAdherence,
+    required this.reminderSync,
+  });
+
+  final List<MedicationItem> medications;
+  final List<MedicationDoseLog> todayPlan;
+  final MedicationAdherenceSummary overallAdherence;
+  final ReminderSyncPayload reminderSync;
+}
+
 class MedicationsRepository {
   MedicationsRepository({MedicationsApi? api}) : _api = api ?? MedicationsApi();
 
   final MedicationsApi _api;
+
+  Future<MedicationsOverviewData> getOverview() async {
+    final raw = _overviewData(await _api.fetchOverview());
+    final medicationsRaw = raw['medications'];
+    final todayPlanRaw = raw['today_plan'];
+    return MedicationsOverviewData(
+      medications: medicationsRaw is List
+          ? medicationsRaw
+                .map(
+                  (item) => MedicationItem.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList(growable: false)
+          : const <MedicationItem>[],
+      todayPlan: todayPlanRaw is List
+          ? todayPlanRaw
+                .map(
+                  (item) => MedicationDoseLog.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList(growable: false)
+          : const <MedicationDoseLog>[],
+      overallAdherence: MedicationAdherenceSummary.fromJson(
+        Map<String, dynamic>.from(
+          (raw['overall_adherence'] as Map?) ?? const {},
+        ),
+      ),
+      reminderSync: ReminderSyncPayload.fromJson(
+        Map<String, dynamic>.from((raw['reminder_sync'] as Map?) ?? const {}),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _overviewData(Map<String, dynamic> raw) {
+    final data = raw['data'];
+    if (data is Map<String, dynamic>) {
+      return data;
+    }
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return raw;
+  }
 
   Future<List<MedicationItem>> getMedications() async {
     final raw = await _api.fetchMedications();

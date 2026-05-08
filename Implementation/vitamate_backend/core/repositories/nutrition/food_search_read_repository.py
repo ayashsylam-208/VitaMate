@@ -17,6 +17,7 @@ class FoodSearchReadRepository:
         q: str = "",
         item_type: str | None = None,
         category: str | None = None,
+        meal_slot: str | None = None,
         contains_caffeine=None,
         is_hydration_trackable=None,
         limit=None,
@@ -26,13 +27,16 @@ class FoodSearchReadRepository:
         queryset = NutritionCatalogRepository.accessible_to_user(
             user=user,
             include_inactive=include_inactive,
-        ).select_related("primary_category", "nutrition_facts")
+        ).select_related("primary_category", "nutrition_facts").prefetch_related(
+            "serving_options"
+        )
 
         if own_only:
             queryset = queryset.filter(created_by=user)
 
         queryset = cls._apply_item_type_filter(queryset, item_type)
         queryset = cls._apply_category_filter(queryset, category)
+        queryset = cls._apply_meal_slot_filter(queryset, meal_slot)
         queryset = cls._apply_bool_filter(queryset, "contains_caffeine", contains_caffeine)
         queryset = cls._apply_bool_filter(
             queryset,
@@ -115,6 +119,22 @@ class FoodSearchReadRepository:
         if raw_category.isdigit():
             filters |= Q(primary_category_id=int(raw_category))
         return queryset.filter(filters)
+
+    @staticmethod
+    def _apply_meal_slot_filter(queryset, meal_slot):
+        if not meal_slot:
+            return queryset
+        normalized = str(meal_slot).strip().lower().replace(" ", "_")
+        valid_slots = {"breakfast", "lunch", "dinner", "snack", "dessert", "drink"}
+        if normalized not in valid_slots:
+            return queryset
+        if normalized == "drink":
+            return queryset.filter(
+                Q(meal_tags__icontains="drink")
+                | Q(item_type__in=[FoodItem.TYPE_BEVERAGE, FoodItem.TYPE_DRINK])
+                | Q(is_hydration_trackable=True)
+            )
+        return queryset.filter(meal_tags__icontains=normalized)
 
     @staticmethod
     def _apply_bool_filter(queryset, field_name, raw_value):

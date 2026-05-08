@@ -1,13 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:vitamate/auth/data/auth_repository.dart';
-import '../data/sleep_api.dart';
+import '../../../core/sync/health_sync_bus.dart';
+import '../data/sleep_repository.dart';
 import '../models/sleep_log.dart';
 import '../models/sleep_summary.dart';
 
 class SleepController extends ChangeNotifier {
-  SleepController(AuthRepository repo, {SleepApi? api}) : _api = api ?? SleepApi();
+  SleepController(AuthRepository repo, {SleepRepository? repository})
+    : _repository = repository ?? SleepRepository();
 
-  final SleepApi _api;
+  final SleepRepository _repository;
 
   bool loading = false;
   String? error;
@@ -33,11 +35,11 @@ class SleepController extends ChangeNotifier {
   }
 
   Future<void> _loadLogs() async {
-    logs = await _api.getLogs();
+    logs = await _repository.getLogs();
   }
 
   Future<void> _loadSummary() async {
-    summary = await _api.getSummary();
+    summary = await _repository.getSummary();
   }
 
   void _computeTodaySleepPoints() {
@@ -46,12 +48,17 @@ class SleepController extends ChangeNotifier {
       return;
     }
     final today = DateTime.now();
-    sleepPointsToday = logs
-        .where((log) =>
-            log.date.year == today.year &&
-            log.date.month == today.month &&
-            log.date.day == today.day)
+    final pointsFromTodayLogs = logs
+        .where(
+          (log) =>
+              log.date.year == today.year &&
+              log.date.month == today.month &&
+              log.date.day == today.day,
+        )
         .fold(0, (sum, log) => sum + log.pointsEarned);
+    sleepPointsToday = pointsFromTodayLogs > 0
+        ? pointsFromTodayLogs
+        : summary.sleepPoints;
   }
 
   Future<void> add({
@@ -63,8 +70,17 @@ class SleepController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _api.addSleep(startTime: startTime, endTime: endTime, quality: quality);
+      await _repository.addSleep(
+        startTime: startTime,
+        endTime: endTime,
+        quality: quality,
+      );
       await loadAll();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.sleep,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
     } catch (_) {
       error = 'Could not save sleep log.';
       notifyListeners();
@@ -76,8 +92,13 @@ class SleepController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _api.deleteSleep(id);
+      await _repository.deleteSleep(id);
       logs.removeWhere((e) => e.id == id);
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.sleep,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
       notifyListeners();
     } catch (_) {
       error = 'Could not delete sleep log.';
