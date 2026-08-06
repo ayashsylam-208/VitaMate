@@ -2,29 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/notification_hub/notification_hub.dart';
 import '../../../core/network/network_error_mapper.dart';
-import '../../../core/notifications/notifications_service.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../data/medications_repository.dart';
 import '../models/medication_dose_log.dart';
 import '../models/medication_item.dart';
-import '../models/reminder_sync_payload.dart';
 import 'medications_state.dart';
-
-typedef MedicationReminderSyncer =
-    Future<void> Function(List<ChronicMedicationReminderPlan> plans);
 
 class MedicationsController extends ChangeNotifier {
   MedicationsController({
     MedicationsRepository? repository,
-    MedicationReminderSyncer? reminderSyncer,
-  }) : _repository = repository ?? MedicationsRepository(),
-       _reminderSyncer =
-           reminderSyncer ?? NotificationsService.syncMedicationReminders;
+  }) : _repository = repository ?? MedicationsRepository();
 
   final MedicationsRepository _repository;
-  final MedicationReminderSyncer _reminderSyncer;
-  ReminderSyncPayload _cachedReminderSync = ReminderSyncPayload.empty();
 
   MedicationsState state = MedicationsState.initial();
 
@@ -59,8 +50,47 @@ class MedicationsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loadTodayPlan() async {
-    state = state.copyWith(todayPlan: await _repository.getTodayPlan());
+  Future<void> loadTodayPlan({String? date}) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    notifyListeners();
+    try {
+      final plan = await _repository.getTodayPlanData(date: date);
+      state = state.copyWith(
+        isLoading: false,
+        todayPlan: plan.doses,
+        todayAdherence: plan.summary,
+        clearError: true,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: NetworkErrorMapper.toMessage(
+          e,
+          fallback: 'Failed to load today plan.',
+        ),
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> loadHistory({String status = 'all'}) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    notifyListeners();
+    try {
+      state = state.copyWith(
+        isLoading: false,
+        history: await _repository.getHistory(status: status),
+        clearError: true,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: NetworkErrorMapper.toMessage(
+          e,
+          fallback: 'Failed to load medication history.',
+        ),
+      );
+    }
     notifyListeners();
   }
 
@@ -130,7 +160,28 @@ class MedicationsController extends ChangeNotifier {
     return _doseAction(
       () => _repository.snooze(logId, snoozedUntil),
       success: 'Dose snoozed.',
-      afterSuccess: () => syncMedicationReminders(),
+      afterSuccess: () => NotificationHubController.instance.syncNow(
+        reason: 'medication-snooze',
+      ),
+    );
+  }
+
+  Future<bool> logPrnDose(
+    int medicationId, {
+    String? doseTakenAmount,
+    String notes = '',
+  }) {
+    return _doseAction(
+      () => _repository.logPrnDose(
+        medicationId,
+        takenAt: DateTime.now(),
+        doseTakenAmount: doseTakenAmount,
+        notes: notes,
+      ),
+      success: 'As-needed dose logged.',
+      afterSuccess: () => NotificationHubController.instance.syncNow(
+        reason: 'medication-prn-dose',
+      ),
     );
   }
 
@@ -139,30 +190,6 @@ class MedicationsController extends ChangeNotifier {
       if (item.id == id) return item;
     }
     return null;
-  }
-
-  Future<bool> syncMedicationReminders() async {
-    state = state.copyWith(reminderSyncInProgress: true, clearError: true);
-    notifyListeners();
-    try {
-      final payload = _cachedReminderSync.items.isNotEmpty
-          ? _cachedReminderSync
-          : await _repository.getReminderSync();
-      await _reminderSyncer(_plansFromPayload(payload));
-      state = state.copyWith(reminderSyncInProgress: false);
-      notifyListeners();
-      return true;
-    } catch (e) {
-      state = state.copyWith(
-        reminderSyncInProgress: false,
-        errorMessage: NetworkErrorMapper.toMessage(
-          e,
-          fallback: 'Medication saved, but reminder sync failed.',
-        ),
-      );
-      notifyListeners();
-      return false;
-    }
   }
 
   Future<bool> _save(
@@ -221,6 +248,7 @@ class MedicationsController extends ChangeNotifier {
       state = state.copyWith(
         isSaving: false,
         todayPlan: _upsertDoseLog(state.todayPlan, log),
+        lastDoseAction: log,
         successMessage: success,
         clearError: true,
       );
@@ -233,6 +261,12 @@ class MedicationsController extends ChangeNotifier {
       });
       if (afterSuccess != null) {
         unawaited(afterSuccess());
+      } else {
+        unawaited(
+          NotificationHubController.instance.syncNow(
+            reason: 'medication-dose-action',
+          ),
+        );
       }
       unawaited(
         _refreshOverview(
@@ -255,34 +289,6 @@ class MedicationsController extends ChangeNotifier {
     }
   }
 
-  List<ChronicMedicationReminderPlan> _plansFromPayload(
-    ReminderSyncPayload payload,
-  ) {
-    final plans = <ChronicMedicationReminderPlan>[];
-    for (final item in payload.items) {
-      for (final time in item.scheduledTimes) {
-        final parts = time.split(':');
-        if (parts.length < 2) continue;
-        final hour = int.tryParse(parts[0]);
-        final minute = int.tryParse(parts[1]);
-        if (hour == null || minute == null) continue;
-        plans.add(
-          ChronicMedicationReminderPlan(
-            scheduleId: item.scheduleId,
-            medicationName: item.displayName,
-            conditionName: item.linkedConditionName ?? 'Medication plan',
-            dosage: '',
-            hour: hour,
-            minute: minute,
-            leadMinutes: item.reminderLeadMinutes,
-            recurrenceDays: item.daysOfWeek,
-          ),
-        );
-      }
-    }
-    return plans;
-  }
-
   Future<void> _refreshOverview({
     required bool showLoading,
     required String fallbackError,
@@ -298,12 +304,18 @@ class MedicationsController extends ChangeNotifier {
     }
     try {
       final overview = await _repository.getOverview();
-      _cachedReminderSync = overview.reminderSync;
       state = state.copyWith(
         isLoading: false,
         medications: overview.medications,
         todayPlan: overview.todayPlan,
         overallAdherence: overview.overallAdherence,
+        todayAdherence: overview.todayAdherence,
+        nextDose: overview.nextDose,
+        clearNextDose: overview.nextDose == null,
+        streak: overview.streak,
+        shortcutCounts: overview.shortcutCounts,
+        motivationStrip: overview.motivationStrip,
+        clearMotivationStrip: overview.motivationStrip == null,
         clearError: true,
       );
     } catch (e) {
@@ -321,7 +333,7 @@ class MedicationsController extends ChangeNotifier {
         showLoading: false,
         fallbackError: 'Medication saved, but some data is still refreshing.',
       ),
-      syncMedicationReminders(),
+      NotificationHubController.instance.syncNow(reason: 'medication-mutation'),
     ]);
   }
 

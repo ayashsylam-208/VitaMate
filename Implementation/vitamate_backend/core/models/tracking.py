@@ -32,8 +32,15 @@ class Exercise(models.Model):
 class ActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     exercise = models.ForeignKey(Exercise, on_delete=models.CASCADE)
+    source_session = models.OneToOneField(
+        "ActivitySession",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="final_activity_log",
+    )
     duration_minutes = models.IntegerField()
-    date = models.DateField(auto_now_add=True)
+    date = models.DateField(default=timezone.localdate)
     distance_km = models.FloatField(default=0.0, help_text="Distance covered")
     avg_speed_kmh = models.FloatField(default=0.0, help_text="Average speed")
 
@@ -145,9 +152,16 @@ class ActivitySession(models.Model):
 
 class StepLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    date = models.DateField(auto_now_add=True)
+    date = models.DateField(default=timezone.localdate)
+    timezone = models.CharField(max_length=64, blank=True, default="")
+    installation_id = models.CharField(max_length=128, blank=True, default="")
+    measured_at = models.DateTimeField(null=True, blank=True)
+    sensor_steps = models.PositiveIntegerField(default=0)
+    manual_adjustment_steps = models.IntegerField(default=0)
+    imported_adjustment_steps = models.IntegerField(default=0)
     steps_count = models.IntegerField(default=0)
     distance_km = models.FloatField(default=0.0)
+    sync_version = models.PositiveIntegerField(default=0)
 
     class Meta:
         unique_together = ("user", "date")
@@ -169,7 +183,7 @@ class SleepLog(models.Model):
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
     quality = models.CharField(max_length=20, choices=QUALITY_CHOICES)
-    date = models.DateField(auto_now_add=True)
+    date = models.DateField(default=timezone.localdate)
 
     @property
     def duration_hours(self):

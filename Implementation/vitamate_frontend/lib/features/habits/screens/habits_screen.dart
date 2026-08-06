@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/routing/routes.dart';
+import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
 import '../models/unhealthy_habit.dart';
+import '../presentation/mappers/habit_ui_mapper.dart';
+import '../presentation/widgets/habit_overview_card.dart';
+import '../presentation/widgets/habits_today_summary.dart';
 import '../state/unhealthy_habits_controller.dart';
 
 class HabitsScreen extends StatefulWidget {
@@ -14,6 +19,7 @@ class HabitsScreen extends StatefulWidget {
 
 class _HabitsScreenState extends State<HabitsScreen> {
   late final UnhealthyHabitsController _controller;
+  final Set<String> _expandedCards = <String>{};
 
   @override
   void initState() {
@@ -38,12 +44,16 @@ class _HabitsScreenState extends State<HabitsScreen> {
   @override
   Widget build(BuildContext context) {
     final overview = _controller.overview;
+    final summary = HabitUiMapper.mapSummary(overview);
+    final habits = overview.habits.map(HabitUiMapper.mapHabit).toList();
+
     return Scaffold(
       backgroundColor: VitaMateTheme.background,
       appBar: AppBar(
-        title: const Text('Habit Support'),
+        title: const Text('Habits'),
         actions: [
           IconButton(
+            tooltip: 'Refresh habits',
             onPressed: _controller.loading ? null : () => _controller.load(),
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -53,26 +63,32 @@ class _HabitsScreenState extends State<HabitsScreen> {
       body: RefreshIndicator(
         onRefresh: () => _controller.load(),
         child: ListView(
+          key: const ValueKey(AppTestKeys.habitsScreen),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
           children: [
-            _HeaderCard(
-              summary: overview.summary,
-              supportMessage: overview.supportMessage,
-            ),
+            const _ScreenHeader(),
+            const SizedBox(height: 14),
+            HabitsTodaySummary(summary: summary),
             if (_controller.error != null) ...[
               const SizedBox(height: 12),
               _ErrorCard(message: _controller.error!),
             ],
             const SizedBox(height: 14),
-            for (final habit in overview.habits) ...[
-              _HabitCard(
-                habit: habit,
+            for (final model in habits) ...[
+              HabitOverviewCard(
+                model: model,
+                expanded: _expandedCards.contains(model.key),
                 busy: _controller.saving,
-                onSetup: () => _openSetup(habit),
-                onLog: () => _openLog(habit),
+                onToggleExpanded: () => _toggleExpanded(model.key),
+                onPrimaryAction: () => _handlePrimaryAction(model),
+                onEditPlan: () => _openSetup(model.habit),
+                onPauseOrResume: () => _togglePaused(model.habit),
               ),
               const SizedBox(height: 12),
             ],
+            const SizedBox(height: 2),
+            const _WeeklyProgressShortcut(),
+            const SizedBox(height: 12),
             const _SafetyCard(),
           ],
         ),
@@ -80,285 +96,343 @@ class _HabitsScreenState extends State<HabitsScreen> {
     );
   }
 
+  void _toggleExpanded(String key) {
+    setState(() {
+      if (_expandedCards.contains(key)) {
+        _expandedCards.remove(key);
+      } else {
+        _expandedCards.add(key);
+      }
+    });
+  }
+
+  void _expandOnly(String key) {
+    setState(() => _expandedCards.add(key));
+  }
+
+  Future<void> _handlePrimaryAction(HabitCardViewModel model) async {
+    switch (model.primaryAction) {
+      case HabitPrimaryActionType.setup:
+        await _openSetup(model.habit);
+        return;
+      case HabitPrimaryActionType.checkIn:
+        await _openCheckIn(model.habit);
+        return;
+      case HabitPrimaryActionType.log:
+        await _openLog(model.habit);
+        return;
+      case HabitPrimaryActionType.resume:
+        await _togglePaused(model.habit);
+        return;
+      case HabitPrimaryActionType.viewDetails:
+      case HabitPrimaryActionType.reviewToday:
+      case HabitPrimaryActionType.viewProgress:
+      case HabitPrimaryActionType.completeEntry:
+        _expandOnly(model.key);
+        return;
+    }
+  }
+
   Future<void> _openSetup(UnhealthyHabit habit) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _SetupHabitSheet(
+      builder: (context) => _SetupHabitWizard(
         habit: habit,
         saving: _controller.saving,
-        onSave: ({
-          required String goalType,
-          required double initialQuantity,
-          required String unit,
-          required String commonTrigger,
-          required String cutoffTime,
-          required String reminderTime,
-        }) async {
-          final saved = await _controller.setupHabit(
-            habitType: habit.habitType,
-            goalType: goalType,
-            initialQuantity: initialQuantity,
-            unit: unit,
-            commonTrigger: commonTrigger,
-            cutoffTime: cutoffTime,
-            reminderTime: reminderTime,
-          );
-          if (saved != null && context.mounted) {
-            Navigator.pop(context);
-          }
-        },
+        onSave:
+            ({
+              required String goalType,
+              required double initialQuantity,
+              required String unit,
+              required String commonTrigger,
+              required String cutoffTime,
+              required String reminderTime,
+            }) async {
+              final saved = await _controller.setupHabit(
+                habitType: habit.habitType,
+                goalType: goalType,
+                initialQuantity: initialQuantity,
+                unit: unit,
+                commonTrigger: commonTrigger,
+                cutoffTime: cutoffTime,
+                reminderTime: reminderTime,
+              );
+              if (saved != null && context.mounted) {
+                Navigator.pop(context);
+                _showSnack('Plan started');
+              }
+            },
+      ),
+    );
+  }
+
+  Future<void> _openCheckIn(UnhealthyHabit habit) async {
+    if (!habit.isActive) {
+      return;
+    }
+    final action = await showModalBottomSheet<_CheckInAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _CheckInSheet(habit: habit),
+    );
+    if (!mounted || action == null) {
+      return;
+    }
+    if (action == _CheckInAction.noUse) {
+      final confirmed = await _confirmNoUse(habit);
+      if (confirmed != true || !mounted) {
+        return;
+      }
+      final ok = await _controller.dailyCheckIn(habit: habit, used: false);
+      if (ok && mounted) {
+        _showSnack(_noUseSavedMessage(habit));
+      }
+      return;
+    }
+    await _openLog(habit);
+  }
+
+  Future<bool?> _confirmNoUse(UnhealthyHabit habit) {
+    final isSmoking = habit.habitType == 'smoking';
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm today\'s check-in?'),
+        content: Text(
+          isSmoking
+              ? 'You are confirming that you stayed smoke-free today.'
+              : 'You are confirming that you avoided this habit today.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm'),
+          ),
+        ],
       ),
     );
   }
 
   Future<void> _openLog(UnhealthyHabit habit) async {
-    await showModalBottomSheet<void>(
+    if (habit.habitType == 'caffeine') {
+      await _openCaffeineLog(habit);
+      return;
+    }
+    if (habit.habitType == 'fast_food') {
+      await _openFastFoodLog(habit);
+      return;
+    }
+    await _openSmokingLog(habit);
+  }
+
+  Future<void> _openSmokingLog(UnhealthyHabit habit) async {
+    final payload = await showModalBottomSheet<_SmokingLogPayload>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _LogHabitSheet(
-        habit: habit,
-        saving: _controller.saving,
-        onSave: ({
-          required double quantity,
-          required String unit,
-          required String trigger,
-          required String mood,
-          required bool syncToTracker,
-          required double caffeineMg,
-          required double caloriesKcal,
-          required String foodName,
-          required bool healthyReplacement,
-        }) async {
-          final ok = await _controller.logHabit(
-            habit: habit,
-            quantity: quantity,
-            unit: unit,
-            trigger: trigger,
-            mood: mood,
-            syncToTracker: syncToTracker,
-            caffeineMg: caffeineMg,
-            caloriesKcal: caloriesKcal,
-            foodName: foodName,
-            healthyReplacement: healthyReplacement,
-          );
-          if (ok && context.mounted) {
-            Navigator.pop(context);
-          }
-        },
-      ),
+      builder: (context) => const _SmokingLogSheet(),
     );
+    if (payload == null || !mounted) {
+      return;
+    }
+    final ok = await _controller.logHabit(
+      habit: habit,
+      quantity: payload.cigarettes,
+      unit: 'cigarettes',
+      trigger: payload.ledBy,
+      mood: payload.mood,
+      syncToTracker: false,
+      loggedAt: payload.loggedAt,
+    );
+    if (ok && mounted) {
+      _showSnack('Smoking check-in saved');
+    }
   }
-}
 
-class _HeaderCard extends StatelessWidget {
-  const _HeaderCard({required this.summary, required this.supportMessage});
+  Future<void> _openCaffeineLog(UnhealthyHabit habit) async {
+    final payload = await showModalBottomSheet<_CaffeineLogPayload>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _CaffeineLogSheet(),
+    );
+    if (payload == null || !mounted) {
+      return;
+    }
+    final ok = await _controller.logHabit(
+      habit: habit,
+      quantity: payload.servings.toDouble(),
+      unit: 'servings',
+      trigger: payload.ledBy,
+      mood: '',
+      syncToTracker: payload.addToHydration,
+      caffeineMg: payload.caffeineMg,
+      caloriesKcal: 0,
+      foodName: payload.drinkLabel,
+      mealType: 'drink',
+      loggedAt: payload.loggedAt,
+    );
+    if (ok && mounted) {
+      _showSnack('Added to your Caffeine habit');
+    }
+  }
 
-  final UnhealthyHabitSummary summary;
-  final String supportMessage;
+  Future<void> _openFastFoodLog(UnhealthyHabit habit) async {
+    final payload = await showModalBottomSheet<_FastFoodLogPayload>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _FastFoodLogSheet(),
+    );
+    if (payload == null || !mounted) {
+      return;
+    }
+    final ok = await _controller.logHabit(
+      habit: habit,
+      quantity: 1,
+      unit: 'meals',
+      trigger: payload.ledBy,
+      mood: '',
+      syncToTracker: payload.addToNutrition,
+      caloriesKcal: payload.caloriesKcal,
+      foodName: payload.foodName,
+      healthyReplacement: payload.healthierChoice,
+      mealType: payload.mealType,
+      loggedAt: payload.loggedAt,
+    );
+    if (ok && mounted) {
+      _showSnack('Added to your Fast Food habit');
+    }
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return _Surface(
-      gradient: const LinearGradient(
-        colors: [Color(0xFFF0E5FF), Color(0xFFFFF5FA)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.self_improvement_rounded, color: VitaMateTheme.primary),
-              SizedBox(width: 8),
-              Text(
-                'Unhealthy habit management',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: VitaMateTheme.primaryDeep,
-                ),
-              ),
-            ],
+  Future<void> _togglePaused(UnhealthyHabit habit) async {
+    if (habit.id == null) {
+      return;
+    }
+    if (habit.isActive) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Pause this plan?'),
+          content: const Text(
+            'Reminders and daily tracking will stop until you continue it.',
           ),
-          const SizedBox(height: 12),
-          Text(
-            supportMessage.isEmpty
-                ? 'Track triggers, reduce gradually, and keep the plan supportive.'
-                : supportMessage,
-            style: const TextStyle(
-              color: VitaMateTheme.textMuted,
-              fontWeight: FontWeight.w700,
-              height: 1.35,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Not now'),
             ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _Chip(label: '${summary.activeCount} active'),
-              _Chip(label: '${summary.logsToday} logs today'),
-              _Chip(label: '+${summary.pointsToday} pts'),
-              if (summary.relapsesToday > 0)
-                _Chip(
-                  label: '${summary.relapsesToday} needs review',
-                  color: VitaMateTheme.danger,
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HabitCard extends StatelessWidget {
-  const _HabitCard({
-    required this.habit,
-    required this.busy,
-    required this.onSetup,
-    required this.onLog,
-  });
-
-  final UnhealthyHabit habit;
-  final bool busy;
-  final VoidCallback onSetup;
-  final VoidCallback onLog;
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = habit.progress;
-    final limit = habit.habitType == 'fast_food'
-        ? progress.weeklyLimit
-        : progress.dailyLimit;
-    final value = habit.habitType == 'fast_food'
-        ? progress.weekValue
-        : progress.todayValue;
-    final unit = habit.baseline?.unit ?? _defaultUnit(habit.habitType);
-
-    return _Surface(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _HabitIcon(type: habit.habitType),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      habit.label,
-                      style: const TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
-                        color: VitaMateTheme.primaryDeep,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      habit.isSetup
-                          ? habit.plan?.planStage ?? 'Active plan'
-                          : 'Set a baseline and reduction plan',
-                      style: const TextStyle(
-                        color: VitaMateTheme.textMuted,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _ProgressBadge(value: habit.isSetup ? progress.adherencePercent : 0),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricBox(
-                  label: habit.habitType == 'fast_food' ? 'This week' : 'Today',
-                  value: limit == null
-                      ? '${_fmt(value)} $unit'
-                      : '${_fmt(value)} / ${_fmt(limit)} $unit',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _MetricBox(
-                  label: 'Improvement',
-                  value: '${progress.improvementPercent}%',
-                ),
-              ),
-            ],
-          ),
-          if (progress.supportMessage.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              progress.supportMessage,
-              style: const TextStyle(
-                color: VitaMateTheme.textMuted,
-                fontWeight: FontWeight.w700,
-                height: 1.35,
-              ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Pause this plan'),
             ),
           ],
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (progress.topTrigger.isNotEmpty)
-                _Chip(label: 'Trigger: ${progress.topTrigger}'),
-              if (progress.riskyHour != null)
-                _Chip(label: 'Risk ${progress.riskyHour}:00'),
-              if (progress.relapseCount > 0)
-                _Chip(
-                  label: '${progress.relapseCount} review',
-                  color: VitaMateTheme.danger,
-                ),
-              if (habit.reminders.isNotEmpty)
-                _Chip(label: '${habit.reminders.length} reminder'),
-            ],
+        ),
+      );
+      if (confirmed != true) {
+        return;
+      }
+    }
+    final ok = await _controller.togglePaused(habit);
+    if (ok && mounted) {
+      _showSnack(habit.isActive ? 'Plan paused' : 'Plan continued');
+    }
+  }
+
+  String _noUseSavedMessage(UnhealthyHabit habit) {
+    if (habit.habitType == 'smoking') {
+      return 'Smoke-free check-in saved';
+    }
+    if (habit.habitType == 'fast_food') {
+      return 'Fast-food-free check-in saved';
+    }
+    return 'Check-in saved';
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+    );
+  }
+}
+
+class _ScreenHeader extends StatelessWidget {
+  const _ScreenHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Habits',
+          style: TextStyle(
+            color: VitaMateTheme.primaryDeep,
+            fontSize: 30,
+            fontWeight: FontWeight.w900,
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: busy ? null : onSetup,
-                  icon: const Icon(Icons.tune_rounded),
-                  label: Text(habit.isSetup ? 'Adjust plan' : 'Set up'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: busy || !habit.isSetup ? null : onLog,
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Log'),
-                ),
-              ),
-            ],
+        ),
+        SizedBox(height: 6),
+        Text(
+          'Small steps, healthier days',
+          style: TextStyle(
+            color: VitaMateTheme.textMuted,
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _CheckInAction { noUse, used }
+
+class _CheckInSheet extends StatelessWidget {
+  const _CheckInSheet({required this.habit});
+
+  final UnhealthyHabit habit;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSmoking = habit.habitType == 'smoking';
+    return _SheetShell(
+      title: 'How was today?',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ActionTile(
+            icon: Icons.check_circle_outline_rounded,
+            title: isSmoking
+                ? 'I stayed smoke-free'
+                : 'I avoided this habit today',
+            subtitle: 'This will be confirmed before saving.',
+            onTap: () => Navigator.pop(context, _CheckInAction.noUse),
+          ),
+          const SizedBox(height: 10),
+          _ActionTile(
+            icon: Icons.edit_note_rounded,
+            title: isSmoking ? 'I smoked' : 'I used this habit',
+            subtitle: 'Log what happened so your plan stays accurate.',
+            onTap: () => Navigator.pop(context, _CheckInAction.used),
           ),
         ],
       ),
     );
   }
-
-  static String _defaultUnit(String type) {
-    if (type == 'caffeine') return 'mg';
-    if (type == 'fast_food') return 'meals';
-    return 'cigarettes';
-  }
 }
 
-class _SetupHabitSheet extends StatefulWidget {
-  const _SetupHabitSheet({
+class _SetupHabitWizard extends StatefulWidget {
+  const _SetupHabitWizard({
     required this.habit,
     required this.saving,
     required this.onSave,
@@ -373,283 +447,943 @@ class _SetupHabitSheet extends StatefulWidget {
     required String commonTrigger,
     required String cutoffTime,
     required String reminderTime,
-  }) onSave;
+  })
+  onSave;
 
   @override
-  State<_SetupHabitSheet> createState() => _SetupHabitSheetState();
+  State<_SetupHabitWizard> createState() => _SetupHabitWizardState();
 }
 
-class _SetupHabitSheetState extends State<_SetupHabitSheet> {
-  late final TextEditingController _initial;
-  late final TextEditingController _trigger;
-  late final TextEditingController _reminder;
-  late final TextEditingController _cutoff;
-  String _goalType = 'reduce';
+class _SetupHabitWizardState extends State<_SetupHabitWizard> {
+  final TextEditingController _currentAmount = TextEditingController();
+  final TextEditingController _whatLedToIt = TextEditingController();
+  final TextEditingController _cutoffTime = TextEditingController();
+  final TextEditingController _reminderTime = TextEditingController(
+    text: '18:00',
+  );
+  int _step = 0;
+  String _strategy = 'reduce';
 
   @override
   void initState() {
     super.initState();
-    _goalType = widget.habit.isSetup && widget.habit.goalType != 'quit'
-        ? 'reduce'
-        : 'quit';
-    _initial = TextEditingController(
-      text: widget.habit.baseline?.initialQuantity.toString() ?? '',
-    );
-    _trigger = TextEditingController(text: widget.habit.baseline?.commonTrigger ?? '');
-    _reminder = TextEditingController(
-      text: widget.habit.plan?.reminderTime.isNotEmpty == true
-          ? widget.habit.plan!.reminderTime
-          : '18:00',
-    );
-    _cutoff = TextEditingController(
-      text: widget.habit.plan?.cutoffTime.isNotEmpty == true
-          ? widget.habit.plan!.cutoffTime
-          : (widget.habit.habitType == 'caffeine' ? '18:00' : ''),
-    );
+    final baseline = widget.habit.baseline;
+    final plan = widget.habit.plan;
+    _currentAmount.text = baseline?.initialQuantity.toString() ?? '';
+    _whatLedToIt.text = baseline?.commonTrigger ?? '';
+    _cutoffTime.text = plan?.cutoffTime.isNotEmpty == true
+        ? plan!.cutoffTime
+        : (widget.habit.habitType == 'caffeine' ? '18:00' : '');
+    _reminderTime.text = plan?.reminderTime.isNotEmpty == true
+        ? plan!.reminderTime
+        : _defaultReminderTime(widget.habit.habitType);
+    _strategy = widget.habit.goalType == 'quit' ? 'quit' : 'reduce';
   }
 
   @override
   void dispose() {
-    _initial.dispose();
-    _trigger.dispose();
-    _reminder.dispose();
-    _cutoff.dispose();
+    _currentAmount.dispose();
+    _whatLedToIt.dispose();
+    _cutoffTime.dispose();
+    _reminderTime.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final unit = _HabitCard._defaultUnit(widget.habit.habitType);
-    final isFastFood = widget.habit.habitType == 'fast_food';
     return _SheetShell(
-      title: '${widget.habit.label} plan',
+      title:
+          'Set up ${HabitUiText.habitTitle(widget.habit.habitType, widget.habit.label)}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Segmented(
-            value: _goalType,
-            options: const {'quit': 'Quit', 'reduce': 'Reduce'},
-            onChanged: (value) => setState(() => _goalType = value),
+          _StepHeader(step: _step + 1, total: 5, title: _stepTitle),
+          const SizedBox(height: 18),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            child: KeyedSubtree(key: ValueKey(_step), child: _stepBody()),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              if (_step > 0)
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: widget.saving
+                        ? null
+                        : () => setState(() => _step--),
+                    child: const Text('Back'),
+                  ),
+                ),
+              if (_step > 0) const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: widget.saving ? null : _nextOrSave,
+                  child: Text(_step == 4 ? 'Start plan' : 'Continue'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String get _stepTitle {
+    switch (_step) {
+      case 0:
+        return 'Your current habit';
+      case 1:
+        return 'Choose your goal';
+      case 2:
+        return 'Set your plan';
+      case 3:
+        return 'Preview';
+      default:
+        return 'Start plan';
+    }
+  }
+
+  Widget _stepBody() {
+    switch (_step) {
+      case 0:
+        return _currentHabitStep();
+      case 1:
+        return _goalStep();
+      case 2:
+        return _planStep();
+      case 3:
+      case 4:
+        return _previewStep(finalStep: _step == 4);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _currentHabitStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Field(
+          controller: _currentAmount,
+          label: _currentQuestion(widget.habit.habitType),
+          suffix: _setupFieldSuffix(widget.habit.habitType),
+          keyboardType: TextInputType.number,
+        ),
+        const SizedBox(height: 12),
+        _Field(controller: _whatLedToIt, label: 'What usually leads to it?'),
+      ],
+    );
+  }
+
+  Widget _goalStep() {
+    return _ChoicePills(
+      value: _strategy,
+      options: _strategyOptions(widget.habit.habitType),
+      onChanged: (value) => setState(() => _strategy = value),
+    );
+  }
+
+  Widget _planStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.habit.habitType == 'caffeine') ...[
           _Field(
-            controller: _initial,
-            label: isFastFood
-                ? 'How many fast-food meals per week?'
-                : widget.habit.habitType == 'caffeine'
-                    ? 'How much caffeine per day?'
-                    : 'How many cigarettes per day?',
-            suffix: unit,
+            controller: _cutoffTime,
+            label: 'Avoid caffeine after',
+            suffix: 'HH:MM',
+          ),
+          const SizedBox(height: 12),
+        ],
+        _Field(
+          controller: _reminderTime,
+          label: 'Reminder time',
+          suffix: 'HH:MM',
+        ),
+        const SizedBox(height: 12),
+        const _InfoBox(
+          text:
+              'VitaMate will generate the daily or weekly targets from your starting point and refresh the plan from the backend.',
+        ),
+      ],
+    );
+  }
+
+  Widget _previewStep({required bool finalStep}) {
+    return _PlanPreviewCard(
+      title:
+          'Your ${HabitUiText.habitTitle(widget.habit.habitType, widget.habit.label)} plan',
+      items: [
+        'Starting point: ${_currentAmount.text.trim()} ${_setupFieldSuffix(widget.habit.habitType)}',
+        _previewGoalText(widget.habit.habitType, _strategy),
+        if (_cutoffTime.text.trim().isNotEmpty)
+          'Avoid after ${_cutoffTime.text.trim()}',
+        if (_reminderTime.text.trim().isNotEmpty)
+          'Reminder at ${_reminderTime.text.trim()}',
+        'Your progress will be reviewed daily',
+      ],
+      footer: finalStep
+          ? 'This is one atomic save. If the request fails, no partial plan is shown.'
+          : 'Review this before continuing to the final step.',
+    );
+  }
+
+  Future<void> _nextOrSave() async {
+    if (_step == 0 && (double.tryParse(_currentAmount.text.trim()) ?? 0) <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your current amount first.')),
+      );
+      return;
+    }
+    if (_step < 4) {
+      setState(() => _step++);
+      return;
+    }
+    await widget.onSave(
+      goalType: _strategy == 'quit' ? 'quit' : 'reduce',
+      initialQuantity: double.tryParse(_currentAmount.text.trim()) ?? 0,
+      unit: _setupPayloadUnit(widget.habit.habitType),
+      commonTrigger: _whatLedToIt.text.trim(),
+      cutoffTime: _cutoffTime.text.trim(),
+      reminderTime: _reminderTime.text.trim(),
+    );
+  }
+
+  static String _currentQuestion(String habitType) {
+    if (habitType == 'smoking') {
+      return 'How many cigarettes do you usually smoke per day?';
+    }
+    if (habitType == 'caffeine') {
+      return 'How much caffeine do you usually have per day?';
+    }
+    return 'How often do you usually eat fast food?';
+  }
+
+  static Map<String, String> _strategyOptions(String habitType) {
+    if (habitType == 'smoking') {
+      return const {
+        'quit': 'Stay smoke-free',
+        'reduce': 'Reduce gradually',
+        'limit': 'Stay within a daily goal',
+      };
+    }
+    if (habitType == 'caffeine') {
+      return const {
+        'reduce': 'Reduce daily caffeine',
+        'cutoff': 'Avoid caffeine later',
+        'quit': 'Stay caffeine-free',
+      };
+    }
+    return const {
+      'quit': 'Avoid fast food',
+      'reduce': 'Reduce weekly meals',
+      'limit': 'Stay within a weekly goal',
+    };
+  }
+
+  static String _previewGoalText(String habitType, String strategy) {
+    if (habitType == 'smoking' && strategy == 'quit') {
+      return 'Goal: stay smoke-free';
+    }
+    if (habitType == 'caffeine' && strategy == 'cutoff') {
+      return 'Goal: avoid caffeine later in the day';
+    }
+    if (habitType == 'fast_food' && strategy == 'quit') {
+      return 'Goal: avoid fast food';
+    }
+    return 'Goal: reduce gradually';
+  }
+}
+
+class _SmokingLogPayload {
+  const _SmokingLogPayload({
+    required this.cigarettes,
+    required this.ledBy,
+    required this.mood,
+    required this.loggedAt,
+  });
+
+  final double cigarettes;
+  final String ledBy;
+  final String mood;
+  final DateTime loggedAt;
+}
+
+class _SmokingLogSheet extends StatefulWidget {
+  const _SmokingLogSheet();
+
+  @override
+  State<_SmokingLogSheet> createState() => _SmokingLogSheetState();
+}
+
+class _SmokingLogSheetState extends State<_SmokingLogSheet> {
+  final TextEditingController _cigarettes = TextEditingController(text: '1');
+  final TextEditingController _ledBy = TextEditingController();
+  final TextEditingController _mood = TextEditingController();
+
+  @override
+  void dispose() {
+    _cigarettes.dispose();
+    _ledBy.dispose();
+    _mood.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetShell(
+      title: 'Log smoking',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Field(
+            controller: _cigarettes,
+            label: 'Cigarettes',
             keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: VitaMateTheme.softSurface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: VitaMateTheme.border),
+          _Field(controller: _ledBy, label: 'What led to it?'),
+          const SizedBox(height: 12),
+          _Field(controller: _mood, label: 'How did you feel?'),
+          const SizedBox(height: 18),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              context,
+              _SmokingLogPayload(
+                cigarettes: double.tryParse(_cigarettes.text.trim()) ?? 1,
+                ledBy: _ledBy.text.trim(),
+                mood: _mood.text.trim(),
+                loggedAt: DateTime.now(),
+              ),
             ),
-            child: Text(
-              _goalType == 'quit'
-                  ? 'VitaMate will generate a quit plan from this amount. You do not need to enter limits.'
-                  : 'VitaMate will generate a gradual reduction plan from this amount. You do not need to enter limits.',
+            child: const Text('Save check-in'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CaffeineLogPayload {
+  const _CaffeineLogPayload({
+    required this.drinkLabel,
+    required this.servings,
+    required this.caffeineMg,
+    required this.addToHydration,
+    required this.ledBy,
+    required this.loggedAt,
+  });
+
+  final String drinkLabel;
+  final int servings;
+  final double caffeineMg;
+  final bool addToHydration;
+  final String ledBy;
+  final DateTime loggedAt;
+}
+
+class _CaffeineLogSheet extends StatefulWidget {
+  const _CaffeineLogSheet();
+
+  @override
+  State<_CaffeineLogSheet> createState() => _CaffeineLogSheetState();
+}
+
+class _CaffeineLogSheetState extends State<_CaffeineLogSheet> {
+  final TextEditingController _customMg = TextEditingController();
+  final TextEditingController _ledBy = TextEditingController();
+  String _drinkType = 'Coffee';
+  String _size = 'Medium';
+  int _servings = 1;
+  bool _editMg = false;
+  bool _addToHydration = true;
+
+  @override
+  void dispose() {
+    _customMg.dispose();
+    _ledBy.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final estimatedMg = _estimatedCaffeineMg;
+    if (!_editMg) {
+      _customMg.text = estimatedMg.toStringAsFixed(0);
+    }
+    return _SheetShell(
+      title: 'Log a caffeinated drink',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionLabel('What did you drink?'),
+          _ChoicePills(
+            value: _drinkType,
+            options: const {
+              'Coffee': 'Coffee',
+              'Tea': 'Tea',
+              'Energy drink': 'Energy drink',
+              'Soft drink': 'Soft drink',
+              'Other': 'Other',
+            },
+            onChanged: (value) => setState(() => _drinkType = value),
+          ),
+          const SizedBox(height: 14),
+          _CounterRow(
+            label: 'Servings',
+            value: _servings,
+            onChanged: (value) => setState(() => _servings = value),
+          ),
+          const SizedBox(height: 14),
+          const _SectionLabel('Size'),
+          _ChoicePills(
+            value: _size,
+            options: const {
+              'Small': 'Small',
+              'Medium': 'Medium',
+              'Large': 'Large',
+              'Custom': 'Custom',
+            },
+            onChanged: (value) => setState(() => _size = value),
+          ),
+          const SizedBox(height: 14),
+          _Field(
+            controller: _customMg,
+            label: 'Estimated caffeine',
+            suffix: 'mg',
+            keyboardType: TextInputType.number,
+            enabled: _editMg,
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() => _editMg = !_editMg),
+              child: Text(_editMg ? 'Use estimate' : 'Edit caffeine amount'),
+            ),
+          ),
+          _Field(controller: _ledBy, label: 'What led to it?'),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            value: _addToHydration,
+            contentPadding: EdgeInsets.zero,
+            activeThumbColor: VitaMateTheme.primary,
+            title: const Text(
+              'Also add to Hydration',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            onChanged: (value) => setState(() => _addToHydration = value),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              context,
+              _CaffeineLogPayload(
+                drinkLabel: _drinkType,
+                servings: _servings,
+                caffeineMg:
+                    double.tryParse(_customMg.text.trim()) ?? estimatedMg,
+                addToHydration: _addToHydration,
+                ledBy: _ledBy.text.trim(),
+                loggedAt: DateTime.now(),
+              ),
+            ),
+            child: const Text('Save drink'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double get _estimatedCaffeineMg {
+    final base = switch (_drinkType) {
+      'Tea' => 45.0,
+      'Energy drink' => 80.0,
+      'Soft drink' => 35.0,
+      'Other' => 60.0,
+      _ => 95.0,
+    };
+    final sizeFactor = switch (_size) {
+      'Small' => 0.75,
+      'Large' => 1.35,
+      'Custom' => 1.0,
+      _ => 1.0,
+    };
+    return base * sizeFactor * _servings;
+  }
+}
+
+class _FastFoodLogPayload {
+  const _FastFoodLogPayload({
+    required this.mealType,
+    required this.foodName,
+    required this.caloriesKcal,
+    required this.ledBy,
+    required this.addToNutrition,
+    required this.healthierChoice,
+    required this.loggedAt,
+  });
+
+  final String mealType;
+  final String foodName;
+  final double caloriesKcal;
+  final String ledBy;
+  final bool addToNutrition;
+  final bool healthierChoice;
+  final DateTime loggedAt;
+}
+
+class _FastFoodLogSheet extends StatefulWidget {
+  const _FastFoodLogSheet();
+
+  @override
+  State<_FastFoodLogSheet> createState() => _FastFoodLogSheetState();
+}
+
+class _FastFoodLogSheetState extends State<_FastFoodLogSheet> {
+  final TextEditingController _foodName = TextEditingController(
+    text: 'Fast food meal',
+  );
+  final TextEditingController _calories = TextEditingController();
+  final TextEditingController _ledBy = TextEditingController();
+  String _mealType = 'lunch';
+  String _when = 'now';
+  bool _addToNutrition = true;
+  bool _healthierChoice = false;
+
+  @override
+  void dispose() {
+    _foodName.dispose();
+    _calories.dispose();
+    _ledBy.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetShell(
+      title: 'Log fast food',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionLabel('Meal type'),
+          _ChoicePills(
+            value: _mealType,
+            options: const {
+              'breakfast': 'Breakfast',
+              'lunch': 'Lunch',
+              'dinner': 'Dinner',
+              'snack': 'Snack',
+            },
+            onChanged: (value) => setState(() => _mealType = value),
+          ),
+          const SizedBox(height: 14),
+          _Field(controller: _foodName, label: 'What did you have?'),
+          const SizedBox(height: 12),
+          _Field(
+            controller: _calories,
+            label: 'Calories',
+            suffix: 'kcal',
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 14),
+          const _SectionLabel('When?'),
+          _ChoicePills(
+            value: _when,
+            options: const {'now': 'Now', 'earlier': 'Earlier today'},
+            onChanged: (value) => setState(() => _when = value),
+          ),
+          const SizedBox(height: 12),
+          _Field(controller: _ledBy, label: 'What led to it?'),
+          CheckboxListTile(
+            value: _healthierChoice,
+            contentPadding: EdgeInsets.zero,
+            activeColor: VitaMateTheme.primary,
+            title: const Text(
+              'I chose a healthier option',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            onChanged: (value) =>
+                setState(() => _healthierChoice = value ?? false),
+          ),
+          SwitchListTile.adaptive(
+            value: _addToNutrition,
+            contentPadding: EdgeInsets.zero,
+            activeThumbColor: VitaMateTheme.primary,
+            title: const Text(
+              'Also add to Nutrition',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            onChanged: (value) => setState(() => _addToNutrition = value),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              context,
+              _FastFoodLogPayload(
+                mealType: _mealType,
+                foodName: _foodName.text.trim(),
+                caloriesKcal: double.tryParse(_calories.text.trim()) ?? 0,
+                ledBy: _ledBy.text.trim(),
+                addToNutrition: _addToNutrition,
+                healthierChoice: _healthierChoice,
+                loggedAt: _when == 'earlier'
+                    ? DateTime.now().subtract(const Duration(hours: 2))
+                    : DateTime.now(),
+              ),
+            ),
+            child: const Text('Save fast food'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeeklyProgressShortcut extends StatelessWidget {
+  const _WeeklyProgressShortcut();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Surface(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => Navigator.pushNamed(context, Routes.progress),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              Icon(Icons.insights_rounded, color: VitaMateTheme.primary),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Weekly progress',
+                  style: TextStyle(
+                    color: VitaMateTheme.primaryDeep,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: VitaMateTheme.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: VitaMateTheme.border),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: VitaMateTheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: VitaMateTheme.primaryDeep,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: VitaMateTheme.textMuted,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StepHeader extends StatelessWidget {
+  const _StepHeader({
+    required this.step,
+    required this.total,
+    required this.title,
+  });
+
+  final int step;
+  final int total;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Step $step of $total',
+          style: const TextStyle(
+            color: VitaMateTheme.textMuted,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          title,
+          style: const TextStyle(
+            color: VitaMateTheme.primaryDeep,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlanPreviewCard extends StatelessWidget {
+  const _PlanPreviewCard({
+    required this.title,
+    required this.items,
+    required this.footer,
+  });
+
+  final String title;
+  final List<String> items;
+  final String footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: VitaMateTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: VitaMateTheme.primaryDeep,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (final item in items.where((item) => item.trim().isNotEmpty)) ...[
+            Text(
+              '- $item',
               style: const TextStyle(
                 color: VitaMateTheme.textMuted,
                 fontWeight: FontWeight.w800,
                 height: 1.35,
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          _Field(
-            controller: _trigger,
-            label: 'Most common trigger',
-          ),
-          if (widget.habit.habitType == 'caffeine') ...[
-            const SizedBox(height: 12),
-            _Field(controller: _cutoff, label: 'Caffeine cutoff', suffix: 'HH:MM'),
+            const SizedBox(height: 6),
           ],
-          const SizedBox(height: 12),
-          _Field(controller: _reminder, label: 'Reminder time', suffix: 'HH:MM'),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            onPressed: widget.saving ? null : _save,
-            icon: const Icon(Icons.check_rounded),
-            label: const Text('Save plan'),
+          const SizedBox(height: 4),
+          Text(
+            footer,
+            style: const TextStyle(
+              color: VitaMateTheme.primaryDeep,
+              fontWeight: FontWeight.w800,
+              height: 1.3,
+            ),
           ),
         ],
       ),
     );
   }
-
-  Future<void> _save() {
-    final initialQuantity = double.tryParse(_initial.text.trim()) ?? 0;
-    if (initialQuantity <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your current consumption first.')),
-      );
-      return Future.value();
-    }
-    return widget.onSave(
-      goalType: _goalType,
-      initialQuantity: initialQuantity,
-      unit: _HabitCard._defaultUnit(widget.habit.habitType),
-      commonTrigger: _trigger.text.trim(),
-      cutoffTime: _cutoff.text.trim(),
-      reminderTime: _reminder.text.trim(),
-    );
-  }
 }
 
-class _LogHabitSheet extends StatefulWidget {
-  const _LogHabitSheet({
-    required this.habit,
-    required this.saving,
-    required this.onSave,
+class _ChoicePills extends StatelessWidget {
+  const _ChoicePills({
+    required this.value,
+    required this.options,
+    required this.onChanged,
   });
 
-  final UnhealthyHabit habit;
-  final bool saving;
-  final Future<void> Function({
-    required double quantity,
-    required String unit,
-    required String trigger,
-    required String mood,
-    required bool syncToTracker,
-    required double caffeineMg,
-    required double caloriesKcal,
-    required String foodName,
-    required bool healthyReplacement,
-  }) onSave;
-
-  @override
-  State<_LogHabitSheet> createState() => _LogHabitSheetState();
-}
-
-class _LogHabitSheetState extends State<_LogHabitSheet> {
-  late final TextEditingController _quantity;
-  late final TextEditingController _trigger;
-  late final TextEditingController _mood;
-  late final TextEditingController _foodName;
-  late final TextEditingController _caffeine;
-  late final TextEditingController _calories;
-  bool _syncToTracker = true;
-  bool _healthyReplacement = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _quantity = TextEditingController(text: '1');
-    _trigger = TextEditingController();
-    _mood = TextEditingController();
-    _foodName = TextEditingController(
-      text: widget.habit.habitType == 'caffeine'
-          ? 'Caffeinated drink'
-          : widget.habit.habitType == 'fast_food'
-              ? 'Fast food meal'
-              : '',
-    );
-    _caffeine = TextEditingController();
-    _calories = TextEditingController();
-    _syncToTracker = widget.habit.habitType != 'smoking';
-  }
-
-  @override
-  void dispose() {
-    _quantity.dispose();
-    _trigger.dispose();
-    _mood.dispose();
-    _foodName.dispose();
-    _caffeine.dispose();
-    _calories.dispose();
-    super.dispose();
-  }
+  final String value;
+  final Map<String, String> options;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final unit = _HabitCard._defaultUnit(widget.habit.habitType);
-    final canSync = widget.habit.habitType != 'smoking';
-    return _SheetShell(
-      title: 'Log ${widget.habit.label}',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Field(
-            controller: _quantity,
-            label: 'Quantity',
-            suffix: unit,
-            keyboardType: TextInputType.number,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final entry in options.entries)
+          ChoiceChip(
+            selected: value == entry.key,
+            onSelected: (_) => onChanged(entry.key),
+            selectedColor: VitaMateTheme.primary,
+            label: Text(entry.value),
+            labelStyle: TextStyle(
+              color: value == entry.key
+                  ? Colors.white
+                  : VitaMateTheme.primaryDeep,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-          if (widget.habit.habitType == 'caffeine') ...[
-            const SizedBox(height: 12),
-            _Field(
-              controller: _caffeine,
-              label: 'Caffeine amount',
-              suffix: 'mg',
-              keyboardType: TextInputType.number,
+      ],
+    );
+  }
+}
+
+class _CounterRow extends StatelessWidget {
+  const _CounterRow({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: VitaMateTheme.primaryDeep,
+              fontWeight: FontWeight.w900,
             ),
-          ],
-          if (canSync) ...[
-            const SizedBox(height: 12),
-            _Field(controller: _foodName, label: 'Nutrition item name'),
-            const SizedBox(height: 12),
-            _Field(
-              controller: _calories,
-              label: 'Calories',
-              suffix: 'kcal',
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile.adaptive(
-              value: _syncToTracker,
-              onChanged: (value) => setState(() => _syncToTracker = value),
-              contentPadding: EdgeInsets.zero,
-              activeThumbColor: VitaMateTheme.primary,
-              title: const Text(
-                'Also add to nutrition tracking',
-                style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+        IconButton(
+          onPressed: value > 1 ? () => onChanged(value - 1) : null,
+          icon: const Icon(Icons.remove_circle_outline_rounded),
+        ),
+        SizedBox(
+          width: 44,
+          child: Center(
+            child: Text(
+              '$value',
+              style: const TextStyle(
+                color: VitaMateTheme.primaryDeep,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
               ),
             ),
-          ],
-          if (widget.habit.habitType == 'fast_food')
-            CheckboxListTile(
-              value: _healthyReplacement,
-              onChanged: (value) =>
-                  setState(() => _healthyReplacement = value ?? false),
-              contentPadding: EdgeInsets.zero,
-              activeColor: VitaMateTheme.primary,
-              title: const Text(
-                'I chose a healthier replacement',
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-          const SizedBox(height: 12),
-          _Field(controller: _trigger, label: 'Trigger'),
-          const SizedBox(height: 12),
-          _Field(controller: _mood, label: 'Mood'),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            onPressed: widget.saving ? null : _save,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Save log'),
           ),
-        ],
+        ),
+        IconButton(
+          onPressed: () => onChanged(value + 1),
+          icon: const Icon(Icons.add_circle_outline_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.controller,
+    required this.label,
+    this.suffix,
+    this.keyboardType,
+    this.enabled = true,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String? suffix;
+  final TextInputType? keyboardType;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      keyboardType: keyboardType,
+      minLines: 1,
+      decoration: InputDecoration(labelText: label, suffixText: suffix),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: VitaMateTheme.primaryDeep,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
+}
 
-  Future<void> _save() {
-    return widget.onSave(
-      quantity: double.tryParse(_quantity.text.trim()) ?? 1,
-      unit: _HabitCard._defaultUnit(widget.habit.habitType),
-      trigger: _trigger.text.trim(),
-      mood: _mood.text.trim(),
-      syncToTracker: _syncToTracker,
-      caffeineMg: double.tryParse(_caffeine.text.trim()) ?? 0,
-      caloriesKcal: double.tryParse(_calories.text.trim()) ?? 0,
-      foodName: _foodName.text.trim(),
-      healthyReplacement: _healthyReplacement,
+class _InfoBox extends StatelessWidget {
+  const _InfoBox({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: VitaMateTheme.softSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: VitaMateTheme.border),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: VitaMateTheme.textMuted,
+          fontWeight: FontWeight.w800,
+          height: 1.35,
+        ),
+      ),
     );
   }
 }
@@ -694,7 +1428,7 @@ class _SheetShell extends StatelessWidget {
             Text(
               title,
               style: const TextStyle(
-                fontSize: 28,
+                fontSize: 26,
                 fontWeight: FontWeight.w900,
                 color: VitaMateTheme.primaryDeep,
               ),
@@ -708,187 +1442,29 @@ class _SheetShell extends StatelessWidget {
   }
 }
 
-class _Field extends StatelessWidget {
-  const _Field({
-    required this.controller,
-    required this.label,
-    this.suffix,
-    this.keyboardType,
-  });
+class _Surface extends StatelessWidget {
+  const _Surface({required this.child});
 
-  final TextEditingController controller;
-  final String label;
-  final String? suffix;
-  final TextInputType? keyboardType;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      decoration: InputDecoration(
-        labelText: label,
-        suffixText: suffix,
-      ),
-    );
-  }
-}
-
-class _Segmented extends StatelessWidget {
-  const _Segmented({
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  final String value;
-  final Map<String, String> options;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      children: [
-        for (final entry in options.entries)
-          ChoiceChip(
-            selected: value == entry.key,
-            onSelected: (_) => onChanged(entry.key),
-            label: Text(entry.value),
-            selectedColor: VitaMateTheme.primary,
-            labelStyle: TextStyle(
-              color: value == entry.key ? Colors.white : VitaMateTheme.primaryDeep,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _MetricBox extends StatelessWidget {
-  const _MetricBox({required this.label, required this.value});
-
-  final String label;
-  final String value;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: VitaMateTheme.softSurface,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: VitaMateTheme.textMuted,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              color: VitaMateTheme.primaryDeep,
-              fontWeight: FontWeight.w900,
-              fontSize: 17,
-            ),
+        color: Colors.white.withValues(alpha: 0.97),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: VitaMateTheme.border),
+        boxShadow: const [
+          BoxShadow(
+            color: VitaMateTheme.shadow,
+            blurRadius: 18,
+            offset: Offset(0, 10),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ProgressBadge extends StatelessWidget {
-  const _ProgressBadge({required this.value});
-
-  final int value;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 66,
-      height: 66,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CircularProgressIndicator(
-            value: value.clamp(0, 100) / 100,
-            strokeWidth: 7,
-            backgroundColor: VitaMateTheme.softSurface,
-            color: VitaMateTheme.primary,
-          ),
-          Center(
-            child: Text(
-              '$value%',
-              style: const TextStyle(
-                color: VitaMateTheme.primaryDeep,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HabitIcon extends StatelessWidget {
-  const _HabitIcon({required this.type});
-
-  final String type;
-
-  @override
-  Widget build(BuildContext context) {
-    IconData icon;
-    if (type == 'caffeine') {
-      icon = Icons.coffee_rounded;
-    } else if (type == 'fast_food') {
-      icon = Icons.fastfood_rounded;
-    } else {
-      icon = Icons.smoke_free_rounded;
-    }
-    return Container(
-      width: 50,
-      height: 50,
-      decoration: BoxDecoration(
-        color: VitaMateTheme.softSurface,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Icon(icon, color: VitaMateTheme.primary),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, this.color});
-
-  final String label;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final effectiveColor = color ?? VitaMateTheme.primary;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-      decoration: BoxDecoration(
-        color: effectiveColor.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: effectiveColor,
-          fontWeight: FontWeight.w900,
-          fontSize: 12,
-        ),
-      ),
+      child: child,
     );
   }
 }
@@ -906,7 +1482,7 @@ class _SafetyCard extends StatelessWidget {
           SizedBox(width: 10),
           Expanded(
             child: Text(
-              'This module supports tracking and gradual behavior change. It does not replace medical care or a smoking cessation program.',
+              'This feature supports tracking and gradual behavior change. It does not replace medical care or a cessation program.',
               style: TextStyle(
                 color: VitaMateTheme.textMuted,
                 fontWeight: FontWeight.w700,
@@ -939,38 +1515,32 @@ class _ErrorCard extends StatelessWidget {
   }
 }
 
-class _Surface extends StatelessWidget {
-  const _Surface({required this.child, this.gradient});
-
-  final Widget child;
-  final Gradient? gradient;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: gradient == null ? Colors.white.withValues(alpha: 0.97) : null,
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: VitaMateTheme.border),
-        boxShadow: const [
-          BoxShadow(
-            color: VitaMateTheme.shadow,
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: child,
-    );
+String _setupFieldSuffix(String habitType) {
+  if (habitType == 'caffeine') {
+    return 'mg';
   }
+  if (habitType == 'fast_food') {
+    return 'meals/week';
+  }
+  return 'cigarettes/day';
 }
 
-String _fmt(double value) {
-  if (value == value.roundToDouble()) {
-    return value.round().toString();
+String _setupPayloadUnit(String habitType) {
+  if (habitType == 'caffeine') {
+    return 'mg';
   }
-  return value.toStringAsFixed(1);
+  if (habitType == 'fast_food') {
+    return 'meals';
+  }
+  return 'cigarettes';
+}
+
+String _defaultReminderTime(String habitType) {
+  if (habitType == 'caffeine') {
+    return '14:00';
+  }
+  if (habitType == 'fast_food') {
+    return '12:00';
+  }
+  return '18:00';
 }

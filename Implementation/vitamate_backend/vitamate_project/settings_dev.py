@@ -12,8 +12,21 @@ DEBUG = True
 
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
-    default=["localhost", "127.0.0.1", "10.0.2.2"],
+    default=[
+        "localhost",
+        "127.0.0.1",
+        "10.0.2.2",
+    ],
 )
+for host in ["localhost", "127.0.0.1", "10.0.2.2", "testserver"]:
+    if host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
+
+# Local Android devices usually reach the dev server through a changing LAN IP.
+# In development only, accept any Host header to prevent repeated breakage after
+# network or router changes. Production settings never import this module.
+if env_bool("DJANGO_DEV_ALLOW_ALL_HOSTS", default=True) and "*" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("*")
 
 CORS_ALLOWED_ORIGINS = env_list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
@@ -22,6 +35,9 @@ CORS_ALLOWED_ORIGINS = env_list(
         "http://127.0.0.1:3000",
     ],
 )
+
+if env_bool("DJANGO_DEV_CORS_ALLOW_ALL", default=True):
+    CORS_ALLOW_ALL_ORIGINS = True
 
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,

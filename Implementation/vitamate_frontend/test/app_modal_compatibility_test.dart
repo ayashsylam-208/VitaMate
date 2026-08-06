@@ -68,7 +68,7 @@ void main() {
     expect(harness.requestCount('PATCH', '/api/auth/me/'), 1);
   });
 
-  testWidgets('water add-beverage sheet opens and saves a catalog item', (
+  testWidgets('water log-drink flow opens and saves a hydration entry', (
     tester,
   ) async {
     _usePhoneViewport(tester);
@@ -82,30 +82,19 @@ void main() {
     await harness.pumpAppRoute(tester, initialRoute: Routes.water);
     await harness.settleApp(tester);
 
-    await tester.scrollUntilVisible(find.text('Add Beverage'), 200);
-    await tester.tap(
-      find.byKey(const ValueKey(AppTestKeys.waterAddBeverageButton)),
-    );
+    await tester.tap(find.text('Log any drink'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey(AppTestKeys.waterAddBeverageSheet)),
-      findsOneWidget,
-    );
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey(AppTestKeys.waterCatalogSaveButton)),
-    );
-    await tester.tap(
-      find.byKey(const ValueKey(AppTestKeys.waterCatalogSaveButton)),
-    );
+    expect(find.text('Log Drink'), findsOneWidget);
+    await tester.tap(find.text('Save Drink'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Added to hydration and nutrition'), findsOneWidget);
-    expect(harness.requestCount('POST', '/api/water/'), 1);
+    expect(find.byKey(const ValueKey(AppTestKeys.waterScreen)), findsOneWidget);
+    expect(harness.requestCount('POST', '/api/hydration/logs/'), 1);
+    expect(find.text('Water'), findsWidgets);
   });
 
-  testWidgets('create-custom-food sheet saves and refreshes the nutrition view', (
+  testWidgets('log-meal flow returns a selected food from the library', (
     tester,
   ) async {
     _usePhoneViewport(tester);
@@ -119,26 +108,35 @@ void main() {
     await harness.pumpAppRoute(tester, initialRoute: Routes.meals);
     await harness.settleApp(tester);
 
-    await tester.scrollUntilVisible(find.text('Create custom food'), 200);
     await tester.tap(
-      find.byKey(const ValueKey(AppTestKeys.nutritionCreateFoodButton)),
+      find.byKey(const ValueKey(AppTestKeys.nutritionLogMealButton)),
     );
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(const ValueKey(AppTestKeys.nutritionCreateFoodSheet)),
+      find.byKey(const ValueKey(AppTestKeys.nutritionLogMealSheet)),
       findsOneWidget,
     );
 
-    await tester.enterText(find.byType(TextField).at(0), 'Protein Bowl');
-    await tester.enterText(find.byType(TextField).at(1), '210');
     await tester.tap(
-      find.byKey(const ValueKey(AppTestKeys.nutritionSaveFoodButton)),
+      find.byKey(const ValueKey('nutrition-open-food-library')),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Food added to your library'), findsOneWidget);
-    expect(harness.requestCount('POST', '/api/foods/'), 1);
-    expect(harness.requestCount('GET', '/api/foods/autocomplete/'), 2);
+    expect(find.text('Food library'), findsOneWidget);
+    await tester.tap(find.byTooltip('Choose quantity').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use this amount'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Overnight Oats'), findsOneWidget);
+    final review = find.byKey(
+      const ValueKey(AppTestKeys.nutritionSaveMealButton),
+    );
+    expect(tester.widget<FilledButton>(review).onPressed, isNotNull);
+    expect(
+      harness.requestCount('GET', '/api/foods/autocomplete/'),
+      greaterThanOrEqualTo(1),
+    );
   });
 }

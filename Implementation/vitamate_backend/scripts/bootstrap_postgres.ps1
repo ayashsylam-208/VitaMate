@@ -46,20 +46,41 @@ if ($roleExists -ne "1") {
 
 $dbExists = Invoke-PsqlScalar "SELECT 1 FROM pg_database WHERE datname = '$DbName'"
 if ($dbExists -ne "1") {
-    & $psql -h $PgHost -p $Port -U $SuperUser -d postgres -c "CREATE DATABASE $DbName OWNER $DbUser;"
+    & $psql -h $PgHost -p $Port -U $SuperUser -d postgres -c "CREATE DATABASE $DbName OWNER $DbUser ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C';"
 }
 
-@(
-    "DJANGO_ENV=dev"
-    "DJANGO_SECRET_KEY=change-me"
-    "DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.2.2,testserver"
-    "DJANGO_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"
-    "POSTGRES_DB=$DbName"
-    "POSTGRES_USER=$DbUser"
-    "POSTGRES_PASSWORD=$DbPassword"
-    "POSTGRES_HOST=$PgHost"
-    "POSTGRES_PORT=$Port"
-) | Set-Content -Path $envFile -Encoding ascii
+$dbEncoding = Invoke-PsqlScalar "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$DbName'"
+if ($dbEncoding -ne "UTF8") {
+    throw "Database $DbName uses $dbEncoding instead of UTF8. Migrate it before starting VitaMate."
+}
+
+$envUpdates = [ordered]@{
+    "DJANGO_ENV" = "dev"
+    "POSTGRES_DB" = $DbName
+    "POSTGRES_USER" = $DbUser
+    "POSTGRES_PASSWORD" = $DbPassword
+    "POSTGRES_HOST" = $PgHost
+    "POSTGRES_PORT" = "$Port"
+}
+$existingLines = if (Test-Path $envFile) { Get-Content $envFile } else { @() }
+$updatedKeys = @{}
+$updatedLines = foreach ($line in $existingLines) {
+    if ($line -match '^([A-Z0-9_]+)=') {
+        $key = $Matches[1]
+        if ($envUpdates.Contains($key)) {
+            $updatedKeys[$key] = $true
+            "$key=$($envUpdates[$key])"
+            continue
+        }
+    }
+    $line
+}
+foreach ($entry in $envUpdates.GetEnumerator()) {
+    if (-not $updatedKeys.ContainsKey($entry.Key)) {
+        $updatedLines += "$($entry.Key)=$($entry.Value)"
+    }
+}
+$updatedLines | Set-Content -Path $envFile -Encoding ascii
 
 Push-Location $repoRoot
 try {
@@ -70,4 +91,4 @@ try {
 }
 
 Write-Output "PostgreSQL bootstrap completed."
-Write-Output "Environment file written to $envFile"
+Write-Output "Database settings updated in $envFile"

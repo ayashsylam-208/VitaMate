@@ -46,6 +46,7 @@ class AppTestKeys {
   static const sleepScreen = 'sleep.screen';
   static const statsScreen = 'stats.screen';
   static const stepsScreen = 'steps.screen';
+  static const habitsScreen = 'habits.screen';
 
   static const medicationsScreen = 'medications.screen';
   static const medicationsAddScreen = 'medications.add.screen';

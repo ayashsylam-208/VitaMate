@@ -64,20 +64,14 @@ class DashboardReadRepository:
             date=log_date,
             completed=True,
         ).count()
-        total_habits += UnhealthyHabit.objects.filter(
-            user=user,
-            status=UnhealthyHabit.STATUS_ACTIVE,
-        ).count()
-        completed_habits += (
-            UnhealthyHabitLog.objects.filter(
-                habit__user=user,
-                log_date=log_date,
-                is_within_limit=True,
-            )
-            .values("habit_id")
-            .distinct()
-            .count()
-        )
+        from core.services.habits import HabitEvaluationService
+
+        summary = HabitEvaluationService.evaluate_user(user=user, target_date=log_date)
+        evaluations = [
+            item for item in summary.get("evaluations", []) if item.get("is_applicable")
+        ]
+        total_habits += len(evaluations)
+        completed_habits += sum(1 for item in evaluations if item.get("is_complete"))
         return total_habits, completed_habits
 
     @staticmethod

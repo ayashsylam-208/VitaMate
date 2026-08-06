@@ -7,7 +7,14 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from core.models import ConditionMedication, ConditionMedicationLog, NutritionFacts, StepLog, WaterLog
+from core.models import (
+    ConditionMedication,
+    ConditionMedicationLog,
+    NutritionFacts,
+    StepLog,
+    UnifiedHealthState,
+    WaterLog,
+)
 from core.services.steps_service import StepsService
 from test_utils.helpers import (
     auth_client_for_user,
@@ -41,8 +48,10 @@ class ApiAccessTests(TestCase):
         self.assertIn(res.status_code, (401, 403))
 
     def test_user_isolation_on_water_logs(self):
-        WaterLog.objects.create(user=self.user1, amount_liter=1.0)
-        WaterLog.objects.create(user=self.user2, amount_liter=2.0)
+        log1 = WaterLog.objects.create(user=self.user1, amount_liter=1.0)
+        log2 = WaterLog.objects.create(user=self.user2, amount_liter=2.0)
+        WaterLog.objects.filter(id=log1.id).update(date=timezone.localdate())
+        WaterLog.objects.filter(id=log2.id).update(date=timezone.localdate())
 
         client = self._auth_client("user1", "Pass123!")
         res = client.get("/api/water/")
@@ -59,8 +68,11 @@ class StepsServiceTests(TestCase):
         StepsService.log_steps(user=user, steps_count=1000, distance_km=0)
         StepsService.log_steps(user=user, steps_count=2000, distance_km=0)
 
-        self.assertEqual(StepLog.objects.filter(user=user, date=date.today()).count(), 1)
-        log = StepLog.objects.get(user=user, date=date.today())
+        self.assertEqual(
+            StepLog.objects.filter(user=user, date=timezone.localdate()).count(),
+            1,
+        )
+        log = StepLog.objects.get(user=user, date=timezone.localdate())
         self.assertEqual(log.steps_count, 2000)
 
 
@@ -196,9 +208,27 @@ class ApiContractTests(TestCase):
                 "water_ml",
                 "sleep_minutes",
                 "calories",
+                "missions_completed",
+                "missions_total",
+                "current_streak",
+                "level_name",
                 "chronic_conditions",
                 "conditions_center",
+                "daily_health",
+                "domains",
+                "focus",
+                "xp",
+                "streaks",
             }.issubset(res.data["data"].keys())
+        )
+        self.assertTrue(
+            {
+                "progress_percent",
+                "coverage_percent",
+                "completion_status",
+                "daily_complete",
+                "score_version",
+            }.issubset(res.data["data"]["daily_health"].keys())
         )
         self.assertTrue(
             {"is_stale", "computed_at", "snapshot_version", "request_id"}.issubset(
@@ -258,6 +288,13 @@ class ApiContractTests(TestCase):
         )
         self.assertEqual(detail.data["data"]["tracker"], "nutrition")
         self.assertEqual(detail.data["data"]["range_days"], 14)
+        tracker_codes = {
+            item.get("code")
+            for item in overview.data["data"].get("tracker_cards", [])
+        }
+        self.assertIn("motivation", tracker_codes)
+        self.assertIn("activity", tracker_codes)
+        self.assertNotIn("steps", tracker_codes)
 
     def test_progress_overview_uses_projection_when_snapshot_missing(self):
         profile = self.user.userprofile
@@ -315,6 +352,8 @@ class ApiContractTests(TestCase):
                 "target_steps",
                 "steps_today",
                 "remaining_steps",
+                "extra_steps",
+                "steps_progress_percent",
                 "distance_km",
                 "calories_burned",
                 "burn_rate_kcal_per_km",
@@ -334,7 +373,6 @@ class ApiContractTests(TestCase):
                 "medications",
                 "today_plan",
                 "overall_adherence",
-                "reminder_sync",
                 "snapshot_summary",
             },
             "/api/chronic/overview/": {
@@ -351,6 +389,70 @@ class ApiContractTests(TestCase):
                 self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
                 self.assertTrue(expected_keys.issubset(res.data["data"].keys()))
 
+    def test_motivation_endpoints_contract(self):
+        overview = self.client_auth.get("/api/motivation/overview/")
+        self.assertEqual(overview.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(overview.data.keys()))
+        self.assertTrue(
+            {
+                "daily_points",
+                "total_points",
+                "level",
+                "level_name",
+                "missions_completed",
+                "missions_total",
+                "current_streak",
+                "longest_streak",
+                "insight",
+            }.issubset(overview.data["data"].keys())
+        )
+
+        missions = self.client_auth.get("/api/motivation/missions/")
+        self.assertEqual(missions.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(missions.data.keys()))
+        mission_items = missions.data["data"].get("missions", [])
+        self.assertIsInstance(mission_items, list)
+        if mission_items:
+            first_id = mission_items[0]["id"]
+            refresh = self.client_auth.post(
+                f"/api/motivation/missions/{first_id}/refresh/",
+                {},
+                format="json",
+            )
+            self.assertEqual(refresh.status_code, status.HTTP_200_OK)
+            self.assertTrue({"data", "meta"}.issubset(refresh.data.keys()))
+
+        points = self.client_auth.get("/api/motivation/points/?range_days=14")
+        self.assertEqual(points.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(points.data.keys()))
+        self.assertIn("days", points.data["data"])
+        self.assertIn("transactions", points.data["data"])
+
+        badges = self.client_auth.get("/api/motivation/badges/")
+        self.assertEqual(badges.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(badges.data.keys()))
+        self.assertIn("badges", badges.data["data"])
+
+        feed = self.client_auth.get("/api/motivation/feed/")
+        self.assertEqual(feed.status_code, status.HTTP_200_OK)
+        self.assertTrue({"data", "meta"}.issubset(feed.data.keys()))
+        self.assertTrue(
+            {
+                "summary",
+                "focus",
+                "celebrations",
+                "updated_at",
+            }.issubset(feed.data["data"].keys())
+        )
+
+        ack = self.client_auth.post(
+            "/api/motivation/celebrations/ack/",
+            {"ids": []},
+            format="json",
+        )
+        self.assertEqual(ack.status_code, status.HTTP_200_OK)
+        self.assertIn("acknowledged_ids", ack.data["data"])
+
     def test_nutrition_summary_uses_profile_calorie_target_when_snapshot_missing(self):
         self.user.userprofile.daily_calorie_target = 2150
         self.user.userprofile.save(update_fields=["daily_calorie_target"])
@@ -359,6 +461,44 @@ class ApiContractTests(TestCase):
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["data"]["target_calories"], 2150)
+        state = UnifiedHealthState.objects.get(
+            user=self.user,
+            state_date=timezone.localdate(),
+            window_kind=UnifiedHealthState.WINDOW_CURRENT,
+        )
+        self.assertEqual(
+            res.data["data"]["active_target_calories"],
+            state.progress_summary["summary"]["calories_target"],
+        )
+
+    def test_nutrition_summary_tracks_live_meal_changes(self):
+        create_res = self.client_auth.post(
+            "/api/meals/",
+            {"food": self.food.id, "meal_type": "lunch", "quantity_grams": 100},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+
+        summary_res = self.client_auth.get("/api/nutrition/summary/")
+        self.assertEqual(summary_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(summary_res.data["data"]["consumed_calories"], 150)
+
+        meal_id = create_res.data["id"]
+        update_res = self.client_auth.patch(
+            f"/api/meals/{meal_id}/",
+            {"quantity_grams": 200},
+            format="json",
+        )
+        self.assertEqual(update_res.status_code, status.HTTP_200_OK)
+
+        summary_res = self.client_auth.get("/api/nutrition/summary/")
+        self.assertEqual(summary_res.data["data"]["consumed_calories"], 300)
+
+        delete_res = self.client_auth.delete(f"/api/meals/{meal_id}/")
+        self.assertEqual(delete_res.status_code, status.HTTP_204_NO_CONTENT)
+
+        summary_res = self.client_auth.get("/api/nutrition/summary/")
+        self.assertEqual(summary_res.data["data"]["consumed_calories"], 0)
 
     def test_activity_and_steps_summaries_use_projection_when_snapshot_missing(self):
         profile = self.user.userprofile
@@ -383,6 +523,7 @@ class ApiContractTests(TestCase):
         self.assertEqual(steps_res.status_code, status.HTTP_200_OK)
         self.assertEqual(steps_res.data["data"]["target_steps"], 9000)
         self.assertEqual(steps_res.data["data"]["steps_today"], 2500)
+        self.assertEqual(steps_res.data["data"]["extra_steps"], 0)
         self.assertGreater(steps_res.data["data"]["calories_burned"], 0)
 
         self.assertEqual(activity_res.status_code, status.HTTP_200_OK)
@@ -410,6 +551,26 @@ class ApiContractTests(TestCase):
             0,
         )
         self.assertEqual(progress_res.data["data"]["activity"]["steps"], 2500)
+
+    def test_steps_summary_reports_steps_over_goal_from_direct_log(self):
+        profile = self.user.userprofile
+        profile.daily_step_goal = 8000
+        profile.save(update_fields=["daily_step_goal"])
+
+        self.client_auth.post(
+            "/api/steps/",
+            {"steps_count": 8250, "distance_km": 6.1},
+            format="json",
+        )
+
+        res = self.client_auth.get("/api/steps/summary/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["data"]["target_steps"], 8000)
+        self.assertEqual(res.data["data"]["steps_today"], 8250)
+        self.assertEqual(res.data["data"]["remaining_steps"], 0)
+        self.assertEqual(res.data["data"]["extra_steps"], 250)
+        self.assertGreaterEqual(res.data["data"]["steps_progress_percent"], 103)
 
     def test_activity_session_endpoints_contract(self):
         start = self.client_auth.post(
@@ -538,7 +699,7 @@ class ApiContractTests(TestCase):
         medication_id = vitamin_d["linked_medication"]["id"]
         ConditionMedicationLog.objects.create(
             medication_id=medication_id,
-            scheduled_date=date.today(),
+            scheduled_date=timezone.localdate(),
             status=ConditionMedicationLog.STATUS_TAKEN,
             dose_taken_amount=Decimal("25"),
         )
@@ -604,6 +765,8 @@ class ApiContractTests(TestCase):
         vitamin_d = items["vitamin_d_mcg"]
         self.assertTrue(vitamin_d["deficiency_tracked"])
         self.assertEqual(vitamin_d["target_value"], 18.75)
+        self.assertEqual(vitamin_d["target_source"], "user_custom_target")
+        self.assertIsNotNone(vitamin_d["constraint_id"])
         self.assertEqual(vitamin_d["lab_context"]["value"], 18.0)
         self.assertEqual(vitamin_d["lab_context"]["reference_min"], 30.0)
         self.assertEqual(vitamin_d["lab_context"]["reference_max"], 100.0)
@@ -618,6 +781,17 @@ class ApiContractTests(TestCase):
         self.assertEqual(
             vitamin_d["lab_context"]["current_medication_name"],
             "Vitamin D drops",
+        )
+        state = UnifiedHealthState.objects.get(
+            user=self.user,
+            state_date=timezone.localdate(),
+            window_kind=UnifiedHealthState.WINDOW_CURRENT,
+        )
+        self.assertTrue(
+            any(
+                row.get("metric_key") == "vitamin_d_mcg"
+                for row in state.active_constraints.get("micronutrient", [])
+            )
         )
 
     def test_micronutrient_lab_above_range_creates_mineral_limit(self):

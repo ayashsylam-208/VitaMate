@@ -33,11 +33,22 @@ class StepLogViewSet(viewsets.ModelViewSet):
         return StepsService.get_step_logs(user=self.request.user)
 
     def perform_create(self, serializer):
-        log = StepsService.log_steps(
-            user=self.request.user,
-            steps_count=serializer.validated_data.get("steps_count", 0),
-            distance_km=serializer.validated_data.get("distance_km", 0),
-        )
+        try:
+            log = StepsService.log_steps(
+                user=self.request.user,
+                steps_count=serializer.validated_data.get("steps_count", 0),
+                distance_km=serializer.validated_data.get("distance_km", 0),
+                local_date=serializer.validated_data.get("local_date"),
+                timezone_name=serializer.validated_data.get("timezone", ""),
+                installation_id=serializer.validated_data.get("installation_id", ""),
+                measured_at=serializer.validated_data.get("measured_at"),
+                sensor_steps=serializer.validated_data.get("sensor_steps"),
+                manual_adjustment_steps=serializer.validated_data.get("manual_adjustment_steps"),
+                imported_adjustment_steps=serializer.validated_data.get("imported_adjustment_steps"),
+                sync_version=serializer.validated_data.get("sync_version"),
+            )
+        except DjangoValidationError as error:
+            _raise_validation_error(error)
         serializer.instance = log
 
     def perform_update(self, serializer):

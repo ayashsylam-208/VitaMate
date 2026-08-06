@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from django.utils import timezone
+
 from core.models import ConditionDailyEvaluation, ConditionRuleProfile, UserCondition
 from core.services.condition_catalog_service import ConditionCatalogService
 from core.services.condition_medication_service import ConditionMedicationService
@@ -138,7 +140,7 @@ class ConditionConstraintEngine:
         on_date: date | None = None,
         prepared_context: dict | None = None,
     ) -> EffectiveConditionConstraints:
-        on_date = on_date or date.today()
+        on_date = on_date or timezone.localdate()
         prepared_context = prepared_context or {}
         conditions = prepared_context.get("conditions")
         if conditions is None:

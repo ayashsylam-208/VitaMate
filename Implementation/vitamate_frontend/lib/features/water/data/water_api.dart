@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 
-import '../../../core/network/http_client.dart';
 import '../../../core/config/api_endpoints.dart';
+import '../../../core/network/http_client.dart';
 import '../../../core/network/request_metrics_interceptor.dart';
 import '../../../shared/models/api_result.dart';
 import '../../nutrition/models/food_item.dart';
@@ -9,10 +9,14 @@ import '../models/hydration_summary.dart';
 import '../models/water_log.dart';
 
 class WaterApi {
-  Future<HydrationSummary> getSummary({CancelToken? cancelToken}) async {
+  Future<HydrationSummary> getSummary({
+    DateTime? date,
+    CancelToken? cancelToken,
+  }) async {
     final response = await HttpClient.dio.get(
       ApiEndpoints.hydrationSummary,
       cancelToken: cancelToken,
+      queryParameters: {if (date != null) 'date': _dateOnly(date)},
       options: RequestMetricsInterceptor.taggedOptions(
         tag: 'hydration.summary',
       ),
@@ -25,13 +29,33 @@ class WaterApi {
     return HydrationSummary.fromJson(envelope.data);
   }
 
-  Future<List<WaterLog>> getTodayLogs() async {
-    final res = await HttpClient.dio.get(ApiEndpoints.water);
-    _ensureSuccess(res);
-    final list = (res.data as List).cast<dynamic>();
+  Future<List<WaterLog>> getLogs({
+    DateTime? date,
+    DateTime? from,
+    DateTime? to,
+    CancelToken? cancelToken,
+  }) async {
+    final response = await HttpClient.dio.get(
+      ApiEndpoints.hydrationLogs,
+      cancelToken: cancelToken,
+      queryParameters: {
+        if (date != null) 'date': _dateOnly(date),
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+      },
+      options: RequestMetricsInterceptor.taggedOptions(tag: 'hydration.logs'),
+    );
+    _ensureSuccess(response);
+    final list = (response.data as List?) ?? const [];
     return list
-        .map((e) => WaterLog.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
+        .map(
+          (item) => WaterLog.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<WaterLog>> getTodayLogs({CancelToken? cancelToken}) {
+    return getLogs(date: DateTime.now(), cancelToken: cancelToken);
   }
 
   Future<List<FoodItem>> searchBeverages(
@@ -39,7 +63,7 @@ class WaterApi {
     int limit = 12,
     CancelToken? cancelToken,
   }) async {
-    final res = await HttpClient.dio.get(
+    final response = await HttpClient.dio.get(
       ApiEndpoints.foods,
       cancelToken: cancelToken,
       options: RequestMetricsInterceptor.taggedOptions(tag: 'hydration.search'),
@@ -49,37 +73,53 @@ class WaterApi {
         'limit': limit,
       },
     );
-    _ensureSuccess(res);
-    final list = (res.data as List).cast<dynamic>();
+    _ensureSuccess(response);
+    final list = (response.data as List).cast<dynamic>();
     return list
-        .map((e) => FoodItem.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
+        .map(
+          (item) => FoodItem.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(growable: false);
   }
 
-  Future<void> addWaterMl(int amountMl) {
-    return _postWater({'amount_ml': amountMl});
-  }
-
-  Future<void> addNamedBeverage({
-    required int amountMl,
-    required String beverageType,
-    required String beverageName,
-  }) {
+  Future<WaterLog> addWaterMl(int amountMl, {DateTime? consumedAt}) {
     return _postWater({
       'amount_ml': amountMl,
-      'beverage_type': beverageType,
-      'beverage_name': beverageName,
+      'drink_type': 'water',
+      'custom_name': 'Water',
+      'consumed_at': (consumedAt ?? DateTime.now()).toIso8601String(),
     });
   }
 
-  Future<void> addCatalogBeverage({
-    required int foodItemId,
+  Future<WaterLog> addNamedBeverage({
     required int amountMl,
+    required String beverageType,
+    required String beverageName,
+    DateTime? consumedAt,
+    double? caffeineMg,
   }) {
-    return _postWater({'food_item': foodItemId, 'amount_ml': amountMl});
+    return _postWater({
+      'amount_ml': amountMl,
+      'drink_type': beverageType,
+      'custom_name': beverageName,
+      'consumed_at': (consumedAt ?? DateTime.now()).toIso8601String(),
+      if (caffeineMg != null) 'metadata': {'caffeine_mg': caffeineMg},
+    });
   }
 
-  Future<void> addCustomBeverage({
+  Future<WaterLog> addCatalogBeverage({
+    required int foodItemId,
+    required int amountMl,
+    DateTime? consumedAt,
+  }) {
+    return _postWater({
+      'food_item_id': foodItemId,
+      'amount_ml': amountMl,
+      'consumed_at': (consumedAt ?? DateTime.now()).toIso8601String(),
+    });
+  }
+
+  Future<WaterLog> addCustomBeverage({
     required int amountMl,
     required String name,
     required String beverageType,
@@ -93,9 +133,11 @@ class WaterApi {
     required double waterG,
     required double caffeineMg,
     bool saveForReuse = true,
+    DateTime? consumedAt,
   }) {
     return _postWater({
       'amount_ml': amountMl,
+      'consumed_at': (consumedAt ?? DateTime.now()).toIso8601String(),
       'save_for_reuse': saveForReuse,
       'custom_beverage': {
         'name': name,
@@ -113,9 +155,43 @@ class WaterApi {
     });
   }
 
-  Future<void> _postWater(Map<String, dynamic> payload) async {
-    final res = await HttpClient.dio.post(ApiEndpoints.water, data: payload);
-    _ensureSuccess(res);
+  Future<WaterLog> updateLog({
+    required int id,
+    int? amountMl,
+    String? beverageType,
+    String? beverageName,
+    DateTime? consumedAt,
+    double? caffeineMg,
+  }) async {
+    final payload = <String, dynamic>{
+      if (amountMl != null) 'amount_ml': amountMl,
+      if (beverageType != null) 'drink_type': beverageType,
+      if (beverageName != null) 'custom_name': beverageName,
+      if (consumedAt != null) 'consumed_at': consumedAt.toIso8601String(),
+      if (caffeineMg != null) 'metadata': {'caffeine_mg': caffeineMg},
+    };
+    final response = await HttpClient.dio.patch(
+      '${ApiEndpoints.hydrationLogs}$id/',
+      data: payload,
+    );
+    _ensureSuccess(response);
+    return WaterLog.fromJson(Map<String, dynamic>.from(response.data as Map));
+  }
+
+  Future<void> deleteLog(int id) async {
+    final response = await HttpClient.dio.delete(
+      '${ApiEndpoints.hydrationLogs}$id/',
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<WaterLog> _postWater(Map<String, dynamic> payload) async {
+    final response = await HttpClient.dio.post(
+      ApiEndpoints.hydrationLogs,
+      data: payload,
+    );
+    _ensureSuccess(response);
+    return WaterLog.fromJson(Map<String, dynamic>.from(response.data as Map));
   }
 
   void _ensureSuccess(Response<dynamic> response) {
@@ -130,4 +206,11 @@ class WaterApi {
       message: 'Request failed with status code $statusCode',
     );
   }
+}
+
+String _dateOnly(DateTime date) {
+  final local = date.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')}';
 }

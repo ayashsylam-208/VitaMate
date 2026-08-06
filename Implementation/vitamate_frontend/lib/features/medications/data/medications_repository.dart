@@ -1,7 +1,8 @@
 import '../models/medication_adherence_summary.dart';
 import '../models/medication_dose_log.dart';
+import '../models/medication_history.dart';
 import '../models/medication_item.dart';
-import '../models/reminder_sync_payload.dart';
+import '../models/medication_today_plan.dart';
 import 'medications_api.dart';
 
 class MedicationsOverviewData {
@@ -9,13 +10,21 @@ class MedicationsOverviewData {
     required this.medications,
     required this.todayPlan,
     required this.overallAdherence,
-    required this.reminderSync,
+    required this.todayAdherence,
+    required this.nextDose,
+    required this.streak,
+    required this.shortcutCounts,
+    required this.motivationStrip,
   });
 
   final List<MedicationItem> medications;
   final List<MedicationDoseLog> todayPlan;
   final MedicationAdherenceSummary overallAdherence;
-  final ReminderSyncPayload reminderSync;
+  final MedicationTodaySummary todayAdherence;
+  final MedicationDoseLog? nextDose;
+  final int streak;
+  final Map<String, dynamic> shortcutCounts;
+  final Map<String, dynamic>? motivationStrip;
 }
 
 class MedicationsRepository {
@@ -51,9 +60,17 @@ class MedicationsRepository {
           (raw['overall_adherence'] as Map?) ?? const {},
         ),
       ),
-      reminderSync: ReminderSyncPayload.fromJson(
-        Map<String, dynamic>.from((raw['reminder_sync'] as Map?) ?? const {}),
+      todayAdherence: MedicationTodaySummary.fromJson(
+        _asMap(raw['today_adherence']),
       ),
+      nextDose: raw['next_dose'] is Map
+          ? MedicationDoseLog.fromJson(_asMap(raw['next_dose']))
+          : null,
+      streak: _asInt(raw['streak']),
+      shortcutCounts: _asMap(raw['shortcut_counts']),
+      motivationStrip: raw['motivation_strip'] is Map
+          ? _asMap(raw['motivation_strip'])
+          : null,
     );
   }
 
@@ -102,15 +119,18 @@ class MedicationsRepository {
     );
   }
 
-  Future<List<MedicationDoseLog>> getTodayPlan() async {
-    final raw = await _api.fetchTodayPlan();
-    return raw
-        .map(
-          (item) => MedicationDoseLog.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
+  Future<MedicationTodayPlanData> getTodayPlanData({String? date}) async {
+    return MedicationTodayPlanData.fromJson(
+      await _api.fetchTodayPlan(date: date),
+    );
+  }
+
+  Future<List<MedicationDoseLog>> getTodayPlan({String? date}) async {
+    return (await getTodayPlanData(date: date)).doses;
+  }
+
+  Future<Map<String, dynamic>> materializePlans() {
+    return _api.materializePlans();
   }
 
   Future<MedicationDoseLog> markTaken(
@@ -123,24 +143,53 @@ class MedicationsRepository {
       if (doseTakenAmount != null && doseTakenAmount.trim().isNotEmpty)
         'dose_taken_amount': doseTakenAmount.trim(),
     });
-    return MedicationDoseLog.fromJson(raw);
+    return _doseLogFromAction(raw);
   }
 
   Future<MedicationDoseLog> markMissed(int logId) async {
     final raw = await _api.markDoseMissed(logId);
-    return MedicationDoseLog.fromJson(raw);
+    return _doseLogFromAction(raw);
   }
 
   Future<MedicationDoseLog> markSkipped(int logId, {String reason = ''}) async {
     final raw = await _api.markDoseSkipped(logId, {'reason': reason});
-    return MedicationDoseLog.fromJson(raw);
+    return _doseLogFromAction(raw);
   }
 
   Future<MedicationDoseLog> snooze(int logId, DateTime snoozedUntil) async {
     final raw = await _api.snoozeDose(logId, {
       'snoozed_until': snoozedUntil.toIso8601String(),
     });
-    return MedicationDoseLog.fromJson(raw);
+    return _doseLogFromAction(raw);
+  }
+
+  Future<MedicationDoseLog> logPrnDose(
+    int medicationId, {
+    DateTime? takenAt,
+    String? doseTakenAmount,
+    String notes = '',
+  }) async {
+    final raw = await _api.logPrnDose(medicationId, {
+      if (takenAt != null) 'taken_at': takenAt.toIso8601String(),
+      if (doseTakenAmount != null && doseTakenAmount.trim().isNotEmpty)
+        'dose_taken_amount': doseTakenAmount.trim(),
+      if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+    });
+    return _doseLogFromAction(raw);
+  }
+
+  Future<MedicationHistoryPage> getHistory({
+    String status = 'all',
+    int page = 1,
+    int pageSize = 30,
+  }) async {
+    return MedicationHistoryPage.fromJson(
+      await _api.fetchMedicationHistory(
+        status: status,
+        page: page,
+        pageSize: pageSize,
+      ),
+    );
   }
 
   Future<MedicationAdherenceSummary> getMedicationAdherence(
@@ -157,7 +206,23 @@ class MedicationsRepository {
     );
   }
 
-  Future<ReminderSyncPayload> getReminderSync() async {
-    return ReminderSyncPayload.fromJson(await _api.fetchReminderSync());
+  MedicationDoseLog _doseLogFromAction(Map<String, dynamic> raw) {
+    final doseRaw = raw['dose_log'];
+    if (doseRaw is Map) {
+      return MedicationDoseLog.fromJson(doseRaw.cast<String, dynamic>());
+    }
+    return MedicationDoseLog.fromJson(raw);
   }
+}
+
+int _asInt(dynamic value) {
+  if (value is int) return value;
+  if (value is double) return value.round();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+Map<String, dynamic> _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return value.cast<String, dynamic>();
+  return <String, dynamic>{};
 }

@@ -52,6 +52,14 @@ build/
 node_modules/
 Implementation/vitamate_backend/.venv/
 Implementation/vitamate_backend/.local/
+Implementation/vitamate_backend/.venv*/
+Implementation/.local/
+Implementation/.codex_*/
+Implementation/.codex_*.txt
+Implementation/vitamate_backend/VitaMate_AI_Backend_Runtime_*.zip
+*.out
+**/test/**/failures/
+/diagram_chronic_conditions.xml
 Implementation/tmp_gitleaks/
 Implementation/tmp_postgres_install/
 Implementation/tmp_postgres_portable/

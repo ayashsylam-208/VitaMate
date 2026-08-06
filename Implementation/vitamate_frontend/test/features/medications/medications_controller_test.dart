@@ -1,14 +1,10 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vitamate/core/notifications/notifications_service.dart';
 import 'package:vitamate/features/medications/data/medications_api.dart';
 import 'package:vitamate/features/medications/data/medications_repository.dart';
 import 'package:vitamate/features/medications/models/medication_adherence_summary.dart';
 import 'package:vitamate/features/medications/models/medication_dose_log.dart';
 import 'package:vitamate/features/medications/models/medication_item.dart';
 import 'package:vitamate/features/medications/models/medication_schedule.dart';
-import 'package:vitamate/features/medications/models/reminder_sync_payload.dart';
 import 'package:vitamate/features/medications/state/medications_controller.dart';
 
 class _FakeMedicationsRepository extends MedicationsRepository {
@@ -23,7 +19,7 @@ class _FakeMedicationsRepository extends MedicationsRepository {
   Future<List<MedicationItem>> getMedications() async => medications;
 
   @override
-  Future<List<MedicationDoseLog>> getTodayPlan() async => today;
+  Future<List<MedicationDoseLog>> getTodayPlan({String? date}) async => today;
 
   @override
   Future<MedicationAdherenceSummary> getOverallAdherence() async => adherence;
@@ -85,33 +81,20 @@ class _FakeMedicationsRepository extends MedicationsRepository {
       linkedConditionName: 'Diabetes',
       scheduledFor: DateTime(2026, 4, 17, 8),
       status: 'taken',
+      rawStatus: 'taken_on_time',
       snoozedUntil: null,
+      takenAt: DateTime(2026, 4, 17, 8, 2),
       doseAmount: '500',
       doseUnit: 'mg',
       form: 'tablet',
+      mealRelation: 'after_meal',
+      notes: '',
+      pointsApplied: 3,
+      scheduledDate: '2026-04-17',
+      isPrn: false,
     );
     today = [updated];
     return updated;
-  }
-
-  @override
-  Future<ReminderSyncPayload> getReminderSync() async {
-    return ReminderSyncPayload.fromJson({
-      'items': [
-        {
-          'medication_id': 10,
-          'schedule_id': 5,
-          'display_name': 'Metformin',
-          'timezone': 'Asia/Damascus',
-          'scheduled_times': ['08:00'],
-          'days_of_week': [0, 2],
-          'meal_relation': 'after_meal',
-          'snooze_default_minutes': 15,
-          'reminder_lead_minutes': 10,
-          'linked_condition': {'id': 2, 'name': 'Diabetes'},
-        },
-      ],
-    });
   }
 }
 
@@ -165,7 +148,33 @@ class _EnvelopeMedicationsApi extends MedicationsApi {
           'pending_doses': 1,
           'adherence_percent': 0,
         },
-        'reminder_sync': {'items': []},
+        'today_adherence': {
+          'expected': 1,
+          'taken': 0,
+          'pending': 1,
+          'missed': 0,
+          'overdue': 0,
+          'skipped': 0,
+          'percent': 0,
+        },
+        'next_dose': {
+          'log_id': 99,
+          'medication_id': 7,
+          'display_name': 'Vitamin D',
+          'scheduled_for': '2026-05-05T09:00:00',
+          'status': 'pending',
+          'raw_status': 'pending',
+          'dose_amount': '1000',
+          'dose_unit': 'IU',
+          'form': 'capsule',
+        },
+        'streak': 0,
+        'shortcut_counts': {
+          'today_plan': 1,
+          'all_medications': 1,
+          'history': 1,
+          'insights': 0,
+        },
       },
       'meta': {'is_stale': false, 'request_id': 'test'},
     };
@@ -222,15 +231,13 @@ void main() {
     expect(overview.medications.single.displayName, 'Vitamin D');
     expect(overview.todayPlan, hasLength(1));
     expect(overview.overallAdherence.pendingDoses, 1);
+    expect(overview.todayAdherence.pending, 1);
+    expect(overview.nextDose?.logId, 99);
   });
 
-  test('controller creates medication and syncs reminders', () async {
+  test('controller creates medication and refreshes state', () async {
     final repo = _FakeMedicationsRepository();
-    final plans = <ChronicMedicationReminderPlan>[];
-    final controller = MedicationsController(
-      repository: repo,
-      reminderSyncer: (value) async => plans.addAll(value),
-    );
+    final controller = MedicationsController(repository: repo);
 
     final saved = await controller.createMedication({
       'display_name': 'Metformin',
@@ -248,18 +255,11 @@ void main() {
     expect(saved, isTrue);
     expect(repo.createdPayloads, hasLength(1));
     expect(controller.state.medications.single.displayName, 'Metformin');
-    await Future<void>.delayed(Duration.zero);
-    expect(plans.single.medicationName, 'Metformin');
-    expect(plans.single.recurrenceDays, [0, 2]);
   });
 
-  test('controller does not block save on reminder sync', () async {
+  test('controller does not block save on background refresh', () async {
     final repo = _FakeMedicationsRepository();
-    final syncCompleter = Completer<void>();
-    final controller = MedicationsController(
-      repository: repo,
-      reminderSyncer: (_) => syncCompleter.future,
-    );
+    final controller = MedicationsController(repository: repo);
 
     final saved = await controller.createMedication({
       'display_name': 'Metformin',
@@ -277,8 +277,6 @@ void main() {
     expect(saved, isTrue);
     expect(controller.state.isSaving, isFalse);
     expect(controller.state.medications.single.displayName, 'Metformin');
-
-    syncCompleter.complete();
     await Future<void>.delayed(Duration.zero);
   });
 
@@ -293,16 +291,20 @@ void main() {
           linkedConditionName: 'Diabetes',
           scheduledFor: DateTime(2026, 4, 17, 8),
           status: 'pending',
+          rawStatus: 'pending',
           snoozedUntil: null,
+          takenAt: null,
           doseAmount: '500',
           doseUnit: 'mg',
           form: 'tablet',
+          mealRelation: 'after_meal',
+          notes: '',
+          pointsApplied: 0,
+          scheduledDate: '2026-04-17',
+          isPrn: false,
         ),
       ];
-    final controller = MedicationsController(
-      repository: repo,
-      reminderSyncer: (_) async {},
-    );
+    final controller = MedicationsController(repository: repo);
 
     final ok = await controller.markDoseTaken(3);
 

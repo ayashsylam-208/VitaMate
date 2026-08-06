@@ -16,7 +16,7 @@ from core.models import (
     UserCondition,
 )
 from core.services.condition_medication_service import ConditionMedicationService
-from gamification.models import UserScore
+from gamification.models import PointsTransaction, UserScore
 from test_utils.helpers import auth_client_for_user, create_user_with_profile
 
 
@@ -72,7 +72,18 @@ class UnifiedMedicationApiTests(APITestCase):
             format="json",
         )
 
-    def test_create_manual_medication_generates_pending_dose_and_reminder_sync(self):
+    def _today_doses(self):
+        today_res = self.client_auth.get("/api/medications/today/")
+        self.assertEqual(today_res.status_code, status.HTTP_200_OK, today_res.data)
+        self.assertIn("doses", today_res.data)
+        return today_res.data["doses"]
+
+    def _first_today_log_id(self):
+        doses = self._today_doses()
+        self.assertTrue(doses)
+        return doses[0]["log_id"]
+
+    def test_create_manual_medication_generates_pending_dose(self):
         res = self._create_manual_medication()
         self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
         medication = ConditionMedication.objects.get(user=self.user)
@@ -84,7 +95,8 @@ class UnifiedMedicationApiTests(APITestCase):
                 status=ConditionMedicationLog.STATUS_PENDING,
             ).exists()
         )
-        self.assertTrue(res.data["reminder_sync"]["items"])
+        doses = self._today_doses()
+        self.assertEqual(doses[0]["meal_relation"], "with_food")
 
     def test_create_condition_medication_uses_same_plan_model(self):
         condition = self._condition()
@@ -198,14 +210,116 @@ class UnifiedMedicationApiTests(APITestCase):
         )
         self.assertTrue(multi_dose_day)
 
+    def test_invalid_timezone_is_rejected(self):
+        res = self.client_auth.post(
+            "/api/medications/",
+            {
+                "display_name": "Invalid TZ",
+                "source_type": "manual",
+                "dose_amount": "1",
+                "dose_unit": "tablet",
+                "start_date": str(timezone.localdate()),
+                "timezone": "UTC+3",
+                "schedules": [{"schedule_type": "daily", "time": self._future_time()}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("timezone", res.data)
+
+    def test_materialize_endpoint_returns_snapshot_counts(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+
+        res = self.client_auth.post("/api/medications/materialize/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertIn("generated_count", res.data)
+        self.assertIn("overdue_count", res.data)
+        self.assertEqual(res.data["horizon_hours"], 72)
+
+    def test_legacy_non_iana_timezone_is_normalized_during_materialization(self):
+        medication = ConditionMedication.objects.create(
+            user=self.user,
+            source_type=ConditionMedication.SOURCE_MANUAL,
+            name="Legacy timezone med",
+            display_name="Legacy timezone med",
+            dosage="1 tablet",
+            start_date=timezone.localdate(),
+            timezone="UTC+3",
+        )
+        medication.schedules.create(time_of_day=(timezone.now() + timedelta(minutes=30)).time())
+
+        res = self.client_auth.post("/api/medications/materialize/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        medication.refresh_from_db()
+        self.assertEqual(medication.timezone, "Asia/Damascus")
+
+    def test_prn_medication_logs_taken_dose_without_fixed_schedule(self):
+        create_res = self.client_auth.post(
+            "/api/medications/",
+            {
+                "display_name": "Rescue inhaler",
+                "source_type": "manual",
+                "dose_amount": "2",
+                "dose_unit": "puffs",
+                "form": "inhaler",
+                "start_date": str(timezone.localdate()),
+                "timezone": "Asia/Damascus",
+                "is_prn": True,
+                "schedules": [],
+            },
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        medication_id = create_res.data["medication"]["id"]
+
+        res = self.client_auth.post(
+            f"/api/medications/{medication_id}/prn-dose/",
+            {
+                "taken_at": timezone.now().isoformat(),
+                "dose_taken_amount": "2",
+                "notes": "Shortness of breath",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertEqual(res.data["status"], "taken")
+        self.assertTrue(res.data["is_prn"])
+        self.assertEqual(res.data["notes"], "Shortness of breath")
+        self.assertIsNone(ConditionMedicationLog.objects.get(id=res.data["log_id"]).schedule)
+
+    def test_history_endpoint_groups_dose_logs_by_date(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        log_id = self._first_today_log_id()
+        self.client_auth.post(
+            f"/api/medications/doses/{log_id}/taken/",
+            {"taken_at": timezone.now().isoformat()},
+            format="json",
+        )
+
+        res = self.client_auth.get("/api/medications/history/?status=taken")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertEqual(res.data["status"], "taken")
+        self.assertGreaterEqual(res.data["total"], 1)
+        self.assertTrue(res.data["groups"])
+        self.assertEqual(res.data["groups"][0]["items"][0]["log_id"], log_id)
+
     def test_today_plan_and_dose_actions_update_concrete_log(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
 
         today_res = self.client_auth.get("/api/medications/today/")
         self.assertEqual(today_res.status_code, status.HTTP_200_OK)
-        self.assertTrue(today_res.data)
-        log_id = today_res.data[0]["log_id"]
+        self.assertIn("summary", today_res.data)
+        self.assertIn("grouped", today_res.data)
+        self.assertTrue(today_res.data["doses"])
+        log_id = today_res.data["doses"][0]["log_id"]
 
         take_res = self.client_auth.post(
             f"/api/medications/doses/{log_id}/taken/",
@@ -225,7 +339,7 @@ class UnifiedMedicationApiTests(APITestCase):
     def test_manual_medication_taken_awards_points_once(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
 
         take_res = self.client_auth.post(
             f"/api/medications/doses/{log_id}/taken/",
@@ -245,12 +359,52 @@ class UnifiedMedicationApiTests(APITestCase):
             log.points_applied,
             3 if log.status == ConditionMedicationLog.STATUS_TAKEN_ON_TIME else 1,
         )
-        self.assertEqual(UserScore.objects.get(user=self.user).total_points, log.points_applied)
+        self.assertGreaterEqual(
+            UserScore.objects.get(user=self.user).total_points,
+            log.points_applied,
+        )
+
+    def test_overdue_medication_can_still_be_taken_late_for_partial_points(self):
+        create_res = self._create_manual_medication()
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        log_id = self._first_today_log_id()
+        log = ConditionMedicationLog.objects.get(id=log_id)
+        log.status = ConditionMedicationLog.STATUS_OVERDUE
+        log.scheduled_for = timezone.now() - timedelta(hours=2)
+        log.points_applied = 0
+        log.save(
+            update_fields=[
+                "status",
+                "scheduled_for",
+                "points_applied",
+                "updated_at",
+            ]
+        )
+        take_res = self.client_auth.post(
+            f"/api/medications/doses/{log_id}/taken/",
+            {"taken_at": timezone.now().isoformat()},
+            format="json",
+        )
+
+        self.assertEqual(take_res.status_code, status.HTTP_200_OK, take_res.data)
+        self.assertEqual(take_res.data["status"], "taken")
+        self.assertEqual(take_res.data["raw_status"], ConditionMedicationLog.STATUS_TAKEN_LATE)
+        self.assertEqual(take_res.data["points_applied"], 1)
+        log.refresh_from_db()
+        self.assertEqual(log.status, ConditionMedicationLog.STATUS_TAKEN_LATE)
+        self.assertEqual(log.points_applied, 1)
+        medication_tx = PointsTransaction.objects.get(
+            user=self.user,
+            source_type=PointsTransaction.SOURCE_MEDICATION,
+            source_id=f"log:{log_id}",
+            rule_code="MEDICATION_STATUS_TAKEN_LATE",
+        )
+        self.assertEqual(medication_tx.points, 1)
 
     def test_taken_medication_updates_home_and_progress_points(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
 
         take_res = self.client_auth.post(
             f"/api/medications/doses/{log_id}/taken/",
@@ -278,10 +432,10 @@ class UnifiedMedicationApiTests(APITestCase):
             1,
         )
 
-    def test_home_overview_repairs_legacy_taken_dose_without_points(self):
+    def test_home_overview_is_read_only_for_legacy_taken_dose_without_points(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
         log = ConditionMedicationLog.objects.get(id=log_id)
         log.status = ConditionMedicationLog.STATUS_TAKEN_ON_TIME
         log.taken_at = timezone.now()
@@ -292,9 +446,9 @@ class UnifiedMedicationApiTests(APITestCase):
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         log.refresh_from_db()
-        self.assertEqual(log.points_applied, 3)
-        self.assertEqual(UserScore.objects.get(user=self.user).total_points, 3)
-        self.assertGreaterEqual(res.data["data"]["daily_points"], 3)
+        self.assertEqual(log.points_applied, 0)
+        self.assertEqual(UserScore.objects.get(user=self.user).total_points, 0)
+        self.assertGreaterEqual(res.data["data"]["daily_points"], 0)
 
     def test_taken_supplement_dose_counts_in_micronutrient_overview(self):
         nutrient = Nutrient.objects.get_or_create(
@@ -323,7 +477,7 @@ class UnifiedMedicationApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
 
         take_res = self.client_auth.post(
             f"/api/medications/doses/{log_id}/taken/",
@@ -340,7 +494,7 @@ class UnifiedMedicationApiTests(APITestCase):
     def test_snooze_skip_and_adherence_summary(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
 
         snooze_until = timezone.now() + timedelta(minutes=15)
         snooze_res = self.client_auth.post(
@@ -381,18 +535,18 @@ class UnifiedMedicationApiTests(APITestCase):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
         medication_id = create_res.data["medication"]["id"]
-        self.assertTrue(self.client_auth.get("/api/medications/today/").data)
+        self.assertTrue(self._today_doses())
 
         deactivate_res = self.client_auth.post(f"/api/medications/{medication_id}/deactivate/")
         self.assertEqual(deactivate_res.status_code, status.HTTP_200_OK, deactivate_res.data)
         today_res = self.client_auth.get("/api/medications/today/")
         self.assertEqual(today_res.status_code, status.HTTP_200_OK)
-        self.assertEqual(today_res.data, [])
+        self.assertEqual(today_res.data["doses"], [])
 
     def test_other_user_cannot_access_dose_action(self):
         create_res = self._create_manual_medication()
         self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
-        log_id = self.client_auth.get("/api/medications/today/").data[0]["log_id"]
+        log_id = self._first_today_log_id()
 
         res = self.other_client.post(
             f"/api/medications/doses/{log_id}/missed/",

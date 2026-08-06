@@ -1,16 +1,20 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from core.views import (
-    MealLogViewSet, WaterLogViewSet, MedicineViewSet,
+    MealLogViewSet, WaterLogViewSet, HydrationLogViewSet, MedicineViewSet,
     StepLogViewSet, ActivityLogViewSet, SleepLogViewSet,
     SleepCoachCancelPlanView, SleepCoachFeedbackView, SleepCoachPlanView,
     SleepCoachTodayView, ActivityActiveSessionView, ActivitySessionCancelView,
     ActivitySessionCreateView, ActivitySessionEditView, ActivitySessionFinishView,
     ActivitySessionPauseView, ActivitySessionResumeView,
-    UnhealthyHabitBaselineView, UnhealthyHabitCreateView, UnhealthyHabitLogView,
+    UnhealthyHabitAtomicSetupView, UnhealthyHabitBaselineView,
+    UnhealthyHabitCreateView, UnhealthyHabitDailyCheckInView,
+    UnhealthyHabitLogDetailView, UnhealthyHabitLogView,
     UnhealthyHabitOverviewView, UnhealthyHabitPauseView, UnhealthyHabitPlanView,
-    UnhealthyHabitReminderView,
+    UnhealthyHabitReminderView, UnhealthyHabitResumeView,
     HabitViewSet, FoodItemViewSet, ExerciseViewSet,
     DashboardView, HealthCheckView, NutritionFactsViewSet,
     NutritionServingOptionViewSet, StatsHistoryView,
@@ -19,7 +23,9 @@ from core.views import (
     NutritionSummaryView, HydrationSummaryView, SleepSummaryView,
     StepsSummaryView, ActivitySummaryView, MedicationsOverviewView,
     ChronicOverviewView, OpenApiSchemaView, MicronutrientOverviewView,
-    MicronutrientTargetView,
+    MicronutrientTargetView, MotivationOverviewView, MotivationPointsView,
+    MotivationMissionsView, MotivationMissionRefreshView, MotivationBadgesView,
+    MotivationFeedView, MotivationCelebrationsAckView,
 )
 from core.chronic_views import (
     ConditionMedicationViewSet,
@@ -45,6 +51,7 @@ router.register(r'foods', FoodItemViewSet, basename='food')
 router.register(r'nutrition-facts', NutritionFactsViewSet, basename='nutrition-facts')
 router.register(r'nutrition-serving-options', NutritionServingOptionViewSet, basename='nutrition-serving-option')
 router.register(r'water', WaterLogViewSet, basename='water')
+router.register(r'hydration/logs', HydrationLogViewSet, basename='hydration-log')
 router.register(r'medicines', MedicineViewSet, basename='medicine')
 router.register(r'steps', StepLogViewSet, basename='steps')
 router.register(r'activities', ActivityLogViewSet, basename='activity')
@@ -99,13 +106,27 @@ urlpatterns = [
     path('api/activity/sessions/<int:session_id>/cancel/', ActivitySessionCancelView.as_view(), name='activity-session-cancel'),
     path('api/medications/overview/', MedicationsOverviewView.as_view(), name='medications-overview'),
     path('api/chronic/overview/', ChronicOverviewView.as_view(), name='chronic-overview'),
+    path('api/motivation/overview/', MotivationOverviewView.as_view(), name='motivation-overview'),
+    path('api/motivation/points/', MotivationPointsView.as_view(), name='motivation-points'),
+    path('api/motivation/missions/', MotivationMissionsView.as_view(), name='motivation-missions'),
+    path('api/motivation/missions/<int:mission_id>/refresh/', MotivationMissionRefreshView.as_view(), name='motivation-mission-refresh'),
+    path('api/motivation/badges/', MotivationBadgesView.as_view(), name='motivation-badges'),
+    path('api/motivation/feed/', MotivationFeedView.as_view(), name='motivation-feed'),
+    path('api/motivation/celebrations/ack/', MotivationCelebrationsAckView.as_view(), name='motivation-celebrations-ack'),
+    path('api/notification-hub/', include('notification_hub.urls')),
+    path('api/manager/', include('manager.urls')),
+    path('api/nutrition/ai-meals/', include('ai_meals.urls')),
     path('api/habits/unhealthy/overview/', UnhealthyHabitOverviewView.as_view(), name='unhealthy-habits-overview'),
+    path('api/habits/unhealthy/setup/', UnhealthyHabitAtomicSetupView.as_view(), name='unhealthy-habits-setup'),
     path('api/habits/unhealthy/', UnhealthyHabitCreateView.as_view(), name='unhealthy-habits-create'),
     path('api/habits/unhealthy/<int:habit_id>/baseline/', UnhealthyHabitBaselineView.as_view(), name='unhealthy-habits-baseline'),
     path('api/habits/unhealthy/<int:habit_id>/plan/', UnhealthyHabitPlanView.as_view(), name='unhealthy-habits-plan'),
     path('api/habits/unhealthy/<int:habit_id>/logs/', UnhealthyHabitLogView.as_view(), name='unhealthy-habits-logs'),
+    path('api/habits/unhealthy/<int:habit_id>/logs/<int:log_id>/', UnhealthyHabitLogDetailView.as_view(), name='unhealthy-habits-log-detail'),
+    path('api/habits/unhealthy/<int:habit_id>/daily-check-in/', UnhealthyHabitDailyCheckInView.as_view(), name='unhealthy-habits-daily-check-in'),
     path('api/habits/unhealthy/<int:habit_id>/reminders/', UnhealthyHabitReminderView.as_view(), name='unhealthy-habits-reminders'),
     path('api/habits/unhealthy/<int:habit_id>/pause/', UnhealthyHabitPauseView.as_view(), name='unhealthy-habits-pause'),
+    path('api/habits/unhealthy/<int:habit_id>/resume/', UnhealthyHabitResumeView.as_view(), name='unhealthy-habits-resume'),
 
     # API
     path('api/', include(router.urls)),
@@ -118,3 +139,6 @@ urlpatterns = [
     path('api/dashboard/', DashboardView.as_view(), name='dashboard'),
     path('api/history/', StatsHistoryView.as_view(), name='history'),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

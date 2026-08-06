@@ -13,7 +13,11 @@ class VitaMateBottomNav extends StatelessWidget {
     _BottomNavItemData('Progress', Icons.bar_chart_rounded, Routes.progress),
     _BottomNavItemData('Meds', Icons.link_rounded, Routes.meds),
     _BottomNavItemData('Habits', Icons.sync_alt_rounded, Routes.habits),
-    _BottomNavItemData('Profile', Icons.person_outline_rounded, Routes.score),
+    _BottomNavItemData(
+      'My VitaMate',
+      Icons.manage_accounts_outlined,
+      Routes.myVitaMate,
+    ),
   ];
 
   @override

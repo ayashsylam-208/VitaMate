@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date, datetime, time, timedelta
+from uuid import uuid4
 
 from django.db import transaction
 from django.db.models import Sum
@@ -18,10 +19,12 @@ from core.models import (
     UnhealthyHabitPlan,
     UnhealthyHabitPointEvent,
     UnhealthyHabitReminder,
+    WaterLog,
 )
 from core.services.nutrition_service import NutritionLoggingService as NutritionService
 from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
+from core.services.habits.habit_evaluation_service import HabitEvaluationService
 from gamification.services.points_service import PointsService
 
 
@@ -75,6 +78,17 @@ class UnhealthyHabitService:
     @transaction.atomic
     def create_habit(cls, *, user, payload: dict, request_id: str) -> dict:
         habit_type = payload["habit_type"]
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        if idempotency_key:
+            existing = UnhealthyHabit.objects.filter(
+                user=user,
+                setup_idempotency_key=idempotency_key,
+            ).first()
+            if existing is not None:
+                return cls._envelope(
+                    data={"habit": cls._habit_payload(habit=existing, today=timezone.localdate())},
+                    request_id=request_id,
+                )
         habit = (
             UnhealthyHabit.objects.filter(
                 user=user,
@@ -92,6 +106,7 @@ class UnhealthyHabitService:
                 goal_type=payload.get("goal_type") or UnhealthyHabit.GOAL_REDUCE,
                 start_date=payload.get("start_date") or timezone.localdate(),
                 target_date=payload.get("target_date"),
+                setup_idempotency_key=idempotency_key,
             )
         else:
             habit.title = payload.get("title") or habit.title or cls.HABIT_LABELS[habit_type]
@@ -101,6 +116,8 @@ class UnhealthyHabitService:
                 habit.start_date = payload.get("start_date")
             if "target_date" in payload:
                 habit.target_date = payload.get("target_date")
+            if idempotency_key and not habit.setup_idempotency_key:
+                habit.setup_idempotency_key = idempotency_key
             habit.save(
                 update_fields=[
                     "title",
@@ -108,10 +125,56 @@ class UnhealthyHabitService:
                     "status",
                     "start_date",
                     "target_date",
+                    "setup_idempotency_key",
                     "updated_at",
                 ]
             )
         cls._publish_changed(user=user, event_date=habit.start_date, reference=f"habit:{habit.id}")
+        return cls._envelope(
+            data={"habit": cls._habit_payload(habit=habit, today=timezone.localdate())},
+            request_id=request_id,
+        )
+
+    @classmethod
+    @transaction.atomic
+    def setup_habit(cls, *, user, payload: dict, request_id: str) -> dict:
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        if idempotency_key:
+            existing = UnhealthyHabit.objects.filter(
+                user=user,
+                setup_idempotency_key=idempotency_key,
+            ).select_related("baseline", "plan").prefetch_related("reminders").first()
+            if existing is not None:
+                return cls._envelope(
+                    data={"habit": cls._habit_payload(habit=existing, today=timezone.localdate())},
+                    request_id=request_id,
+                )
+
+        habit_payload = dict(payload.get("habit") or {})
+        if idempotency_key:
+            habit_payload["idempotency_key"] = idempotency_key
+        habit_result = cls.create_habit(
+            user=user,
+            payload=habit_payload,
+            request_id=request_id,
+        )
+        habit_id = dict(dict(habit_result.get("data") or {}).get("habit") or {}).get("id")
+        habit = cls.get_habit_for_user(user=user, habit_id=habit_id)
+
+        cls.upsert_baseline(
+            habit=habit,
+            payload=dict(payload.get("baseline") or {}),
+            request_id=request_id,
+        )
+        plan_payload = {
+            **dict(payload.get("plan") or {}),
+            "goal_type": habit_payload.get("goal_type") or habit.goal_type,
+        }
+        cls.upsert_plan(habit=habit, payload=plan_payload, request_id=request_id)
+        reminders = list(payload.get("reminders") or [])
+        if reminders:
+            cls.replace_reminders(habit=habit, reminders=reminders, request_id=request_id)
+        habit = cls.get_habit_for_user(user=user, habit_id=habit.id)
         return cls._envelope(
             data={"habit": cls._habit_payload(habit=habit, today=timezone.localdate())},
             request_id=request_id,
@@ -187,6 +250,29 @@ class UnhealthyHabitService:
         caffeine_mg = float(payload.get("caffeine_mg") or 0)
         calories_kcal = float(payload.get("calories_kcal") or 0)
 
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        source_ref = f"direct:{idempotency_key}" if idempotency_key else ""
+        if source_ref:
+            existing = UnhealthyHabitLog.objects.filter(
+                habit=habit,
+                source_type=UnhealthyHabitLog.SOURCE_TYPE_DIRECT,
+                source_ref=source_ref,
+            ).first()
+            if existing is not None:
+                evaluation = HabitEvaluationService.evaluate_habit(
+                    habit=habit,
+                    target_date=existing.log_date,
+                )
+                return cls._envelope(
+                    data=cls._write_payload(
+                        log=existing,
+                        habit=habit,
+                        evaluation=evaluation,
+                        tracker_projection=cls._tracker_projection_payload(existing),
+                    ),
+                    request_id=request_id,
+                )
+
         metric_quantity = cls._metric_quantity(
             habit_type=habit.habit_type,
             quantity=quantity,
@@ -211,6 +297,13 @@ class UnhealthyHabitService:
             is_relapse=is_relapse,
             is_within_limit=is_within_limit,
             sync_to_tracker=bool(payload.get("sync_to_tracker")),
+            origin_domain=UnhealthyHabitLog.ORIGIN_HABITS,
+            origin_record_id="",
+            correlation_id=idempotency_key or uuid4().hex,
+            source_type=UnhealthyHabitLog.SOURCE_TYPE_DIRECT,
+            source_ref=source_ref,
+            reward_owner_domain="habits",
+            meal_type=payload.get("meal_type") or "unknown",
             caffeine_mg=caffeine_mg,
             calories_kcal=calories_kcal,
             food_name=payload.get("food_name") or "",
@@ -219,14 +312,192 @@ class UnhealthyHabitService:
 
         if log.sync_to_tracker:
             cls._sync_tracker_log(log=log, payload=payload)
+            log.refresh_from_db()
         cls._award_points(log)
         cls._publish_changed(user=habit.user, event_date=log_date, reference=f"unhealthy-log:{log.id}")
+        evaluation = HabitEvaluationService.evaluate_habit(habit=habit, target_date=log_date)
 
         return cls._envelope(
+            data=cls._write_payload(
+                log=log,
+                habit=habit,
+                evaluation=evaluation,
+                tracker_projection=cls._tracker_projection_payload(log),
+            ),
+            request_id=request_id,
+        )
+
+    @classmethod
+    @transaction.atomic
+    def update_habit_log(cls, *, habit, log_id: int, payload: dict, request_id: str) -> dict:
+        log = habit.logs.filter(id=log_id).first()
+        if log is None:
+            raise NotFound("Habit log not found.")
+        if log.source_type == UnhealthyHabitLog.SOURCE_TYPE_TRACKER_PROJECTION:
+            raise ValidationError(
+                {"log": "Edit this record from its source tracker."},
+            )
+
+        logged_at = payload.get("logged_at") or log.logged_at
+        log.logged_at = logged_at
+        log.log_date = timezone.localtime(logged_at).date()
+        log.quantity = float(payload.get("quantity", log.quantity) or 0)
+        log.unit = payload.get("unit", log.unit) or cls.DEFAULT_UNITS.get(habit.habit_type, "")
+        log.trigger = payload.get("trigger", log.trigger) or ""
+        log.mood = payload.get("mood", log.mood) or ""
+        log.notes = payload.get("notes", log.notes) or ""
+        log.sync_to_tracker = bool(payload.get("sync_to_tracker", log.sync_to_tracker))
+        log.caffeine_mg = float(payload.get("caffeine_mg", log.caffeine_mg) or 0)
+        log.calories_kcal = float(payload.get("calories_kcal", log.calories_kcal) or 0)
+        log.food_name = payload.get("food_name", log.food_name) or ""
+        log.healthy_replacement = bool(payload.get("healthy_replacement", log.healthy_replacement))
+        log.meal_type = payload.get("meal_type", log.meal_type) or "unknown"
+        metric_quantity = cls._metric_quantity(
+            habit_type=habit.habit_type,
+            quantity=log.quantity,
+            caffeine_mg=log.caffeine_mg,
+        )
+        log.is_within_limit = cls._is_within_limit_after_log_excluding(
+            habit=habit,
+            log_date=log.log_date,
+            new_metric_quantity=metric_quantity,
+            exclude_log_id=log.id,
+        )
+        log.is_relapse = bool(payload.get("is_relapse", log.is_relapse)) or not log.is_within_limit
+        log.save(
+            update_fields=[
+                "logged_at",
+                "log_date",
+                "quantity",
+                "unit",
+                "trigger",
+                "mood",
+                "notes",
+                "sync_to_tracker",
+                "caffeine_mg",
+                "calories_kcal",
+                "food_name",
+                "healthy_replacement",
+                "meal_type",
+                "is_within_limit",
+                "is_relapse",
+            ]
+        )
+        if log.sync_to_tracker:
+            cls._sync_tracker_log(log=log, payload=payload)
+            log.refresh_from_db()
+        else:
+            cls._delete_tracker_projection_for_log(log=log)
+            log.linked_meal_log = None
+            log.linked_water_log = None
+            log.save(update_fields=["linked_meal_log", "linked_water_log"])
+        cls._publish_changed(user=habit.user, event_date=log.log_date, reference=f"unhealthy-log-update:{log.id}")
+        evaluation = HabitEvaluationService.evaluate_habit(habit=habit, target_date=log.log_date)
+        return cls._envelope(
+            data=cls._write_payload(
+                log=log,
+                habit=habit,
+                evaluation=evaluation,
+                tracker_projection=cls._tracker_projection_payload(log),
+            ),
+            request_id=request_id,
+        )
+
+    @classmethod
+    @transaction.atomic
+    def delete_habit_log(cls, *, habit, log_id: int, request_id: str) -> dict:
+        log = habit.logs.filter(id=log_id).first()
+        if log is None:
+            raise NotFound("Habit log not found.")
+        target_date = log.log_date
+        if log.source_type != UnhealthyHabitLog.SOURCE_TYPE_TRACKER_PROJECTION:
+            cls._delete_tracker_projection_for_log(log=log)
+        log.delete()
+        cls._publish_changed(user=habit.user, event_date=target_date, reference=f"unhealthy-log-delete:{log_id}")
+        return cls._envelope(
             data={
-                "log": cls._log_payload(log),
-                "habit": cls._habit_payload(habit=habit, today=log_date),
+                "deleted": True,
+                "log_id": log_id,
+                "summary": cls.summary_for_user(user=habit.user, target_date=target_date),
             },
+            request_id=request_id,
+        )
+
+    @classmethod
+    @transaction.atomic
+    def daily_check_in(cls, *, habit, payload: dict, request_id: str) -> dict:
+        if habit.status != UnhealthyHabit.STATUS_ACTIVE:
+            evaluation = HabitEvaluationService.evaluate_habit(
+                habit=habit,
+                target_date=payload.get("date") or timezone.localdate(),
+            )
+            return cls._envelope(
+                data={
+                    "log": None,
+                    "habit": cls._habit_payload(
+                        habit=habit,
+                        today=payload.get("date") or timezone.localdate(),
+                    ),
+                    "evaluation": evaluation,
+                    "confirmed_points": [],
+                    "in_app_events": [],
+                    "tracker_projection": {},
+                },
+                request_id=request_id,
+            )
+        target_date = payload.get("date") or timezone.localdate()
+        used = bool(payload.get("used"))
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        source_ref = f"checkin:{target_date.isoformat()}:{idempotency_key}" if idempotency_key else f"checkin:{target_date.isoformat()}"
+
+        logged_at = timezone.make_aware(datetime.combine(target_date, time(12, 0)), timezone.get_current_timezone())
+        log, created = UnhealthyHabitLog.objects.get_or_create(
+            habit=habit,
+            source_type=UnhealthyHabitLog.SOURCE_TYPE_DIRECT,
+            source_ref=source_ref,
+            defaults={
+                "logged_at": logged_at,
+                "log_date": target_date,
+                "quantity": 1 if used else 0,
+                "unit": cls.DEFAULT_UNITS.get(habit.habit_type, ""),
+                "is_relapse": used and habit.goal_type == UnhealthyHabit.GOAL_QUIT,
+                "is_within_limit": not used,
+                "source": UnhealthyHabitLog.SOURCE_MANUAL,
+                "origin_domain": UnhealthyHabitLog.ORIGIN_HABITS,
+                "correlation_id": idempotency_key or uuid4().hex,
+                "reward_owner_domain": "habits",
+                "is_abstinence_checkin": not used,
+            },
+        )
+        if not created:
+            log.quantity = 1 if used else 0
+            log.is_abstinence_checkin = not used
+            log.is_relapse = used and habit.goal_type == UnhealthyHabit.GOAL_QUIT
+            log.is_within_limit = not log.is_relapse
+            log.save(update_fields=["quantity", "is_abstinence_checkin", "is_relapse", "is_within_limit"])
+        if used:
+            cls._award_points(log)
+        else:
+            cls._apply_point_event(
+                log=log,
+                event_type=UnhealthyHabitPointEvent.EVENT_IMPROVEMENT,
+                points=5,
+                award=lambda: PointsService.award_unhealthy_habit_improvement(
+                    habit.user,
+                    source_id=f"{habit.id}:abstinence:{target_date.isoformat()}",
+                    event_date=target_date,
+                ),
+                per_log=False,
+            )
+        cls._publish_changed(user=habit.user, event_date=target_date, reference=f"checkin:{habit.id}:{target_date}")
+        evaluation = HabitEvaluationService.evaluate_habit(habit=habit, target_date=target_date)
+        return cls._envelope(
+            data=cls._write_payload(
+                log=log,
+                habit=habit,
+                evaluation=evaluation,
+                tracker_projection={},
+            ),
             request_id=request_id,
         )
 
@@ -260,6 +531,17 @@ class UnhealthyHabitService:
             request_id=request_id,
         )
 
+    @classmethod
+    @transaction.atomic
+    def resume_habit(cls, *, habit, request_id: str) -> dict:
+        habit.status = UnhealthyHabit.STATUS_ACTIVE
+        habit.save(update_fields=["status", "updated_at"])
+        cls._publish_changed(user=habit.user, event_date=timezone.localdate(), reference=f"resume:{habit.id}")
+        return cls._envelope(
+            data={"habit": cls._habit_payload(habit=habit, today=timezone.localdate())},
+            request_id=request_id,
+        )
+
     @staticmethod
     def get_habit_for_user(*, user, habit_id: int) -> UnhealthyHabit:
         habit = (
@@ -275,9 +557,17 @@ class UnhealthyHabitService:
     @classmethod
     def summary_for_user(cls, *, user, target_date: date | None = None) -> dict:
         target_date = target_date or timezone.localdate()
-        habits = list(UnhealthyHabit.objects.filter(user=user, status=UnhealthyHabit.STATUS_ACTIVE))
-        logs_today = UnhealthyHabitLog.objects.filter(habit__user=user, log_date=target_date)
-        relapse_count = logs_today.filter(is_relapse=True).count()
+        evaluation_summary = HabitEvaluationService.evaluate_user(
+            user=user,
+            target_date=target_date,
+        )
+        active_habits = [
+            item
+            for item in evaluation_summary["evaluations"]
+            if item.get("is_applicable")
+        ]
+        confirmed = [item for item in active_habits if item.get("confirmed")]
+        relapse_count = int(evaluation_summary.get("relapses_today") or 0)
         points_today = (
             UnhealthyHabitPointEvent.objects.filter(habit__user=user, event_date=target_date)
             .aggregate(total=Sum("points"))
@@ -285,11 +575,15 @@ class UnhealthyHabitService:
             or 0
         )
         return {
-            "active_count": len(habits),
-            "logs_today": logs_today.count(),
+            "active_count": len(active_habits),
+            "logs_today": len(confirmed),
+            "confirmed_today": len(confirmed),
+            "completed_today": int(evaluation_summary.get("completed_count") or 0),
             "relapses_today": relapse_count,
             "points_today": int(points_today),
-            "habit_types": [habit.habit_type for habit in habits],
+            "score": int(evaluation_summary.get("score") or 0),
+            "habit_types": [item.get("habit_type") for item in active_habits],
+            "evaluations": evaluation_summary["evaluations"],
         }
 
     @classmethod
@@ -351,6 +645,7 @@ class UnhealthyHabitService:
             "baseline": cls._baseline_payload(baseline),
             "plan": cls._plan_payload(plan),
             "progress": progress,
+            "evaluation": HabitEvaluationService.evaluate_habit(habit=habit, target_date=today),
             "reminders": [cls._reminder_payload(item) for item in habit.reminders.all()],
         }
 
@@ -369,6 +664,15 @@ class UnhealthyHabitService:
             "baseline": None,
             "plan": None,
             "progress": cls._empty_progress(habit_type),
+            "evaluation": {
+                "habit_id": None,
+                "date": timezone.localdate().isoformat(),
+                "habit_type": habit_type,
+                "status": "not_logged",
+                "is_applicable": False,
+                "is_complete": False,
+                "confirmed": False,
+            },
             "reminders": [],
         }
 
@@ -495,6 +799,54 @@ class UnhealthyHabitService:
             "healthy_replacement": log.healthy_replacement,
             "linked_meal_log": log.linked_meal_log_id,
             "linked_water_log": log.linked_water_log_id,
+            "origin_domain": log.origin_domain,
+            "origin_record_id": log.origin_record_id,
+            "correlation_id": log.correlation_id,
+            "source_type": log.source_type,
+            "source_ref": log.source_ref,
+            "reward_owner_domain": log.reward_owner_domain,
+            "meal_type": log.meal_type,
+            "is_abstinence_checkin": log.is_abstinence_checkin,
+        }
+
+    @classmethod
+    def _write_payload(
+        cls,
+        *,
+        log: UnhealthyHabitLog,
+        habit: UnhealthyHabit,
+        evaluation: dict,
+        tracker_projection: dict,
+    ) -> dict:
+        return {
+            "log": cls._log_payload(log),
+            "habit": cls._habit_payload(habit=habit, today=log.log_date),
+            "evaluation": evaluation,
+            "confirmed_points": cls._points_for_log(log),
+            "in_app_events": list(evaluation.get("in_app_events") or []),
+            "tracker_projection": tracker_projection,
+        }
+
+    @staticmethod
+    def _points_for_log(log: UnhealthyHabitLog) -> list[dict]:
+        return [
+            {
+                "event_type": item.event_type,
+                "points": int(item.points or 0),
+                "event_date": item.event_date.isoformat(),
+            }
+            for item in log.point_events.order_by("created_at", "id")
+        ]
+
+    @staticmethod
+    def _tracker_projection_payload(log: UnhealthyHabitLog) -> dict:
+        meal = log.linked_meal_log
+        water = log.linked_water_log
+        return {
+            "meal_log_id": meal.id if meal is not None else None,
+            "water_log_id": water.id if water is not None else None,
+            "source_ref": f"habit_log:{log.id}",
+            "status": "linked" if meal is not None or water is not None else "none",
         }
 
     @classmethod
@@ -596,6 +948,36 @@ class UnhealthyHabitService:
         return current + new_metric_quantity <= plan.daily_limit
 
     @classmethod
+    def _is_within_limit_after_log_excluding(
+        cls,
+        *,
+        habit: UnhealthyHabit,
+        log_date: date,
+        new_metric_quantity: float,
+        exclude_log_id: int,
+    ) -> bool:
+        plan = getattr(habit, "plan", None)
+        if plan is None:
+            return True
+        if habit.habit_type == UnhealthyHabit.TYPE_FAST_FOOD:
+            if not plan.weekly_limit:
+                return True
+            week_start = log_date - timedelta(days=log_date.weekday())
+            current = sum(
+                cls._metric_from_log(log)
+                for log in habit.logs.filter(log_date__gte=week_start, log_date__lte=log_date)
+                .exclude(id=exclude_log_id)
+            )
+            return current + new_metric_quantity <= plan.weekly_limit
+        if not plan.daily_limit:
+            return True
+        current = sum(
+            cls._metric_from_log(log)
+            for log in habit.logs.filter(log_date=log_date).exclude(id=exclude_log_id)
+        )
+        return current + new_metric_quantity <= plan.daily_limit
+
+    @classmethod
     def _metric_from_log(cls, log: UnhealthyHabitLog) -> float:
         return cls._metric_quantity(
             habit_type=log.habit.habit_type,
@@ -616,28 +998,108 @@ class UnhealthyHabitService:
             UnhealthyHabit.TYPE_FAST_FOOD,
         }:
             return
+        if log.source_type == UnhealthyHabitLog.SOURCE_TYPE_TRACKER_PROJECTION:
+            return
         food = cls._resolve_or_create_food(log=log, payload=payload)
         if food is None:
             return
-        meal = NutritionService.log_meal(
+        source_ref = f"habit_log:{log.id}"
+        meal_type = cls._projected_meal_type(log=log)
+        existing_meal = MealLog.objects.filter(
             user=log.habit.user,
-            food=food,
-            meal_type="drink" if log.habit.habit_type == UnhealthyHabit.TYPE_CAFFEINE else "snack",
-            quantity=payload.get("tracker_quantity") or 1,
-            unit=payload.get("tracker_unit") or "serving",
-            consumed_at=log.logged_at,
-            notes=f"Synced from unhealthy habit: {log.habit.get_habit_type_display()}",
-            source=MealLog.SOURCE_MANUAL,
-            sync_hydration=True,
-            publish_event=True,
-        )
+            source_type=MealLog.SOURCE_TYPE_HABIT_PROJECTION,
+            source_ref=source_ref,
+        ).first()
+        meal_kwargs = {
+            "user": log.habit.user,
+            "food": food,
+            "meal_type": meal_type,
+            "quantity": payload.get("tracker_quantity") or 1,
+            "unit": payload.get("tracker_unit") or "serving",
+            "consumed_at": log.logged_at,
+            "notes": f"Synced from unhealthy habit: {log.habit.get_habit_type_display()}",
+            "source": MealLog.SOURCE_HABIT_SYNC,
+            "sync_hydration": log.habit.habit_type == UnhealthyHabit.TYPE_CAFFEINE,
+            "publish_event": True,
+            "origin_domain": MealLog.ORIGIN_HABITS,
+            "origin_record_id": str(log.id),
+            "correlation_id": log.correlation_id or f"habit-log:{log.id}",
+            "source_type": MealLog.SOURCE_TYPE_HABIT_PROJECTION,
+            "source_ref": source_ref,
+            "reward_owner_domain": "habits",
+            "is_fast_food": log.habit.habit_type == UnhealthyHabit.TYPE_FAST_FOOD,
+            "quality_tags": ["fast_food"] if log.habit.habit_type == UnhealthyHabit.TYPE_FAST_FOOD else [],
+        }
+        if existing_meal is None:
+            meal = NutritionService.log_meal(**meal_kwargs)
+        else:
+            meal = NutritionService.update_meal_log(
+                existing_meal,
+                food=food,
+                meal_type=meal_type,
+                quantity=meal_kwargs["quantity"],
+                unit=meal_kwargs["unit"],
+                consumed_at=log.logged_at,
+                notes=meal_kwargs["notes"],
+                source=MealLog.SOURCE_HABIT_SYNC,
+                sync_hydration=meal_kwargs["sync_hydration"],
+                publish_event=True,
+                origin_domain=MealLog.ORIGIN_HABITS,
+                origin_record_id=str(log.id),
+                correlation_id=meal_kwargs["correlation_id"],
+                source_type=MealLog.SOURCE_TYPE_HABIT_PROJECTION,
+                source_ref=source_ref,
+                reward_owner_domain="habits",
+                is_fast_food=meal_kwargs["is_fast_food"],
+                quality_tags=meal_kwargs["quality_tags"],
+            )
         log.linked_meal_log = meal
         if getattr(meal, "water_logs", None):
             linked_water = meal.water_logs.first()
             if linked_water is not None:
                 log.linked_water_log = linked_water
+                linked_water.source_type = WaterLog.SOURCE_TYPE_HABIT_PROJECTION
+                linked_water.source_ref = source_ref
+                linked_water.origin_domain = WaterLog.ORIGIN_HABITS
+                linked_water.origin_record_id = str(log.id)
+                linked_water.correlation_id = log.correlation_id or f"habit-log:{log.id}"
+                linked_water.reward_owner_domain = "habits"
+                linked_water.caffeine_mg = float(log.caffeine_mg or 0)
+                linked_water.save(
+                    update_fields=[
+                        "source_type",
+                        "source_ref",
+                        "origin_domain",
+                        "origin_record_id",
+                        "correlation_id",
+                        "reward_owner_domain",
+                        "caffeine_mg",
+                    ]
+                )
         log.source = UnhealthyHabitLog.SOURCE_NUTRITION
         log.save(update_fields=["linked_meal_log", "linked_water_log", "source"])
+
+    @staticmethod
+    def _delete_tracker_projection_for_log(*, log: UnhealthyHabitLog) -> None:
+        meal = log.linked_meal_log
+        water = log.linked_water_log
+        if meal is not None and meal.source_type == MealLog.SOURCE_TYPE_HABIT_PROJECTION:
+            NutritionService.delete_meal_log(meal, publish_event=False)
+            return
+        if water is not None and water.source_type == WaterLog.SOURCE_TYPE_HABIT_PROJECTION:
+            from core.services.hydration.water_service import WaterService
+
+            WaterService.delete_water_log(water)
+
+    @staticmethod
+    def _projected_meal_type(*, log: UnhealthyHabitLog) -> str:
+        value = str(log.meal_type or "").strip()
+        allowed = {"breakfast", "lunch", "dinner", "snack", "drink", "unknown"}
+        if value in allowed:
+            return value
+        if log.habit.habit_type == UnhealthyHabit.TYPE_CAFFEINE:
+            return "drink"
+        return "unknown"
 
     @classmethod
     def _resolve_or_create_food(cls, *, log: UnhealthyHabitLog, payload: dict):
@@ -702,27 +1164,44 @@ class UnhealthyHabitService:
 
     @classmethod
     def _award_points(cls, log: UnhealthyHabitLog) -> None:
+        if (
+            log.reward_owner_domain != "habits"
+            or log.source_type == UnhealthyHabitLog.SOURCE_TYPE_TRACKER_PROJECTION
+        ):
+            return
         cls._apply_point_event(
             log=log,
             event_type=UnhealthyHabitPointEvent.EVENT_LOGGED,
             points=2,
-            award=lambda: PointsService.award_unhealthy_habit_log(log.habit.user),
+            award=lambda: PointsService.award_unhealthy_habit_log(
+                log.habit.user,
+                source_id=log.id,
+                event_date=log.log_date,
+            ),
             per_log=True,
         )
         if log.is_within_limit:
             cls._apply_point_event(
                 log=log,
                 event_type=UnhealthyHabitPointEvent.EVENT_WITHIN_LIMIT,
-                points=3,
-                award=lambda: PointsService.award_unhealthy_habit_within_limit(log.habit.user),
+                points=5,
+                award=lambda: PointsService.award_unhealthy_habit_within_limit(
+                    log.habit.user,
+                    source_id=f"{log.habit_id}:within_limit",
+                    event_date=log.log_date,
+                ),
                 per_log=False,
             )
         if log.healthy_replacement:
             cls._apply_point_event(
                 log=log,
                 event_type=UnhealthyHabitPointEvent.EVENT_HEALTHY_REPLACEMENT,
-                points=4,
-                award=lambda: PointsService.award_unhealthy_habit_replacement(log.habit.user),
+                points=5,
+                award=lambda: PointsService.award_unhealthy_habit_replacement(
+                    log.habit.user,
+                    source_id=log.id,
+                    event_date=log.log_date,
+                ),
                 per_log=True,
             )
         baseline = getattr(log.habit, "baseline", None)
@@ -736,7 +1215,11 @@ class UnhealthyHabitService:
                     log=log,
                     event_type=UnhealthyHabitPointEvent.EVENT_IMPROVEMENT,
                     points=5,
-                    award=lambda: PointsService.award_unhealthy_habit_improvement(log.habit.user),
+                    award=lambda: PointsService.award_unhealthy_habit_improvement(
+                        log.habit.user,
+                        source_id=f"{log.habit_id}:improvement",
+                        event_date=log.log_date,
+                    ),
                     per_log=False,
                 )
 
@@ -782,6 +1265,12 @@ class UnhealthyHabitService:
 
     @staticmethod
     def _publish_changed(*, user, event_date: date, reference: str) -> None:
+        from gamification.services.motivation_service import MotivationService
+
+        MotivationService.refresh_daily(
+            user=user,
+            target_date=event_date,
+        )
         HealthStateEventPublisher.publish_on_commit(
             user=user,
             trigger_type=HealthStateTriggers.UNHEALTHY_HABIT_CHANGED,

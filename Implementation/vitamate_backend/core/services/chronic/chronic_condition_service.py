@@ -22,11 +22,12 @@ from core.models import (
 )
 from core.repositories.hydration.water_log_repository import HydrationRepository
 from core.services.condition_catalog_service import ConditionCatalogService
-from core.services.condition_constraint_engine import ConditionConstraintEngine
+from core.services.constraints import ConstraintReadService
 from core.services.condition_indicator_service import ConditionIndicatorService
 from core.services.condition_medication_service import ConditionMedicationService
 from core.services.condition_points_evaluator import ConditionPointsEvaluator
 from core.services.nutrition_service import NutritionService
+from core.services.chronic.lipid_panel_values import LipidPanelValues
 
 
 @dataclass(frozen=True)
@@ -572,7 +573,9 @@ class ChronicConditionService:
                 diastolic = cls._format_compact_metric(payload.get("diastolic") or latest_reading.value_2)
                 return f"{systolic}/{diastolic} {unit}".strip()
             if indicator_type == "lipid_panel":
-                ldl = cls._format_compact_metric(payload.get("ldl") or latest_reading.value_1)
+                ldl = cls._format_compact_metric(
+                    LipidPanelValues.from_measurement(latest_reading).ldl_mg_dl
+                )
                 return f"LDL {ldl} {unit}".strip()
             primary = cls._format_compact_metric(latest_reading.value_1 or latest_reading.value)
             return f"{primary} {unit}".strip()
@@ -959,14 +962,11 @@ class ChronicConditionService:
             user_condition=user_condition,
             on_date=on_date,
         )
-        profile = getattr(user_condition.user, "userprofile", None)
-        effective_constraints = None
-        if profile is not None:
-            effective_constraints = ConditionConstraintEngine.build_effective_constraints(
-                user=user_condition.user,
-                profile=profile,
-                on_date=on_date,
+        materialized_constraints = list(
+            ConstraintReadService.active_for_user(user=user_condition.user).filter(
+                source_condition=user_condition,
             )
+        )
         medications = []
         for medication in user_condition.medications.filter(is_active=True).prefetch_related("schedules__logs"):
             schedules = []
@@ -1042,9 +1042,13 @@ class ChronicConditionService:
                 on_date=on_date,
                 evaluation=evaluation,
             ),
-            "constraint_summary": list(effective_constraints.applied_summaries)
-            if effective_constraints
-            else [],
+            "constraint_summary": list(
+                dict.fromkeys(
+                    constraint.reason_summary
+                    for constraint in materialized_constraints
+                    if constraint.reason_summary
+                )
+            ),
             "daily_medication_count": len(medications),
             "daily_pending_doses": sum(
                 1

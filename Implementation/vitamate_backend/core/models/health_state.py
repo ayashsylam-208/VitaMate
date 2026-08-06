@@ -92,10 +92,15 @@ class HealthStateComputationRun(models.Model):
         default=SYNC_MODE_SYNC,
     )
     affected_domains = models.JSONField(default=list, blank=True)
+    correlation_id = models.CharField(max_length=64, blank=True, db_index=True)
+    idempotency_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
+    retry_count = models.PositiveIntegerField(default=0)
     error_message = models.TextField(blank=True)
+    error_code = models.CharField(max_length=80, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(default=timezone.now)
     completed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("-started_at", "-id")
@@ -142,7 +147,6 @@ class HealthStateDelta(models.Model):
     warnings_added = models.JSONField(default=list, blank=True)
     warnings_resolved = models.JSONField(default=list, blank=True)
     achievements_added = models.JSONField(default=list, blank=True)
-    notification_candidates = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -160,51 +164,3 @@ class HealthStateDelta(models.Model):
 
     def __str__(self):
         return f"{self.user_id}:{self.window_kind}:{self.state_date}:{self.trigger_type}"
-
-
-class NotificationDispatchRecord(models.Model):
-    STATUS_PENDING = "pending"
-    STATUS_DISPATCHED = "dispatched"
-    STATUS_SUPPRESSED = "suppressed"
-    STATUS_CHOICES = [
-        (STATUS_PENDING, "Pending"),
-        (STATUS_DISPATCHED, "Dispatched"),
-        (STATUS_SUPPRESSED, "Suppressed"),
-    ]
-
-    user = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name="notification_dispatch_records",
-    )
-    notification_type = models.CharField(max_length=80, db_index=True)
-    channel = models.CharField(max_length=60, blank=True)
-    priority = models.PositiveSmallIntegerField(default=50)
-    dedupe_key = models.CharField(max_length=255, db_index=True)
-    payload = models.JSONField(default=dict, blank=True)
-    cooldown_until = models.DateTimeField(null=True, blank=True)
-    last_dispatched_at = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default=STATUS_PENDING,
-        db_index=True,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ("-updated_at", "-id")
-        indexes = [
-            models.Index(
-                fields=("user", "dedupe_key", "updated_at"),
-                name="ndr_user_dedupe_updated_idx",
-            ),
-            models.Index(
-                fields=("user", "status", "updated_at"),
-                name="ndr_user_status_updated_idx",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.user_id}:{self.notification_type}:{self.dedupe_key}"

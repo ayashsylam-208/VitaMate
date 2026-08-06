@@ -40,7 +40,9 @@ class _FakeNutritionApi extends NutritionApi {
         0,
         summary.targetCalories,
       ),
-      points: summary.points,
+      // The backend owns nutrition point calculation; the fake mirrors a
+      // changing server snapshot instead of making the controller calculate it.
+      points: meals.length * 5,
       proteinG: proteinG,
       carbsG: carbsG,
       fatG: fatG,
@@ -127,6 +129,7 @@ class _FakeNutritionApi extends NutritionApi {
     String? itemType,
     String? query,
     String? category,
+    String? mealSlot,
     bool? containsCaffeine,
     bool? isHydrationTrackable,
     int? limit,
@@ -140,12 +143,14 @@ class _FakeNutritionApi extends NutritionApi {
     String? itemType,
     String? query,
     String? category,
+    String? mealSlot,
     bool? containsCaffeine,
     bool? isHydrationTrackable,
     int limit = 12,
+    int offset = 0,
     CancelToken? cancelToken,
   }) async {
-    return List<FoodItem>.from(foods.take(limit));
+    return List<FoodItem>.from(foods.skip(offset).take(limit));
   }
 
   @override
@@ -155,7 +160,7 @@ class _FakeNutritionApi extends NutritionApi {
   Future<bool> hasActiveDiabetes() async => diabetesActive;
 
   @override
-  Future<void> addMeal({
+  Future<MealLog> addMeal({
     required int foodId,
     required String mealType,
     double? quantityGrams,
@@ -166,28 +171,29 @@ class _FakeNutritionApi extends NutritionApi {
     double? servingGramsEquivalent,
     double? servingMillilitersEquivalent,
     DateTime? consumedAt,
+    bool isFastFood = false,
   }) async {
     final food = foods.firstWhere((item) => item.id == foodId);
     final amount = quantity ?? quantityGrams ?? 0;
     final factor = amount / 100.0;
-    meals.add(
-      MealLog(
-        id: _nextId++,
-        foodId: foodId,
-        foodName: food.name,
-        mealType: mealType,
-        quantityGrams: quantityGrams ?? amount,
-        quantity: amount,
-        unit: unit ?? 'g',
-        millilitersConsumed: unit == 'ml' ? amount : 0,
-        caloriesKcal: food.calories100g * factor,
-        proteinG: food.protein100g * factor,
-        carbsG: food.carbs100g * factor,
-        fatG: food.fat100g * factor,
-        sugarsG: food.sugars100g * factor,
-        caffeineMg: food.caffeineMg * factor,
-      ),
+    final meal = MealLog(
+      id: _nextId++,
+      foodId: foodId,
+      foodName: food.name,
+      mealType: mealType,
+      quantityGrams: quantityGrams ?? amount,
+      quantity: amount,
+      unit: unit ?? 'g',
+      millilitersConsumed: unit == 'ml' ? amount : 0,
+      caloriesKcal: food.calories100g * factor,
+      proteinG: food.protein100g * factor,
+      carbsG: food.carbs100g * factor,
+      fatG: food.fat100g * factor,
+      sugarsG: food.sugars100g * factor,
+      caffeineMg: food.caffeineMg * factor,
     );
+    meals.add(meal);
+    return meal;
   }
 }
 
@@ -202,7 +208,7 @@ class _FakeDiabetesSugarGuardService extends DiabetesSugarGuardService {
 
 void main() {
   test(
-    'nutrition controller keeps drink rows and computes points from snapshots',
+    'nutrition controller keeps drink rows and consumes backend point snapshots',
     () async {
       final oats = FoodItem(
         id: 1,
@@ -285,6 +291,7 @@ void main() {
       expect(controller.meals, hasLength(2));
       expect(controller.meals.last.isDrink, isTrue);
       expect(controller.diabetesActive, isTrue);
+      expect(controller.summary.consumedCalories, 404);
       expect(controller.detailBreakdown.sugarsG, closeTo(11.2, 0.001));
       expect(controller.mealPointsToday, 10);
 
@@ -298,6 +305,7 @@ void main() {
       expect(controller.meals, hasLength(3));
       expect(controller.meals.last.foodName, 'Iced Latte');
       expect(controller.meals.last.millilitersConsumed, 300);
+      expect(controller.summary.consumedCalories, 554);
       expect(controller.detailBreakdown.sugarsG, closeTo(26.2, 0.001));
       expect(controller.mealPointsToday, 15);
     },

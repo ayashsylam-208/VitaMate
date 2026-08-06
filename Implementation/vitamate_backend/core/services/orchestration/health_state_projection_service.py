@@ -16,8 +16,11 @@ from core.domain.trackers import (
 )
 from core.models import ConditionAlert, ConditionDailyEvaluation, HealthTarget, StepLog, UserCondition
 from core.repositories.dashboard.dashboard_read_repository import DashboardReadRepository
-from core.services.chronic.condition_constraint_engine import ConditionConstraintEngine
-from core.services.constraints import ConstraintReadService
+from core.services.chronic.condition_runtime_summary_service import (
+    ConditionRuntimeSummaryService,
+)
+from core.services.constraints import ConstraintReadService, EffectiveConstraintReader
+from core.services.health_progress import MovementEvaluator
 from core.services.medication_adherence_service import MedicationAdherenceService
 from core.services.nutrition_service import NutritionService
 from core.services.tracking.health_constraint_engine import HealthConstraintEngine
@@ -27,6 +30,7 @@ from users.models import UserProfile
 
 @dataclass(frozen=True)
 class ActiveConstraintBundle:
+    user: object
     summary: dict[str, list[dict]]
     metric_lookup: dict[tuple[str, str], list]
 
@@ -36,10 +40,8 @@ class HealthStateProjectionService:
         self,
         *,
         constraint_engine: HealthConstraintEngine | None = None,
-        condition_constraint_engine: ConditionConstraintEngine | None = None,
     ):
         self._constraint_engine = constraint_engine or HealthConstraintEngine()
-        self._condition_constraint_engine = condition_constraint_engine or ConditionConstraintEngine()
 
     def build_projection(
         self,
@@ -57,11 +59,9 @@ class HealthStateProjectionService:
         profile = context["profile"]
         constraint_bundle = context["constraint_bundle"]
 
-        effective_constraints = self._condition_constraint_engine.build_effective_constraints(
+        effective_constraints = ConditionRuntimeSummaryService.build(
             user=user,
-            profile=profile,
             on_date=state_date,
-            prepared_context=context["condition_context"],
         )
         active_constraints = constraint_bundle.summary
 
@@ -70,7 +70,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="nutrition",
                 metric_key="calories_kcal",
-                fallback=effective_constraints.calories_target,
+                fallback=profile.daily_calorie_target,
             )
         )
         water_target_liters = float(
@@ -78,7 +78,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="hydration",
                 metric_key="daily_water_liters",
-                fallback=effective_constraints.water_target_liters,
+                fallback=profile.daily_water_target,
             )
         )
         steps_target = int(
@@ -86,7 +86,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="steps",
                 metric_key="steps_count",
-                fallback=effective_constraints.step_target,
+                fallback=profile.daily_step_goal,
             )
         )
         burn_target = int(
@@ -94,7 +94,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="activity",
                 metric_key="calories_burned",
-                fallback=effective_constraints.burn_target,
+                fallback=profile.daily_burn_goal,
             )
         )
         sleep_goal_hours = float(
@@ -110,18 +110,26 @@ class HealthStateProjectionService:
         nutrition_totals = NutritionService.summarize_meal_logs(meals)
         calories_in = int(round(nutrition_totals["calories_kcal"]))
 
-        activities = list(DashboardReadRepository.activity_logs_on_date(user=user, log_date=state_date))
-        exercise_burn = sum(activity.calories_burned for activity in activities)
-        exercise_minutes = sum(activity.duration_minutes for activity in activities)
-
         steps_log = DashboardReadRepository.step_log_on_date(user=user, log_date=state_date)
         if steps_log is None:
             steps_log = StepLog(user=user, date=state_date, steps_count=0, distance_km=0)
-        steps_burn = int((steps_log.steps_count or 0) * 0.04)
+        movement = MovementEvaluator.evaluate(
+            user=user,
+            target_date=state_date,
+            steps_target_override=steps_target,
+            burn_target_override=burn_target,
+        )
+        movement_steps = dict(movement["components"]["steps"])
+        movement_exercise = dict(movement["components"]["exercise"])
+        movement_calories = dict(movement["active_calories"])
+        movement_breakdown = dict(movement_calories.get("breakdown") or {})
+        exercise_minutes = int(movement_exercise.get("current") or 0)
+        exercise_count = int(movement_exercise.get("workout_count") or 0)
+        steps_burn = int(movement_breakdown.get("steps") or 0)
         steps_burn_rate = 0
         if steps_log.distance_km:
             steps_burn_rate = round(steps_burn / steps_log.distance_km, 1)
-        total_burned = exercise_burn + steps_burn
+        total_burned = int(movement_calories.get("value") or 0)
 
         sleep_logs = list(DashboardReadRepository.sleep_logs_on_date(user=user, log_date=state_date))
         sleep_hours = sum(log.duration_hours for log in sleep_logs)
@@ -174,7 +182,7 @@ class HealthStateProjectionService:
         tracker_points_estimate = self._constraint_engine.estimate_day_points(
             water_sum=water_current,
             steps=steps_log.steps_count,
-            has_activities=len(activities) > 0,
+            has_activities=exercise_count > 0,
             calories_in=calories_in,
             calories_target=calories_target,
             sleep_hours=sleep_hours,
@@ -204,7 +212,7 @@ class HealthStateProjectionService:
             burn_target=burn_target,
             total_burned=total_burned,
             exercise_minutes=exercise_minutes,
-            exercise_count=len(activities),
+            exercise_count=exercise_count,
             medication_summary=medication_summary,
             active_constraints=active_constraints,
             warnings=warnings,
@@ -301,8 +309,9 @@ class HealthStateProjectionService:
                 "caffeine_mg": round(nutrition_totals["caffeine_mg"], 2),
             },
             "hydration": {
-                "target": water_target_liters,
+                "target": adjusted_water_target,
                 "base_target": profile.daily_water_target,
+                "constraint_target": water_target_liters,
                 "current": water_current,
                 "adjusted_target": adjusted_water_target,
             },
@@ -314,12 +323,13 @@ class HealthStateProjectionService:
                 "progress_percent": sleep_progress,
             },
             "activity": {
-                "steps": steps_log.steps_count,
-                "steps_target": steps_target,
+                "steps": int(movement_steps.get("current") or steps_log.steps_count or 0),
+                "steps_target": int(movement_steps.get("target") or steps_target or 0),
                 "base_steps_target": profile.daily_step_goal,
                 "distance_km": steps_log.distance_km,
                 "steps_burned": steps_burn,
                 "steps_burn_rate": steps_burn_rate,
+                "movement": movement,
                 "exercise_intensity_mode": effective_constraints.exercise_intensity_mode,
             },
             "gamification": {
@@ -369,18 +379,16 @@ class HealthStateProjectionService:
         profile = context["profile"]
         constraint_bundle = context["constraint_bundle"]
 
-        effective_constraints = self._condition_constraint_engine.build_effective_constraints(
+        effective_constraints = ConditionRuntimeSummaryService.build(
             user=user,
-            profile=profile,
             on_date=state_date,
-            prepared_context=context["condition_context"],
         )
         calories_target = int(
             self._effective_numeric_constraint_from_bundle(
                 constraint_bundle=constraint_bundle,
                 tracker_type="nutrition",
                 metric_key="calories_kcal",
-                fallback=effective_constraints.calories_target,
+                fallback=profile.daily_calorie_target,
             )
         )
         water_target_liters = float(
@@ -388,7 +396,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="hydration",
                 metric_key="daily_water_liters",
-                fallback=effective_constraints.water_target_liters,
+                fallback=profile.daily_water_target,
             )
         )
         steps_target = int(
@@ -396,7 +404,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="steps",
                 metric_key="steps_count",
-                fallback=effective_constraints.step_target,
+                fallback=profile.daily_step_goal,
             )
         )
         burn_target = int(
@@ -404,7 +412,7 @@ class HealthStateProjectionService:
                 constraint_bundle=constraint_bundle,
                 tracker_type="activity",
                 metric_key="calories_burned",
-                fallback=effective_constraints.burn_target,
+                fallback=profile.daily_burn_goal,
             )
         )
         sleep_goal_hours = float(
@@ -420,19 +428,25 @@ class HealthStateProjectionService:
         nutrition_totals = NutritionService.summarize_meal_logs(meals)
         calories_in = int(round(nutrition_totals["calories_kcal"]))
 
-        activities = list(DashboardReadRepository.activity_logs_on_date(user=user, log_date=state_date))
-        exercise_burn = sum(activity.calories_burned for activity in activities)
-        exercise_minutes = sum(activity.duration_minutes for activity in activities)
-        exercise_count = len(activities)
-
         steps_log = DashboardReadRepository.step_log_on_date(user=user, log_date=state_date)
         if steps_log is None:
             steps_log = StepLog(user=user, date=state_date, steps_count=0, distance_km=0)
-        steps_burn = int((steps_log.steps_count or 0) * 0.04)
+        movement = MovementEvaluator.evaluate(
+            user=user,
+            target_date=state_date,
+            steps_target_override=steps_target,
+            burn_target_override=burn_target,
+        )
+        movement_calories = dict(movement["active_calories"])
+        movement_breakdown = dict(movement_calories.get("breakdown") or {})
+        movement_exercise = dict(movement["components"]["exercise"])
+        exercise_minutes = int(movement_exercise.get("current") or 0)
+        exercise_count = int(movement_exercise.get("workout_count") or 0)
+        steps_burn = int(movement_breakdown.get("steps") or 0)
         steps_burn_rate = 0
         if steps_log.distance_km:
             steps_burn_rate = round(steps_burn / steps_log.distance_km, 1)
-        total_burned = exercise_burn + steps_burn
+        total_burned = int(movement_calories.get("value") or 0)
 
         sleep_logs = list(DashboardReadRepository.sleep_logs_on_date(user=user, log_date=state_date))
         sleep_hours = sum(log.duration_hours for log in sleep_logs)
@@ -515,7 +529,6 @@ class HealthStateProjectionService:
         return {
             "profile": profile,
             "constraint_bundle": self._build_constraint_bundle(user=user),
-            "condition_context": self._condition_constraint_engine.prepare_context(user=user),
         }
 
     def _effective_numeric_constraint_from_bundle(
@@ -526,11 +539,13 @@ class HealthStateProjectionService:
         metric_key: str,
         fallback,
     ):
-        value = ConstraintReadService.effective_numeric_value_from_constraints(
-            constraints=constraint_bundle.metric_lookup.get((tracker_type, metric_key), []),
-            fallback=fallback,
+        effective = EffectiveConstraintReader.get_effective_constraint(
+            user=constraint_bundle.user,
+            tracker_type=tracker_type,
+            constraint_key=metric_key,
+            default_value=fallback,
         )
-        return fallback if value is None else value
+        return fallback if effective.value is None else effective.value
 
     def _build_constraint_bundle(self, *, user) -> ActiveConstraintBundle:
         grouped_summary: dict[str, list[dict]] = defaultdict(list)
@@ -541,6 +556,7 @@ class HealthStateProjectionService:
             )
             metric_lookup[(constraint.tracker_type, constraint.metric_key)].append(constraint)
         return ActiveConstraintBundle(
+            user=user,
             summary=dict(grouped_summary),
             metric_lookup=dict(metric_lookup),
         )
@@ -573,6 +589,7 @@ class HealthStateProjectionService:
                     "level": alert.level or "warning",
                     "message": alert.message,
                     "alert_type": alert.alert_type,
+                    "created_at": alert.created_at.isoformat(),
                     "condition_id": alert.user_condition_id,
                     "condition_label": alert.user_condition.condition_type.name,
                 }
@@ -594,6 +611,11 @@ class HealthStateProjectionService:
                         "code": str(risk_flag),
                         "level": evaluation.status,
                         "message": str(risk_flag).replace("_", " ").title(),
+                        "latest_recorded_at": (
+                            evaluation.latest_recorded_at.isoformat()
+                            if evaluation.latest_recorded_at
+                            else None
+                        ),
                         "condition_id": evaluation.user_condition_id,
                         "condition_label": evaluation.user_condition.condition_type.name,
                     }
@@ -748,7 +770,7 @@ class HealthStateProjectionService:
             ),
             HydrationTrackerAdapter(
                 water_current_liters=float(water_current),
-                water_target_liters=float(water_target_liters),
+                water_target_liters=float(adjusted_water_target),
                 adjusted_target_liters=float(adjusted_water_target),
                 constraints=tuple(active_constraints.get("hydration", [])),
             ),

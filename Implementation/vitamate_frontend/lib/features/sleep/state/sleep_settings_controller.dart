@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../../auth/data/auth_repository.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../core/notification_hub/notification_hub.dart';
 import '../models/sleep_settings.dart';
 
 class SleepSettingsController extends ChangeNotifier {
-  final AuthRepository _authRepo;
-
   SleepSettingsController(this._authRepo);
+
+  final AuthRepository _authRepo;
 
   SleepSettings? settings;
   bool notificationsEnabled = false;
@@ -22,7 +22,8 @@ class SleepSettingsController extends ChangeNotifier {
     try {
       final user = await _authRepo.getMe();
       settings = SleepSettings.fromUser(user);
-      notificationsEnabled = user.profile.enableSleepImprovement;
+      notificationsEnabled =
+          NotificationHubController.instance.preferences.enableSleepReminders;
     } catch (_) {
       error = 'Failed to load sleep settings';
     } finally {
@@ -51,14 +52,10 @@ class SleepSettingsController extends ChangeNotifier {
         wakeTime: wakeTime,
         bedTime: bedTime,
       );
-
-      // إذا الإشعارات مفعلة: أعد الجدولة مباشرة
-      // ??? ????????? ????? ??? ????????? ???????
-      if (notificationsEnabled) {
-        await NotificationsService.scheduleDailyBedtime(bedTime: bedTime);
-        await NotificationsService.scheduleDailyWake(wakeTime: wakeTime);
-        await NotificationsService.showEnabledConfirmation();
-      }
+      await NotificationHubController.instance.updatePreferences({
+        'target_wake_time': _fmtTime(wakeTime),
+        'target_bed_time': _fmtTime(bedTime),
+      });
     } catch (_) {
       error = 'Failed to update sleep settings';
     } finally {
@@ -66,31 +63,17 @@ class SleepSettingsController extends ChangeNotifier {
     }
   }
 
-  /// ✅ الآن: التفعيل/الإلغاء يحفظ فورًا + يعيد الجدولة فورًا
   Future<void> setNotificationsEnabled(bool enabled) async {
     notificationsEnabled = enabled;
     notifyListeners();
 
     try {
-      await _authRepo.updateMe({
-        'enable_sleep_improvement': enabled,
+      await NotificationHubController.instance.updatePreferences({
+        'enable_sleep_reminders': enabled,
       });
     } catch (_) {
-      // حتى لو فشل الحفظ، لا نكسر الواجهة
+      // Keep optimistic UI; next load will reconcile from backend.
     }
-
-    if (!enabled) {
-      await NotificationsService.cancelSleep();
-      return;
-    }
-
-    final s = settings;
-    if (s == null) return;
-
-    await NotificationsService.showEnabledConfirmation();
-
-    await NotificationsService.scheduleDailyBedtime(bedTime: s.bedTime);
-    await NotificationsService.scheduleDailyWake(wakeTime: s.wakeTime);
   }
 
   String _fmtTime(DateTime t) {

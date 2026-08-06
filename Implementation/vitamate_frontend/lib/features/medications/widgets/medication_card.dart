@@ -164,7 +164,7 @@ class MedicationCard extends StatelessWidget {
     final extra = medication.schedules.length > 2
         ? ' +${medication.schedules.length - 2}'
         : '';
-    return '${labels.join(' • ')}$extra';
+    return '${labels.join(' | ')}$extra';
   }
 }
 

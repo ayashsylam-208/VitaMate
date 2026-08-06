@@ -294,7 +294,7 @@ class SleepCoachService:
                 late_caffeine_meals.append(
                     {
                         "meal_id": meal.id,
-                        "food_name": meal.food.name,
+                        "food_name": meal.display_name or getattr(meal.food, "name", "Meal"),
                         "caffeine_mg": round(caffeine_mg, 1),
                         "consumed_at": cls._iso(meal.consumed_at),
                     }
@@ -305,7 +305,7 @@ class SleepCoachService:
                 late_heavy_meals.append(
                     {
                         "meal_id": meal.id,
-                        "food_name": meal.food.name,
+                        "food_name": meal.display_name or getattr(meal.food, "name", "Meal"),
                         "calories": round(calories),
                         "fat_g": round(fat, 1),
                         "consumed_at": cls._iso(meal.consumed_at),

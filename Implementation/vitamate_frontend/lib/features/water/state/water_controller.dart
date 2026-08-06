@@ -7,7 +7,7 @@ import '../../../core/health/condition_limit_alert_service.dart';
 import '../../../core/health/diabetes_sugar_guard_service.dart';
 import '../../../core/network/network_error_mapper.dart';
 import '../../../core/network/request_manager.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../core/notification_hub/notification_hub.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../../nutrition/data/nutrition_api.dart';
 import '../../nutrition/data/nutrition_repository.dart';
@@ -44,22 +44,13 @@ class WaterController extends ChangeNotifier {
            conditionLimitAlertEvaluator ?? const ConditionLimitAlertEvaluator(),
        _diabetesSugarAlertNotifier =
            diabetesSugarAlertNotifier ??
-           ((warning) => NotificationsService.showDiabetesSugarWarning(
+           ((warning) => InAppEventPresenter.showDiabetesSugarWarning(
              limitG: warning.limitG,
              currentG: warning.currentG,
              sourceLabel: warning.sourceLabel,
            )),
        _conditionLimitAlertNotifier =
-           conditionLimitAlertNotifier ??
-           ((warning) => NotificationsService.showConditionLimitWarning(
-             metricKey: warning.metricKey,
-             metricLabel: warning.metricLabel,
-             limitValue: warning.limitValue,
-             currentValue: warning.currentValue,
-             unit: warning.unit,
-             sourceLabel: warning.sourceLabel,
-             conditionLabel: warning.conditionLabel,
-           ));
+           conditionLimitAlertNotifier ?? ((warning) async {});
 
   final WaterRepository _repository;
   final NutritionRepository _nutritionRepository;
@@ -80,26 +71,31 @@ class WaterController extends ChangeNotifier {
   bool catalogLoading = false;
   String? error;
   String? catalogError;
+  String lastLinkedHabitFeedbackMessage = '';
 
   List<WaterLog> logs = [];
   List<FoodItem> beverageCatalog = [];
   List<ChronicGuideCardData> chronicHydrationGuides = const [];
 
-  int targetMl = 0; // from backend (dashboard) converted to ml
-  int consumedMl = 0;
-  int waterPointsToday = 0;
+  HydrationSummary summary = HydrationSummary.empty();
 
-  int get remainingMl => (targetMl - consumedMl).clamp(0, targetMl);
-  double get progress =>
-      targetMl == 0 ? 0 : (consumedMl / targetMl).clamp(0, 1);
+  int get targetMl => summary.activeTargetMl;
+  int get consumedMl => summary.hydrationContributionMl;
+  int get remainingMl => summary.remainingMl;
+  int get waterContributionMl => summary.waterContributionMl;
+  int get otherDrinksContributionMl => summary.otherDrinksContributionMl;
+  int get waterPointsToday => summary.pointsEarnedToday;
+  bool get goalCompleted => summary.goalCompleted;
+  DateTime? get lastDrinkAt => summary.lastDrinkAt;
+  double get progress => summary.progressRatio;
 
-  Future<void> load({int? targetMlFromBackend}) async {
+  Future<void> load() async {
     loading = true;
     error = null;
     notifyListeners();
 
     try {
-      await _reloadHydration(targetMlFromBackend: targetMlFromBackend ?? 0);
+      await _reloadHydration();
     } catch (e) {
       if (!NetworkErrorMapper.isCanceled(e)) {
         error = NetworkErrorMapper.toMessage(
@@ -116,9 +112,9 @@ class WaterController extends ChangeNotifier {
     );
   }
 
-  Future<void> drink(int amountMl) async {
-    await _saveAndReload(
-      () => _repository.addWaterMl(amountMl),
+  Future<bool> drink(int amountMl) async {
+    return _saveAndReload(
+      () => _repository.addWaterMl(amountMl, consumedAt: DateTime.now()),
       sourceLabel: 'Water',
     );
   }
@@ -160,12 +156,14 @@ class WaterController extends ChangeNotifier {
   Future<bool> addCatalogBeverage({
     required int foodItemId,
     required int amountMl,
+    DateTime? consumedAt,
   }) {
     final label = _catalogLabelForId(foodItemId);
     return _saveAndReload(
       () => _repository.addCatalogBeverage(
         foodItemId: foodItemId,
         amountMl: amountMl,
+        consumedAt: consumedAt ?? DateTime.now(),
       ),
       sourceLabel: label,
     );
@@ -185,6 +183,7 @@ class WaterController extends ChangeNotifier {
     required double waterG,
     required double caffeineMg,
     bool saveForReuse = true,
+    DateTime? consumedAt,
   }) {
     return _saveAndReload(
       () => _repository.addCustomBeverage(
@@ -201,6 +200,7 @@ class WaterController extends ChangeNotifier {
         waterG: waterG,
         caffeineMg: caffeineMg,
         saveForReuse: saveForReuse,
+        consumedAt: consumedAt ?? DateTime.now(),
       ),
       sourceLabel: name,
     );
@@ -210,29 +210,90 @@ class WaterController extends ChangeNotifier {
     required int amountMl,
     required String beverageType,
     required String beverageName,
+    DateTime? consumedAt,
+    double? caffeineMg,
   }) async {
     return _saveAndReload(
       () => _repository.addNamedBeverage(
         amountMl: amountMl,
         beverageType: beverageType,
         beverageName: beverageName,
+        consumedAt: consumedAt ?? DateTime.now(),
+        caffeineMg: caffeineMg,
       ),
       sourceLabel: beverageName,
     );
   }
 
-  Future<bool> _saveAndReload(
-    Future<void> Function() action, {
-    required String sourceLabel,
+  Future<bool> updateDrink({
+    required int id,
+    required int amountMl,
+    required String beverageType,
+    required String beverageName,
+    required DateTime consumedAt,
+    double? caffeineMg,
   }) async {
+    return _saveAndReload(
+      () => _repository.updateLog(
+        id: id,
+        amountMl: amountMl,
+        beverageType: beverageType,
+        beverageName: beverageName,
+        consumedAt: consumedAt,
+        caffeineMg: caffeineMg,
+      ),
+      sourceLabel: beverageName,
+    );
+  }
+
+  Future<bool> deleteDrink(int id) async {
     saving = true;
     error = null;
     notifyListeners();
     try {
+      await _repository.deleteLog(id);
+      await _reloadHydration();
+      HealthSyncBus.instance.publish(const {
+        HealthSyncScope.hydration,
+        HealthSyncScope.homeOverview,
+        HealthSyncScope.progressHistory,
+      });
+      return true;
+    } catch (e) {
+      error = NetworkErrorMapper.toMessage(
+        e,
+        fallback: 'Could not delete beverage log.',
+      );
+      notifyListeners();
+      return false;
+    } finally {
+      saving = false;
+      notifyListeners();
+    }
+  }
+
+  Future<List<WaterLog>> logsFor({
+    DateTime? date,
+    DateTime? from,
+    DateTime? to,
+  }) {
+    return _repository.getLogs(date: date, from: from, to: to);
+  }
+
+  Future<bool> _saveAndReload(
+    Future<WaterLog> Function() action, {
+    required String sourceLabel,
+  }) async {
+    saving = true;
+    error = null;
+    lastLinkedHabitFeedbackMessage = '';
+    notifyListeners();
+    try {
       final beforeGuard = _cachedSugarGuard;
       final beforeSummary = _cachedNutritionSummary;
-      await action();
-      await _reloadHydration(targetMlFromBackend: targetMl);
+      final savedLog = await action();
+      lastLinkedHabitFeedbackMessage = savedLog.linkedHabitFeedbackMessage;
+      await _reloadHydration();
       notifyListeners();
       HealthSyncBus.instance.publish(const {
         HealthSyncScope.hydration,
@@ -252,6 +313,7 @@ class WaterController extends ChangeNotifier {
         e,
         fallback: 'Could not save beverage log.',
       );
+      lastLinkedHabitFeedbackMessage = '';
       notifyListeners();
       return false;
     } finally {
@@ -260,34 +322,21 @@ class WaterController extends ChangeNotifier {
     }
   }
 
-  Future<void> _reloadHydration({required int targetMlFromBackend}) async {
+  Future<void> _reloadHydration() async {
     final lease = _requestManager.beginLatest('hydration.summary');
     try {
       final results = await Future.wait<Object>([
         _repository.getSummary(cancelToken: lease.cancelToken),
-        _repository.getTodayLogs(),
+        _repository.getTodayLogs(cancelToken: lease.cancelToken),
       ]);
       if (!_requestManager.isCurrent(lease)) {
         return;
       }
-      final summary = results[0] as HydrationSummary;
+      summary = results[0] as HydrationSummary;
       logs = results[1] as List<WaterLog>;
-      targetMl = targetMlFromBackend > 0
-          ? targetMlFromBackend
-          : summary.targetMl;
-      consumedMl = _hydrationConsumedFromLogs(logs);
     } finally {
       _requestManager.complete(lease);
     }
-    waterPointsToday = logs.length * 5; // backend awards 5 pts per log
-  }
-
-  int _hydrationConsumedFromLogs(List<WaterLog> items) {
-    return items.fold<int>(
-      0,
-      (sum, item) =>
-          sum + (item.hydrationMl > 0 ? item.hydrationMl : item.amountMl),
-    );
   }
 
   Future<void> _warmAncillaryHydrationContext({

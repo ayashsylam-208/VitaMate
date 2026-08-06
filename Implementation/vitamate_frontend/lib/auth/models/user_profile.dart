@@ -15,8 +15,19 @@ class UserProfileSettings {
     required this.activityLevel,
     required this.goal,
     required this.dailyStepGoal,
+    required this.dailyBurnGoal,
     required this.gender,
+    required this.genderConfirmed,
     required this.birthDate,
+    required this.bmi,
+    required this.bmr,
+    required this.dailyCalorieTarget,
+    required this.dailyWaterTarget,
+    required this.emailVerified,
+    required this.pendingEmail,
+    required this.avatarUrl,
+    required this.preferredLanguage,
+    required this.region,
     required this.recommendedSleepHours,
     required this.targetWakeTime,
     required this.targetBedTime,
@@ -30,6 +41,7 @@ class UserProfileSettings {
     required this.inactiveReminderHours,
     required this.enableWaterReminders,
     required this.waterReminderIntervalMinutes,
+    required this.enableMotivationReminders,
   });
 
   final double weight;
@@ -37,8 +49,19 @@ class UserProfileSettings {
   final double activityLevel;
   final String goal;
   final int dailyStepGoal;
+  final int dailyBurnGoal;
   final String gender;
+  final bool genderConfirmed;
   final DateTime? birthDate;
+  final double bmi;
+  final int bmr;
+  final int dailyCalorieTarget;
+  final double dailyWaterTarget;
+  final bool emailVerified;
+  final String pendingEmail;
+  final String avatarUrl;
+  final String preferredLanguage;
+  final String region;
   final double recommendedSleepHours;
   final DateTime targetWakeTime;
   final DateTime targetBedTime;
@@ -52,6 +75,7 @@ class UserProfileSettings {
   final int inactiveReminderHours;
   final bool enableWaterReminders;
   final int waterReminderIntervalMinutes;
+  final bool enableMotivationReminders;
 
   factory UserProfileSettings.fromJson(Map<String, dynamic> json) {
     return UserProfileSettings(
@@ -60,8 +84,19 @@ class UserProfileSettings {
       activityLevel: (json['activity_level'] as num?)?.toDouble() ?? 1.2,
       goal: json['goal']?.toString() ?? 'maintain',
       dailyStepGoal: (json['daily_step_goal'] as num?)?.toInt() ?? 0,
+      dailyBurnGoal: (json['daily_burn_goal'] as num?)?.toInt() ?? 0,
       gender: json['gender']?.toString() ?? '',
+      genderConfirmed: json['gender_confirmed'] == true,
       birthDate: _parseProfileDate(json['birth_date']?.toString()),
+      bmi: (json['bmi'] as num?)?.toDouble() ?? 0,
+      bmr: (json['bmr'] as num?)?.toInt() ?? 0,
+      dailyCalorieTarget: (json['daily_calorie_target'] as num?)?.toInt() ?? 0,
+      dailyWaterTarget: (json['daily_water_target'] as num?)?.toDouble() ?? 0,
+      emailVerified: json['email_verified'] == true,
+      pendingEmail: json['pending_email']?.toString() ?? '',
+      avatarUrl: json['avatar_url']?.toString() ?? '',
+      preferredLanguage: json['preferred_language']?.toString() ?? 'English',
+      region: json['region']?.toString() ?? 'Romania',
       recommendedSleepHours:
           (json['recommended_sleep_hours'] as num?)?.toDouble() ?? 8.0,
       targetWakeTime: _parseProfileTime(
@@ -89,6 +124,7 @@ class UserProfileSettings {
       enableWaterReminders: json['enable_water_reminders'] == true,
       waterReminderIntervalMinutes:
           (json['water_reminder_interval_minutes'] as num?)?.toInt() ?? 60,
+      enableMotivationReminders: json['enable_motivation_reminders'] != false,
     );
   }
 }

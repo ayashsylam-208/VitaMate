@@ -4,6 +4,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 
 from core.models import FoodItem, Exercise, StepLog
+from core.services.reference_data_bootstrap import ensure_reference_data
 from users.models import UserProfile
 from users.services.user_profile_service import UserProfileService
 
@@ -22,6 +23,7 @@ def create_user_with_profile(
     Factory: create a user and attach/update UserProfile with sensible defaults.
     Handles cases where signals already created a profile.
     """
+    ensure_reference_data()
     user, _ = User.objects.get_or_create(
         username=username,
         defaults={
@@ -70,6 +72,7 @@ def auth_client_for_user(user: User, password: str = "Pass123!") -> APIClient:
 
 
 def create_food_item(**kwargs) -> FoodItem:
+    ensure_reference_data()
     defaults = {
         "name": "Test Food",
         "calories_100g": 200,

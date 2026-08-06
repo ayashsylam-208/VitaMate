@@ -1,27 +1,33 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/vitamate_theme.dart';
+
 const wizardPageBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF5F0FF), Color(0xFFFFFDFF), Color(0xFFF2F0FF)],
+  colors: [
+    VitaMateTheme.background,
+    VitaMateTheme.surface,
+    VitaMateTheme.softSurface,
+  ],
 );
 
 const wizardShellBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF4EEFF), Color(0xFFFFFDFF)],
+  colors: [VitaMateTheme.softSurface, VitaMateTheme.surface],
 );
 
 const wizardButtonGradient = LinearGradient(
   begin: Alignment.centerLeft,
   end: Alignment.centerRight,
-  colors: [Color(0xFF8D4BEE), Color(0xFFA217F4)],
+  colors: [VitaMateTheme.primaryGlow, VitaMateTheme.primary],
 );
 
-const wizardDeepPurple = Color(0xFF42118B);
-const wizardMidPurple = Color(0xFF8A33FF);
-const wizardHintPurple = Color(0xFFB06AFF);
-const wizardStrokePurple = Color(0xFFE7D5FF);
+const wizardDeepPurple = VitaMateTheme.primaryDeep;
+const wizardMidPurple = VitaMateTheme.primary;
+const wizardHintPurple = VitaMateTheme.textMuted;
+const wizardStrokePurple = VitaMateTheme.border;
 
 InputDecoration wizardInputDecoration({
   required String hintText,

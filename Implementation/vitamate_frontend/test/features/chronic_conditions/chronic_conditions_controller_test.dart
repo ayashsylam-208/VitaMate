@@ -1,6 +1,5 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vitamate/core/notifications/notifications_service.dart';
 import 'package:vitamate/features/chronic_conditions/data/chronic_conditions_api.dart';
 import 'package:vitamate/features/chronic_conditions/models/chronic_condition.dart';
 import 'package:vitamate/features/chronic_conditions/state/chronic_conditions_controller.dart';
@@ -56,22 +55,14 @@ class _FakeChronicConditionsApi extends ChronicConditionsApi {
 
 void main() {
   test(
-    'controller loads compact center first, then detail reminders separately',
+    'controller loads compact center first, then detail doses separately',
     () async {
-      final capturedPlans = <ChronicMedicationReminderPlan>[];
       final api = _FakeChronicConditionsApi(
         conditions: [_sampleCondition()],
         compactConditions: [_sampleCompactCondition()],
         catalog: [_sampleConditionType()],
       );
-      final controller = ChronicConditionsController(
-        api: api,
-        reminderSync: (plans) async {
-          capturedPlans
-            ..clear()
-            ..addAll(plans);
-        },
-      );
+      final controller = ChronicConditionsController(api: api);
 
       await controller.loadCenter();
 
@@ -80,15 +71,13 @@ void main() {
       expect(controller.conditionForType(1)?.id, 4);
       expect(controller.todayDoses, isEmpty);
       expect(controller.pendingSchedules, 1);
-      expect(capturedPlans, isEmpty);
 
       await controller.loadConditionDetail(4);
       await Future<void>.delayed(Duration.zero);
 
       expect(controller.todayDoses, hasLength(1));
-      expect(capturedPlans, hasLength(1));
-      expect(capturedPlans.single.medicationName, 'Metformin');
-      expect(capturedPlans.single.conditionName, 'Diabetes');
+      expect(controller.todayDoses.single.medication.name, 'Metformin');
+      expect(controller.todayDoses.single.condition.conditionType.name, 'Diabetes');
     },
   );
 
@@ -112,7 +101,6 @@ void main() {
             type: DioExceptionType.badResponse,
           ),
         ),
-        reminderSync: (_) async {},
       );
 
       final success = await controller.createCondition(

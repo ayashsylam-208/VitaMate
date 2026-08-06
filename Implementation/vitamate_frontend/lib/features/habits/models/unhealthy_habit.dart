@@ -30,12 +30,45 @@ class UnhealthyHabitsOverview {
     );
     final data = envelope.data;
     return UnhealthyHabitsOverview(
-      habits: asMapList(data['habits'])
-          .map(UnhealthyHabit.fromJson)
-          .toList(growable: false),
+      habits: asMapList(
+        data['habits'],
+      ).map(UnhealthyHabit.fromJson).toList(growable: false),
       summary: UnhealthyHabitSummary.fromJson(data['summary']),
       supportMessage: (data['support_message'] ?? '').toString(),
       meta: envelope.meta,
+    );
+  }
+}
+
+class UnhealthyHabitWriteResult {
+  const UnhealthyHabitWriteResult({
+    required this.habit,
+    required this.evaluation,
+    required this.inAppEvents,
+    required this.trackerProjection,
+  });
+
+  final UnhealthyHabit? habit;
+  final Map<String, dynamic> evaluation;
+  final List<Map<String, dynamic>> inAppEvents;
+  final Map<String, dynamic> trackerProjection;
+
+  factory UnhealthyHabitWriteResult.fromEnvelope(dynamic value) {
+    final envelope = ApiEnvelope<Map<String, dynamic>>.fromJson(
+      value,
+      dataParser: (rawData) => asMap(rawData),
+      emptyData: const <String, dynamic>{},
+    );
+    final data = envelope.data;
+    return UnhealthyHabitWriteResult(
+      habit: data['habit'] == null
+          ? null
+          : UnhealthyHabit.fromJson(data['habit']),
+      evaluation: asMap(data['evaluation']),
+      inAppEvents: asMapList(
+        data['in_app_events'],
+      ).map((item) => Map<String, dynamic>.from(item)).toList(growable: false),
+      trackerProjection: asMap(data['tracker_projection']),
     );
   }
 }
@@ -86,6 +119,7 @@ class UnhealthyHabit {
     required this.plan,
     required this.progress,
     required this.reminders,
+    required this.evaluation,
   });
 
   final int? id;
@@ -99,6 +133,7 @@ class UnhealthyHabit {
   final UnhealthyHabitPlan? plan;
   final UnhealthyHabitProgress progress;
   final List<UnhealthyHabitReminder> reminders;
+  final Map<String, dynamic> evaluation;
 
   bool get isActive => status == 'active';
 
@@ -126,30 +161,34 @@ class UnhealthyHabit {
       baseline: json['baseline'] == null
           ? null
           : UnhealthyHabitBaseline.fromJson(json['baseline']),
-      plan: json['plan'] == null ? null : UnhealthyHabitPlan.fromJson(json['plan']),
+      plan: json['plan'] == null
+          ? null
+          : UnhealthyHabitPlan.fromJson(json['plan']),
       progress: UnhealthyHabitProgress.fromJson(json['progress']),
-      reminders: asMapList(json['reminders'])
-          .map(UnhealthyHabitReminder.fromJson)
-          .toList(growable: false),
+      reminders: asMapList(
+        json['reminders'],
+      ).map(UnhealthyHabitReminder.fromJson).toList(growable: false),
+      evaluation: asMap(json['evaluation']),
     );
   }
 }
 
 class _EmptyUnhealthyHabit extends UnhealthyHabit {
   const _EmptyUnhealthyHabit(String type, String label)
-      : super(
-          id: null,
-          habitType: type,
-          label: label,
-          title: label,
-          goalType: 'reduce',
-          status: 'not_started',
-          isSetup: false,
-          baseline: null,
-          plan: null,
-          progress: const UnhealthyHabitProgress.empty(),
-          reminders: const [],
-        );
+    : super(
+        id: null,
+        habitType: type,
+        label: label,
+        title: label,
+        goalType: 'reduce',
+        status: 'not_started',
+        isSetup: false,
+        baseline: null,
+        plan: null,
+        progress: const UnhealthyHabitProgress.empty(),
+        reminders: const [],
+        evaluation: const <String, dynamic>{},
+      );
 }
 
 class UnhealthyHabitBaseline {
@@ -257,28 +296,28 @@ class UnhealthyHabitProgress {
       topTrigger: (json['top_trigger'] ?? '').toString(),
       riskyHour: _nullableInt(json['risky_hour']),
       supportMessage: (json['support_message'] ?? '').toString(),
-      logsToday: asMapList(json['logs_today'])
-          .map(UnhealthyHabitLog.fromJson)
-          .toList(growable: false),
+      logsToday: asMapList(
+        json['logs_today'],
+      ).map(UnhealthyHabitLog.fromJson).toList(growable: false),
     );
   }
 }
 
 class _EmptyProgress extends UnhealthyHabitProgress {
   const _EmptyProgress()
-      : super(
-          todayValue: 0,
-          weekValue: 0,
-          dailyLimit: null,
-          weeklyLimit: null,
-          adherencePercent: 0,
-          improvementPercent: 0,
-          relapseCount: 0,
-          topTrigger: '',
-          riskyHour: null,
-          supportMessage: '',
-          logsToday: const [],
-        );
+    : super(
+        todayValue: 0,
+        weekValue: 0,
+        dailyLimit: null,
+        weeklyLimit: null,
+        adherencePercent: 0,
+        improvementPercent: 0,
+        relapseCount: 0,
+        topTrigger: '',
+        riskyHour: null,
+        supportMessage: '',
+        logsToday: const [],
+      );
 }
 
 class UnhealthyHabitLog {

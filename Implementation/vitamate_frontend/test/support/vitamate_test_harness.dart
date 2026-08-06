@@ -134,6 +134,81 @@ class VitamateTestHarness implements HttpClientAdapter {
       _mergeUserPatch(data);
       return _json(200, _userResponse());
     }
+    if (method == 'GET' && path == '/api/manager/overview/') {
+      return _json(200, _envelope(_managerOverviewData()));
+    }
+    if (method == 'GET' && path == '/api/manager/goals/') {
+      return _json(200, <String, dynamic>{
+        'data': <String, dynamic>{'goals': _managerGoalsData()},
+      });
+    }
+    if (method == 'PATCH' && path.startsWith('/api/manager/goals/')) {
+      final key = path
+          .replaceFirst('/api/manager/goals/', '')
+          .replaceAll('/', '');
+      final goal = _managerGoalsData().firstWhere(
+        (item) => item['key'] == key,
+        orElse: () => _managerGoalsData().first,
+      );
+      return _json(200, <String, dynamic>{
+        'data': <String, dynamic>{'goal': goal},
+      });
+    }
+    if (method == 'POST' && path == '/api/manager/goals/reset/') {
+      return _json(200, <String, dynamic>{
+        'data': <String, dynamic>{'goals': _managerGoalsData()},
+      });
+    }
+    if (method == 'GET' && path == '/api/manager/notifications/') {
+      return _json(200, _notificationPreferencesData());
+    }
+    if (method == 'PATCH' && path == '/api/manager/notifications/') {
+      return _json(200, <String, dynamic>{
+        ..._notificationPreferencesData(),
+        ...data,
+      });
+    }
+    if (method == 'POST' && path == '/api/manager/avatar/') {
+      _user['avatar_url'] = '/media/avatars/test-avatar.png';
+      return _json(200, <String, dynamic>{
+        'data': <String, dynamic>{
+          'avatar_url': _user['avatar_url'],
+          'user': _userResponse(),
+        },
+      });
+    }
+    if (method == 'DELETE' && path == '/api/manager/avatar/') {
+      _user['avatar_url'] = '';
+      return _json(200, const <String, dynamic>{
+        'data': <String, dynamic>{'avatar_url': ''},
+      });
+    }
+    if (method == 'GET' && path == '/api/manager/security/') {
+      return _json(200, _managerSecurityData());
+    }
+    if (method == 'POST' && path == '/api/manager/security/change-password/') {
+      return _json(200, const <String, dynamic>{
+        'data': <String, dynamic>{'password_changed': true},
+      });
+    }
+    if (method == 'POST' && path == '/api/manager/security/logout-all/') {
+      return _json(200, const <String, dynamic>{
+        'data': <String, dynamic>{'revoked': false},
+      });
+    }
+    if (method == 'GET' && path == '/api/manager/privacy/') {
+      return _json(200, _managerPrivacyData());
+    }
+    if (method == 'POST' && path == '/api/manager/privacy/export/') {
+      return _json(200, _managerPrivacyData(exportReady: true));
+    }
+    if (method == 'POST' && path == '/api/manager/privacy/account-deletion/') {
+      return _json(200, _managerPrivacyData(deletionRequested: true));
+    }
+    if (method == 'DELETE' &&
+        path == '/api/manager/privacy/account-deletion/') {
+      return _json(200, _managerPrivacyData());
+    }
 
     if (method == 'GET' && path == '/api/home/overview/') {
       return _json(
@@ -178,13 +253,26 @@ class VitamateTestHarness implements HttpClientAdapter {
       return _json(200, _meals);
     }
     if (method == 'POST' && path == '/api/meals/') {
-      _createMeal(data);
-      return _json(201, const <String, dynamic>{});
+      return _json(201, _createMeal(data));
     }
 
     if (method == 'GET' &&
         (path == '/api/foods/' || path == '/api/foods/autocomplete/')) {
       return _json(200, _filterFoods(query));
+    }
+    if (method == 'GET' && path == '/api/foods/favorites/') {
+      return _json(200, const <Map<String, dynamic>>[]);
+    }
+    if (method == 'GET' && path == '/api/foods/recent/') {
+      return _json(200, _filterFoods(query));
+    }
+    if (method == 'POST' &&
+        path.startsWith('/api/foods/') &&
+        path.endsWith('/favorite/')) {
+      return _json(
+        200,
+        _envelope(const <String, dynamic>{'is_favorite': true}),
+      );
     }
     if (method == 'POST' && path == '/api/foods/') {
       _createFood(data);
@@ -194,12 +282,22 @@ class VitamateTestHarness implements HttpClientAdapter {
     if (method == 'GET' && path == '/api/hydration/summary/') {
       return _json(200, _envelope(_hydrationSummaryData()));
     }
-    if (method == 'GET' && path == '/api/water/') {
-      return _json(200, _waterLogs);
+    if (method == 'GET' &&
+        (path == '/api/hydration/logs/' || path == '/api/water/')) {
+      return _json(200, _filterWaterLogs(query));
     }
-    if (method == 'POST' && path == '/api/water/') {
-      _createWaterLog(data);
-      return _json(201, const <String, dynamic>{});
+    if (method == 'POST' &&
+        (path == '/api/hydration/logs/' || path == '/api/water/')) {
+      return _json(201, _createWaterLog(data));
+    }
+    if (method == 'PATCH' && path.startsWith('/api/hydration/logs/')) {
+      final logId = _idFromPath(path, '/api/hydration/logs/');
+      return _json(200, _updateWaterLog(logId, data));
+    }
+    if (method == 'DELETE' && path.startsWith('/api/hydration/logs/')) {
+      final logId = _idFromPath(path, '/api/hydration/logs/');
+      _deleteWaterLog(logId);
+      return _json(204, null);
     }
 
     if (method == 'GET' && path == '/api/activity/summary/') {
@@ -214,6 +312,9 @@ class VitamateTestHarness implements HttpClientAdapter {
     if (method == 'POST' && path == '/api/activities/') {
       _createActivity(data);
       return _json(201, const <String, dynamic>{});
+    }
+    if (method == 'GET' && path == '/api/activity/sessions/active/') {
+      return _json(200, null);
     }
 
     if (method == 'GET' && path == '/api/steps/summary/') {
@@ -234,6 +335,9 @@ class VitamateTestHarness implements HttpClientAdapter {
       _createSleepLog(data);
       return _json(201, const <String, dynamic>{});
     }
+    if (method == 'GET' && path == '/api/sleep/coach/today/') {
+      return _json(200, _envelope(const <String, dynamic>{}));
+    }
 
     if (method == 'GET' && path == '/api/medications/overview/') {
       return _json(200, _medicationsOverviewData());
@@ -251,11 +355,49 @@ class VitamateTestHarness implements HttpClientAdapter {
     if (method == 'GET' && path == '/api/chronic/condition-types/supported/') {
       return _json(200, _supportedConditionTypes);
     }
+    if (method == 'GET' && path == '/api/motivation/overview/') {
+      return _json(200, _envelope(_motivationOverviewData()));
+    }
+    if (method == 'GET' && path == '/api/motivation/missions/') {
+      return _json(
+        200,
+        _envelope(<String, dynamic>{'missions': _motivationMissionsData()}),
+      );
+    }
+    if (method == 'POST' &&
+        RegExp(r'^/api/motivation/missions/\d+/refresh/$').hasMatch(path)) {
+      final missionId = _toInt(path.split('/')[4]);
+      final mission = _motivationMissionsData().firstWhere(
+        (item) => _toInt(item['id']) == missionId,
+        orElse: () => _motivationMissionsData().first,
+      );
+      return _json(200, _envelope(<String, dynamic>{'mission': mission}));
+    }
+    if (method == 'GET' && path == '/api/motivation/points/') {
+      final rangeDays = _toInt(query['range_days']);
+      return _json(200, _envelope(_motivationPointsData(rangeDays: rangeDays)));
+    }
+    if (method == 'GET' && path == '/api/motivation/badges/') {
+      return _json(
+        200,
+        _envelope(<String, dynamic>{'badges': _motivationBadgesData()}),
+      );
+    }
+    if (method == 'GET' && path == '/api/motivation/feed/') {
+      return _json(200, _envelope(_motivationFeedData()));
+    }
+    if (method == 'POST' && path == '/api/motivation/celebrations/ack/') {
+      final ids = (data['ids'] as List<dynamic>? ?? const [])
+          .map((item) => _toInt(item))
+          .where((item) => item > 0)
+          .toList(growable: false);
+      return _json(200, _envelope(<String, dynamic>{'acknowledged_ids': ids}));
+    }
 
     return _json(404, const <String, dynamic>{});
   }
 
-  ResponseBody _json(int statusCode, Object body) {
+  ResponseBody _json(int statusCode, Object? body) {
     return ResponseBody.fromString(
       jsonEncode(body),
       statusCode,
@@ -308,6 +450,7 @@ class VitamateTestHarness implements HttpClientAdapter {
   }
 
   Map<String, dynamic> _homeOverviewData() {
+    final motivation = _motivationOverviewData();
     return <String, dynamic>{
       'points': 130,
       'today_steps': 5120,
@@ -326,6 +469,304 @@ class VitamateTestHarness implements HttpClientAdapter {
         'disclaimer': 'Supportive self-management only.',
       },
       'conditions_center': _overviewConditions,
+      'daily_points': motivation['daily_points'],
+      'missions_completed': motivation['missions_completed'],
+      'missions_total': motivation['missions_total'],
+      'current_streak': motivation['current_streak'],
+      'level_name': motivation['level_name'],
+    };
+  }
+
+  Map<String, dynamic> _managerOverviewData() {
+    final motivation = _motivationOverviewData();
+    return <String, dynamic>{
+      'user': <String, dynamic>{
+        'username': _user['username'],
+        'first_name': _user['first_name'],
+        'last_name': _user['last_name'],
+        'full_name': '${_user['first_name']} ${_user['last_name']}',
+        'email': _user['email'],
+        'pending_email': _user['pending_email'] ?? '',
+        'email_verified': _user['email_verified'] ?? true,
+        'avatar_url': _user['avatar_url'] ?? '',
+        'preferred_language': _user['preferred_language'] ?? 'English',
+        'region': _user['region'] ?? 'Romania',
+      },
+      'profile': <String, dynamic>{
+        'birth_date': _user['birth_date'],
+        'gender': _user['gender'],
+        'gender_confirmed': _user['gender_confirmed'] ?? true,
+        'height': _user['height'],
+        'weight': _user['weight'],
+        'activity_level': _user['activity_level'],
+        'goal': _user['goal'],
+        'bmi': _user['bmi'] ?? 26.1,
+        'bmr': _user['bmr'] ?? 1700,
+        'daily_calorie_target': _user['daily_calorie_target'] ?? 2200,
+        'daily_water_target_ml': 2600,
+        'daily_step_goal': _user['daily_step_goal'],
+        'recommended_sleep_hours': _user['recommended_sleep_hours'],
+      },
+      'my_day': <String, dynamic>{
+        'score': 78,
+        'progress_percent': 78,
+        'completed_goals': 4,
+        'total_goals': 7,
+        'message': 'Your consistency is improving.',
+        'focus': _motivationFeedData()['focus'],
+      },
+      'motivation': <String, dynamic>{
+        'total_points': motivation['total_points'],
+        'daily_points': motivation['daily_points'],
+        'level': motivation['level'],
+        'level_name': motivation['level_name'],
+        'current_streak': motivation['current_streak'],
+        'missions_completed': motivation['missions_completed'],
+        'missions_total': motivation['missions_total'],
+      },
+      'goals_preview': _managerGoalsData().take(4).toList(growable: false),
+      'notifications': <String, dynamic>{
+        'enabled': true,
+        'quiet_hours_enabled': false,
+        'active_devices': 1,
+        'preferences': _notificationPreferencesData(),
+      },
+      'medical': <String, dynamic>{
+        'active_conditions': 1,
+        'active_medications': 1,
+        'health_indicators': 2,
+        'manual_medications': 1,
+        'condition_labels': const <String>['Diabetes'],
+      },
+      'privacy': _managerPrivacyData()['data'],
+      'quick_actions': const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'key': 'health_profile',
+          'title': 'Health Profile',
+          'route': '/my-vitamate/health-profile',
+          'icon': 'favorite',
+        },
+        <String, dynamic>{
+          'key': 'goals',
+          'title': 'Goals',
+          'route': '/my-vitamate/goals',
+          'icon': 'flag',
+        },
+        <String, dynamic>{
+          'key': 'notifications',
+          'title': 'Notifications',
+          'route': '/my-vitamate/notifications',
+          'icon': 'notifications',
+        },
+        <String, dynamic>{
+          'key': 'privacy',
+          'title': 'Privacy',
+          'route': '/my-vitamate/privacy',
+          'icon': 'shield',
+        },
+      ],
+      'updated_at': '2026-04-28T12:00:00Z',
+    };
+  }
+
+  List<Map<String, dynamic>> _managerGoalsData() {
+    return <Map<String, dynamic>>[
+      _managerGoal(
+        'nutrition',
+        'Nutrition',
+        'restaurant',
+        'routine',
+        '/meals',
+        'kcal',
+        1780,
+        2200,
+        81,
+      ),
+      _managerGoal(
+        'hydration',
+        'Hydration',
+        'water_drop',
+        'routine',
+        '/water',
+        'ml',
+        1200,
+        2600,
+        46,
+      ),
+      _managerGoal(
+        'steps',
+        'Steps',
+        'directions_walk',
+        'activity',
+        '/activities',
+        'steps',
+        5120,
+        8000,
+        64,
+      ),
+      _managerGoal(
+        'active_time',
+        'Active time',
+        'timer',
+        'activity',
+        '/activities',
+        'min',
+        35,
+        45,
+        78,
+      ),
+      _managerGoal(
+        'sleep',
+        'Sleep',
+        'bedtime',
+        'recovery',
+        '/sleep',
+        'h',
+        7.25,
+        8,
+        91,
+      ),
+      _managerGoal(
+        'weight',
+        'Weight',
+        'monitor_weight',
+        'body',
+        '/my-vitamate/health-profile',
+        'kg',
+        80,
+        80,
+        100,
+      ),
+      _managerGoal(
+        'habits',
+        'Habits',
+        'check_circle',
+        'habits',
+        '/habits',
+        'tasks',
+        1,
+        2,
+        50,
+      ),
+    ];
+  }
+
+  Map<String, dynamic> _managerGoal(
+    String key,
+    String label,
+    String icon,
+    String category,
+    String route,
+    String unit,
+    num current,
+    num target,
+    int percent,
+  ) {
+    return <String, dynamic>{
+      'key': key,
+      'label': label,
+      'icon': icon,
+      'category': category,
+      'route': route,
+      'unit': unit,
+      'current_value': current,
+      'recommended_value': target,
+      'custom_value': null,
+      'effective_value': target,
+      'source': 'calculated_default',
+      'source_label': 'Recommended by VitaMate',
+      'progress_percent': percent,
+      'is_complete': percent >= 100,
+    };
+  }
+
+  Map<String, dynamic> _notificationPreferencesData() {
+    return <String, dynamic>{
+      'enable_routine_reminders': true,
+      'enable_motivation_reminders': true,
+      'enable_health_alerts': true,
+      'enable_medication_reminders': true,
+      'enable_sleep_reminders': true,
+      'enable_water_reminders': true,
+      'enable_meal_reminders': true,
+      'enable_activity_reminders': true,
+      'enable_step_reminders': true,
+      'quiet_hours_enabled': false,
+      'quiet_start': '22:00:00',
+      'quiet_end': '07:00:00',
+      'motivation_max_per_day': 2,
+      'motivation_type_cooldown_hours': 6,
+      'critical_bypass_quiet_hours': true,
+      'breakfast_reminder_time': '09:00:00',
+      'lunch_reminder_time': '13:00:00',
+      'dinner_reminder_time': '20:00:00',
+      'steps_reminder_time': '11:00:00',
+      'water_reminder_interval_minutes': 60,
+      'water_reminder_start_time': '09:00:00',
+      'water_reminder_end_time': '21:00:00',
+      'activity_reminder_interval_hours': 2,
+      'activity_reminder_time': '10:00:00',
+      'activity_reminder_days': const <int>[1, 2, 3, 4, 5, 6, 7],
+      'inactive_reminder_enabled': false,
+      'inactive_reminder_hours': 3,
+      'target_wake_time': '07:00:00',
+      'target_bed_time': '23:00:00',
+      'updated_at': '2026-04-28T12:00:00Z',
+    };
+  }
+
+  Map<String, dynamic> _managerSecurityData() {
+    return <String, dynamic>{
+      'data': <String, dynamic>{
+        'email': _user['email'],
+        'pending_email': _user['pending_email'] ?? '',
+        'email_verified': _user['email_verified'] ?? true,
+        'active_sessions': 1,
+        'devices': const <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 1,
+            'platform': 'android',
+            'timezone': 'Asia/Damascus',
+            'locale': 'en',
+            'app_version': '1.0.0',
+            'is_primary': true,
+            'notifications_authorized': true,
+            'last_seen_at': '2026-04-28T12:00:00Z',
+          },
+        ],
+      },
+    };
+  }
+
+  Map<String, dynamic> _managerPrivacyData({
+    bool exportReady = false,
+    bool deletionRequested = false,
+  }) {
+    return <String, dynamic>{
+      'data': <String, dynamic>{
+        'permissions': const <String, dynamic>{
+          'notifications': true,
+          'activity_sensor': true,
+          'local_storage': true,
+        },
+        'latest_export': exportReady
+            ? const <String, dynamic>{
+                'id': 1,
+                'status': 'ready',
+                'requested_at': '2026-04-28T12:00:00Z',
+                'completed_at': '2026-04-28T12:00:00Z',
+                'expires_at': '2026-05-05T12:00:00Z',
+              }
+            : null,
+        'account_deletion': deletionRequested
+            ? const <String, dynamic>{
+                'id': 1,
+                'status': 'requested',
+                'requested_at': '2026-04-28T12:00:00Z',
+                'grace_period_ends_at': '2026-05-12T12:00:00Z',
+              }
+            : null,
+      },
     };
   }
 
@@ -350,6 +791,7 @@ class VitamateTestHarness implements HttpClientAdapter {
   }
 
   Map<String, dynamic> _progressOverviewData() {
+    final motivation = _motivationOverviewData();
     return <String, dynamic>{
       'summary': <String, dynamic>{
         'calories_target': 2100,
@@ -412,23 +854,13 @@ class VitamateTestHarness implements HttpClientAdapter {
         },
         <String, dynamic>{
           'code': 'activity',
-          'title': 'Activity',
+          'title': 'Activity / Movement',
           'percent': 64,
           'current': 320,
           'target': 500,
           'status': 'On track',
-          'summary': '320 kcal burned',
+          'summary': 'Burn, workouts, and automatic steps',
           'detail_endpoint': '/api/progress/details/activity/',
-        },
-        <String, dynamic>{
-          'code': 'steps',
-          'title': 'Steps',
-          'percent': 64,
-          'current': 5120,
-          'target': 8000,
-          'status': 'On track',
-          'summary': '5120 / 8000 steps',
-          'detail_endpoint': '/api/progress/details/steps/',
         },
         <String, dynamic>{
           'code': 'sleep',
@@ -439,6 +871,16 @@ class VitamateTestHarness implements HttpClientAdapter {
           'status': 'Good',
           'summary': '7.3 / 8.0 h',
           'detail_endpoint': '/api/progress/details/sleep/',
+        },
+        <String, dynamic>{
+          'code': 'motivation',
+          'title': 'Motivation',
+          'percent': 67,
+          'current': 4,
+          'target': 6,
+          'status': 'Good',
+          'summary': '4/6 missions completed',
+          'detail_endpoint': '/api/progress/details/motivation/',
         },
       ],
       'timeline_7d': _historyData()
@@ -455,7 +897,159 @@ class VitamateTestHarness implements HttpClientAdapter {
         'title': 'Insight',
         'message': 'Your consistency is improving.',
       },
+      'motivation': <String, dynamic>{
+        'daily_points': motivation['daily_points'],
+        'weekly_points': motivation['weekly_points'],
+        'missions_completed': motivation['missions_completed'],
+        'missions_total': motivation['missions_total'],
+        'current_streak': motivation['current_streak'],
+        'longest_streak': motivation['longest_streak'],
+        'badges_earned': motivation['badges_earned'],
+        'badges_in_progress': motivation['badges_in_progress'],
+        'insight': motivation['insight'],
+      },
     };
+  }
+
+  Map<String, dynamic> _motivationOverviewData() {
+    return <String, dynamic>{
+      'date': '2026-04-28',
+      'total_points': 1240,
+      'daily_points': 40,
+      'weekly_points': 180,
+      'level': 3,
+      'level_name': 'Consistent',
+      'next_level_threshold': 2000,
+      'points_to_next_level': 760,
+      'missions_completed': 4,
+      'missions_total': 6,
+      'current_streak': 5,
+      'longest_streak': 14,
+      'badges_earned': 2,
+      'badges_in_progress': 3,
+      'insight': 'Your medication adherence is strong this week.',
+    };
+  }
+
+  Map<String, dynamic> _motivationFeedData() {
+    return <String, dynamic>{
+      'summary': _motivationOverviewData(),
+      'focus': <String, dynamic>{
+        'kind': 'mission',
+        'title': 'Log 3 meals',
+        'subtitle': 'One more meal closes this mission for extra points.',
+        'progress_percent': 67,
+        'reward_points': 8,
+        'route': '/meals',
+      },
+      'celebrations': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 501,
+          'type': 'points_awarded',
+          'title': '+5 points',
+          'subtitle': 'Logged a meal',
+          'points_delta': 5,
+          'animation': 'burst',
+          'route': '/meals',
+          'created_at': '2026-04-28T12:10:00Z',
+        },
+      ],
+      'updated_at': '2026-04-28T12:00:00Z',
+    };
+  }
+
+  List<Map<String, dynamic>> _motivationMissionsData() {
+    return <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 11,
+        'mission_type': 'hydration_goal',
+        'title': 'Drink 2.5 L water',
+        'description': 'Reach hydration target today.',
+        'status': 'completed',
+        'target_value': 2500,
+        'current_value': 2500,
+        'points_reward': 10,
+        'reason': 'Recommended because your hydration was low yesterday.',
+      },
+      <String, dynamic>{
+        'id': 12,
+        'mission_type': 'nutrition_meals',
+        'title': 'Log 3 meals',
+        'description': 'Log breakfast, lunch and dinner.',
+        'status': 'in_progress',
+        'target_value': 3,
+        'current_value': 2,
+        'points_reward': 8,
+        'reason': 'Better meal consistency improves guidance.',
+      },
+      <String, dynamic>{
+        'id': 13,
+        'mission_type': 'medications_all',
+        'title': 'Take all medications',
+        'description': 'Complete all due doses today.',
+        'status': 'completed',
+        'target_value': 1,
+        'current_value': 1,
+        'points_reward': 10,
+        'reason': 'Adherence has high impact on health outcomes.',
+      },
+    ];
+  }
+
+  Map<String, dynamic> _motivationPointsData({required int rangeDays}) {
+    final safeRange = (rangeDays <= 0 ? 7 : rangeDays).clamp(7, 30);
+    return <String, dynamic>{
+      'range_days': safeRange,
+      'total_in_range': 180,
+      'days': <Map<String, dynamic>>[
+        <String, dynamic>{'date': '2026-04-22', 'points': 12},
+        <String, dynamic>{'date': '2026-04-23', 'points': 18},
+        <String, dynamic>{'date': '2026-04-24', 'points': 24},
+        <String, dynamic>{'date': '2026-04-25', 'points': 20},
+        <String, dynamic>{'date': '2026-04-26', 'points': 28},
+        <String, dynamic>{'date': '2026-04-27', 'points': 38},
+        <String, dynamic>{'date': '2026-04-28', 'points': 40},
+      ],
+      'transactions': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'event_date': '2026-04-28',
+          'points': 10,
+          'rule_code': 'WATER_GOAL_COMPLETED',
+          'source_type': 'hydration',
+          'reason': 'Hydration goal completed for today.',
+        },
+        <String, dynamic>{
+          'event_date': '2026-04-28',
+          'points': 10,
+          'rule_code': 'MEDICATION_DAY_COMPLETED',
+          'source_type': 'medication',
+          'reason': 'All scheduled doses taken.',
+        },
+      ],
+    };
+  }
+
+  List<Map<String, dynamic>> _motivationBadgesData() {
+    return <Map<String, dynamic>>[
+      <String, dynamic>{
+        'code': 'hydration_hero',
+        'name': 'Hydration Hero',
+        'description': 'Reach hydration goal for 7 days.',
+        'required_value': 7,
+        'progress_value': 5,
+        'progress_percent': 71,
+        'status': 'in_progress',
+      },
+      <String, dynamic>{
+        'code': 'meds_champion',
+        'name': 'Meds Champion',
+        'description': 'Complete medication mission for 7 days.',
+        'required_value': 7,
+        'progress_value': 7,
+        'progress_percent': 100,
+        'status': 'earned',
+      },
+    ];
   }
 
   List<Map<String, dynamic>> _historyData() {
@@ -501,6 +1095,7 @@ class VitamateTestHarness implements HttpClientAdapter {
       'medications' => 78,
       'chronic' => 92,
       'habits' => 65,
+      'motivation' => 67,
       _ => 85,
     };
     return <String, dynamic>{
@@ -518,6 +1113,8 @@ class VitamateTestHarness implements HttpClientAdapter {
               ? sleep['logged_hours_today']
               : tracker == 'steps'
               ? activity['steps']
+              : tracker == 'motivation'
+              ? 4
               : summary['calories_consumed'],
           'target': tracker == 'hydration'
               ? hydration['target']
@@ -525,6 +1122,8 @@ class VitamateTestHarness implements HttpClientAdapter {
               ? sleep['recommended_sleep_hours']
               : tracker == 'steps'
               ? activity['steps_target']
+              : tracker == 'motivation'
+              ? 6
               : summary['calories_target'],
           'unit': tracker == 'steps'
               ? 'steps'
@@ -532,6 +1131,8 @@ class VitamateTestHarness implements HttpClientAdapter {
               ? 'L'
               : tracker == 'sleep'
               ? 'h'
+              : tracker == 'motivation'
+              ? 'missions'
               : 'kcal',
           'percent': percent,
         },
@@ -694,6 +1295,13 @@ class VitamateTestHarness implements HttpClientAdapter {
       }).toList();
     }
 
+    final offset = int.tryParse(query['offset'] ?? '') ?? 0;
+    if (offset > 0 && offset < results.length) {
+      results = results.skip(offset).toList();
+    } else if (offset >= results.length) {
+      results = <Map<String, dynamic>>[];
+    }
+
     final limit = int.tryParse(query['limit'] ?? '');
     if (limit != null && limit > 0 && results.length > limit) {
       results = results.take(limit).toList();
@@ -739,7 +1347,7 @@ class VitamateTestHarness implements HttpClientAdapter {
     _foods.insert(0, item);
   }
 
-  void _createMeal(Map<String, dynamic> payload) {
+  Map<String, dynamic> _createMeal(Map<String, dynamic> payload) {
     final foodId = _toInt(payload['food']);
     final food = _foods.firstWhere(
       (item) => _toInt(item['id']) == foodId,
@@ -783,7 +1391,7 @@ class VitamateTestHarness implements HttpClientAdapter {
 
     final factor = effectiveAmount / 100.0;
     final nutritionFacts = _asMap(food['nutrition_facts']);
-    _meals.insert(0, <String, dynamic>{
+    final meal = <String, dynamic>{
       'id': _nextMealId++,
       'food': foodId,
       'food_name': food['name'],
@@ -811,7 +1419,9 @@ class VitamateTestHarness implements HttpClientAdapter {
       'snapshot_cholesterol_mg': 0,
       'snapshot_potassium_mg': 0,
       'snapshot_caffeine_mg': _toDouble(nutritionFacts['caffeine_mg']) * factor,
-    });
+    };
+    _meals.insert(0, meal);
+    return meal;
   }
 
   Map<String, dynamic> _hydrationSummaryData() {
@@ -827,16 +1437,54 @@ class VitamateTestHarness implements HttpClientAdapter {
     };
   }
 
-  void _createWaterLog(Map<String, dynamic> payload) {
+  List<Map<String, dynamic>> _filterWaterLogs(Map<String, String> query) {
+    final date = query['date']?.trim();
+    final from = DateTime.tryParse(query['from'] ?? '');
+    final to = DateTime.tryParse(query['to'] ?? '');
+    return _waterLogs.where((item) {
+      final consumedAt = DateTime.tryParse(
+        item['consumed_at']?.toString() ?? item['date'].toString(),
+      );
+      if (consumedAt == null) {
+        return true;
+      }
+      if (date != null && date.isNotEmpty) {
+        final local = consumedAt.toLocal();
+        final localDate =
+            '${local.year.toString().padLeft(4, '0')}-'
+            '${local.month.toString().padLeft(2, '0')}-'
+            '${local.day.toString().padLeft(2, '0')}';
+        if (localDate != date) {
+          return false;
+        }
+      }
+      if (from != null && consumedAt.isBefore(from)) {
+        return false;
+      }
+      if (to != null && consumedAt.isAfter(to)) {
+        return false;
+      }
+      return true;
+    }).toList(growable: false);
+  }
+
+  Map<String, dynamic> _createWaterLog(Map<String, dynamic> payload) {
     final amountMl = _toInt(payload['amount_ml']);
-    final beverageName = payload['beverage_name']?.toString();
-    final beverageType = payload['beverage_type']?.toString().toLowerCase();
-    final foodItemId = _toInt(payload['food_item']);
+    final beverageName =
+        payload['beverage_name']?.toString() ??
+        payload['custom_name']?.toString();
+    final beverageType =
+        payload['beverage_type']?.toString().toLowerCase() ??
+        payload['drink_type']?.toString().toLowerCase();
+    final foodItemId = _toInt(payload['food_item'] ?? payload['food_item_id']);
     final food = _foods.firstWhere(
       (item) => _toInt(item['id']) == foodItemId,
       orElse: () => const <String, dynamic>{},
     );
     final custom = _asMap(payload['custom_beverage']);
+    final metadata = _asMap(payload['metadata']);
+    final consumedAt =
+        payload['consumed_at']?.toString() ?? DateTime.now().toIso8601String();
     final name = food.isNotEmpty
         ? food['name'].toString()
         : (beverageName?.isNotEmpty == true
@@ -848,7 +1496,7 @@ class VitamateTestHarness implements HttpClientAdapter {
               ? beverageType!
               : (custom['beverage_type']?.toString().toLowerCase() ?? 'other'));
 
-    _waterLogs.insert(0, <String, dynamic>{
+    final created = <String, dynamic>{
       'id': _nextWaterLogId++,
       'amount_liter': amountMl / 1000.0,
       'hydration_ml': amountMl,
@@ -863,10 +1511,51 @@ class VitamateTestHarness implements HttpClientAdapter {
         'carbs': _toDouble(custom['carbohydrates_g']),
         'fat': _toDouble(custom['fat_g']),
         'sugars': _toDouble(custom['sugars_g']),
-        'caffeine': _toDouble(custom['caffeine_mg']),
+        'caffeine': _toDouble(custom['caffeine_mg'] ?? metadata['caffeine_mg']),
       },
-      'date': '2026-04-28T12:30:00Z',
-    });
+      'date': consumedAt,
+      'consumed_at': consumedAt,
+    };
+    _waterLogs.insert(0, created);
+    return created;
+  }
+
+  Map<String, dynamic> _updateWaterLog(int id, Map<String, dynamic> payload) {
+    final index = _waterLogs.indexWhere((item) => _toInt(item['id']) == id);
+    if (index < 0) {
+      return _createWaterLog(payload);
+    }
+    final current = Map<String, dynamic>.from(_waterLogs[index]);
+    final merged = Map<String, dynamic>.from(current);
+    if (payload.containsKey('amount_ml')) {
+      final amountMl = _toInt(payload['amount_ml']);
+      merged['amount_liter'] = amountMl / 1000.0;
+      merged['hydration_ml'] = amountMl;
+    }
+    if (payload.containsKey('drink_type')) {
+      merged['beverage_type'] = payload['drink_type']?.toString() ?? 'water';
+    }
+    if (payload.containsKey('custom_name')) {
+      merged['beverage_name'] = payload['custom_name']?.toString() ?? 'Water';
+    }
+    if (payload.containsKey('consumed_at')) {
+      merged['consumed_at'] = payload['consumed_at']?.toString();
+      merged['date'] = payload['consumed_at']?.toString();
+    }
+    final metadata = _asMap(payload['metadata']);
+    if (metadata.containsKey('caffeine_mg')) {
+      final preview = Map<String, dynamic>.from(
+        _asMap(merged['nutrition_preview']),
+      );
+      preview['caffeine'] = _toDouble(metadata['caffeine_mg']);
+      merged['nutrition_preview'] = preview;
+    }
+    _waterLogs[index] = merged;
+    return merged;
+  }
+
+  void _deleteWaterLog(int id) {
+    _waterLogs.removeWhere((item) => _toInt(item['id']) == id);
   }
 
   Map<String, dynamic> _activitySummaryData() {
@@ -923,6 +1612,11 @@ class VitamateTestHarness implements HttpClientAdapter {
     });
   }
 
+  int _idFromPath(String path, String prefix) {
+    final trimmed = path.replaceFirst(prefix, '').replaceAll('/', '');
+    return int.tryParse(trimmed) ?? 0;
+  }
+
   Map<String, dynamic> _medicationsOverviewData() {
     return <String, dynamic>{
       'medications': _medications,
@@ -937,22 +1631,6 @@ class VitamateTestHarness implements HttpClientAdapter {
         'adherence_percent': 92,
         'streak_days': 3,
         'on_time_percent': 88,
-      },
-      'reminder_sync': <String, dynamic>{
-        'items': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'medication_id': 10,
-            'schedule_id': 501,
-            'display_name': 'Metformin',
-            'timezone': 'Asia/Damascus',
-            'scheduled_times': const <String>['08:00'],
-            'days_of_week': const <int>[0, 1, 2, 3, 4, 5, 6],
-            'meal_relation': 'after_meal',
-            'snooze_default_minutes': 15,
-            'reminder_lead_minutes': 10,
-            'linked_condition': <String, dynamic>{'id': 4, 'name': 'Diabetes'},
-          },
-        ],
       },
     };
   }
@@ -969,8 +1647,19 @@ Map<String, dynamic> _sampleUser() {
     'activity_level': 1.55,
     'goal': 'maintain',
     'daily_step_goal': 8000,
-    'gender': 'male',
+    'daily_burn_goal': 300,
+    'gender': 'M',
+    'gender_confirmed': true,
     'birth_date': '2000-01-01',
+    'bmi': 26.1,
+    'bmr': 1700,
+    'daily_calorie_target': 2200,
+    'daily_water_target': 2.6,
+    'email_verified': true,
+    'pending_email': '',
+    'avatar_url': '',
+    'preferred_language': 'English',
+    'region': 'Romania',
     'recommended_sleep_hours': 8,
     'target_wake_time': '07:00:00',
     'target_bed_time': '23:00:00',
@@ -980,6 +1669,7 @@ Map<String, dynamic> _sampleUser() {
     'activity_reminder_interval_hours': 2,
     'enable_water_reminders': true,
     'water_reminder_interval_minutes': 60,
+    'enable_motivation_reminders': true,
   };
 }
 
@@ -1156,6 +1846,7 @@ List<Map<String, dynamic>> _sampleMeals() {
 }
 
 List<Map<String, dynamic>> _sampleWaterLogs() {
+  final now = DateTime.now();
   return <Map<String, dynamic>>[
     <String, dynamic>{
       'id': 1,
@@ -1174,7 +1865,8 @@ List<Map<String, dynamic>> _sampleWaterLogs() {
         'sugars': 0,
         'caffeine': 0,
       },
-      'date': '2026-04-28T08:15:00Z',
+      'date': now.toIso8601String(),
+      'consumed_at': now.toIso8601String(),
     },
   ];
 }

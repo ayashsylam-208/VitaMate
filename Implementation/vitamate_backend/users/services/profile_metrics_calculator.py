@@ -44,6 +44,9 @@ class ProfileMetricsCalculator:
             daily_calorie_target = int(tdee)
 
         daily_water_target = round((profile.weight * 0.033), 2)
+        manual_water_target = getattr(profile, "manual_daily_water_target", None)
+        if manual_water_target:
+            daily_water_target = float(manual_water_target)
 
         step_goal = 6000
         if profile.goal == "lose":

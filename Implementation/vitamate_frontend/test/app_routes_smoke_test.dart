@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vitamate/auth/screens/signup_screen.dart';
 import 'package:vitamate/core/routing/routes.dart';
 import 'package:vitamate/core/testing/app_test_keys.dart';
+import 'package:vitamate/features/manager/screens/goals_screen.dart';
+import 'package:vitamate/features/manager/screens/my_vitamate_screen.dart';
 import 'package:vitamate/features/stats/screens/stats_screen.dart';
 
 import 'support/vitamate_test_harness.dart';
@@ -64,17 +66,54 @@ void main() {
       route: Routes.activities,
       finder: () => find.byKey(const ValueKey(AppTestKeys.activityScreen)),
     ),
-    _RouteCase(route: Routes.habits, finder: () => find.text('Habit Support')),
+    _RouteCase(
+      route: Routes.habits,
+      finder: () => find.byKey(const ValueKey(AppTestKeys.habitsScreen)),
+    ),
     _RouteCase(
       route: Routes.steps,
       finder: () => find.byKey(const ValueKey(AppTestKeys.stepsScreen)),
     ),
     _RouteCase(
+      route: Routes.activityWorkouts,
+      finder: () => find.text('Choose an activity'),
+    ),
+    _RouteCase(
+      route: Routes.activitySessionSetup,
+      finder: () => find.text('Session Setup'),
+    ),
+    _RouteCase(
+      route: Routes.activitySessionLive,
+      finder: () => find.text('No active session'),
+    ),
+    _RouteCase(
+      route: Routes.activitySessionSummary,
+      finder: () => find.text('No saved workout'),
+    ),
+    _RouteCase(
+      route: Routes.activitySteps,
+      finder: () => find.byKey(const ValueKey(AppTestKeys.stepsScreen)),
+    ),
+    _RouteCase(
+      route: Routes.activityActiveTime,
+      finder: () => find.text('Active Time'),
+    ),
+    _RouteCase(
       route: Routes.chronicConditions,
       finder: () => find.byKey(const ValueKey(AppTestKeys.chronicScreenHeader)),
     ),
-    _RouteCase(route: Routes.goal, finder: () => find.text('Goals Screen')),
-    _RouteCase(route: Routes.score, finder: () => find.text('Score Summary')),
+    _RouteCase(
+      route: Routes.goal,
+      finder: () => find.byType(ManagerGoalsScreen),
+    ),
+    _RouteCase(
+      route: Routes.score,
+      finder: () => find.byType(MyVitaMateScreen),
+    ),
+    _RouteCase(
+      route: Routes.myVitaMate,
+      finder: () => find.byType(MyVitaMateScreen),
+    ),
   ];
 
   for (final routeCase in cases) {
@@ -89,13 +128,7 @@ void main() {
     });
   }
 
-  for (final route in <String>[
-    Routes.activities,
-    Routes.water,
-    Routes.meals,
-    Routes.sleep,
-    Routes.steps,
-  ]) {
+  for (final route in <String>[Routes.water, Routes.meals, Routes.sleep]) {
     testWidgets('$route can navigate back to progress from bottom nav', (
       tester,
     ) async {
@@ -110,6 +143,30 @@ void main() {
 
       expect(
         find.byKey(const ValueKey(AppTestKeys.statsScreen)),
+        findsOneWidget,
+      );
+    });
+  }
+
+  for (final route in <String>[Routes.activities, Routes.steps]) {
+    testWidgets('$route uses the ACT activity bottom navigation', (
+      tester,
+    ) async {
+      final harness = VitamateTestHarness();
+      await harness.bootstrap();
+
+      await harness.pumpAppRoute(tester, initialRoute: route);
+      await harness.settleApp(tester);
+
+      expect(find.text('Activity'), findsWidgets);
+      expect(find.text('Meds'), findsWidgets);
+      expect(find.text('Habits'), findsWidgets);
+
+      await tester.tap(find.text('Home').last);
+      await harness.settleApp(tester);
+
+      expect(
+        find.byKey(const ValueKey(AppTestKeys.homeScreen)),
         findsOneWidget,
       );
     });

@@ -4,18 +4,20 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
-from core.models import ActivitySession, Exercise, StepLog
+from core.models import ActivityLog, ActivitySession, Exercise
 from core.repositories.tracking.activity_log_repository import ActivityRepository
 from core.repositories.tracking.activity_session_repository import ActivitySessionRepository
+from core.services.health_progress.movement_evaluator import MovementEvaluator
 from core.services.tracking.activity_service import ActivityService
 
 
 class ActivitySessionService:
     @staticmethod
     def system_local_date() -> date:
-        return date.today()
+        return timezone.localdate()
 
     @staticmethod
     def met_for_intensity(*, exercise: Exercise, intensity: str) -> float:
@@ -150,31 +152,77 @@ class ActivitySessionService:
 
     @classmethod
     def finish_session(cls, session: ActivitySession, *, save_partial: bool = False) -> ActivitySession:
-        if session.status not in {ActivitySession.STATUS_RUNNING, ActivitySession.STATUS_PAUSED}:
-            raise ValidationError("Only active sessions can be finished.")
-        now = timezone.now()
-        elapsed_seconds = session.effective_elapsed_seconds(now=now)
-        if elapsed_seconds < session.target_duration_seconds and not save_partial:
-            raise ValidationError("Use partial save or resume the workout.")
-        duration_minutes = max(1, round(elapsed_seconds / 60))
-        activity_log = ActivityService.log_activity(
-            user=session.user,
-            exercise=session.exercise,
-            duration_minutes=duration_minutes,
-        )
-        session.status = ActivitySession.STATUS_COMPLETED
-        session.ended_at = now
-        session.actual_duration_seconds = elapsed_seconds
-        session.calories_burned = activity_log.calories_burned
-        return ActivitySessionRepository.save(
-            session,
-            update_fields=[
-                "status",
-                "ended_at",
-                "actual_duration_seconds",
-                "calories_burned",
-                "updated_at",
-            ],
+        with transaction.atomic():
+            locked = (
+                ActivitySession.objects.select_for_update()
+                .select_related("exercise", "user")
+                .get(id=session.id, user=session.user)
+            )
+            final_log = ActivityLog.objects.filter(source_session=locked).first()
+            if locked.status == ActivitySession.STATUS_COMPLETED and final_log is not None:
+                return locked
+            if locked.status not in {ActivitySession.STATUS_RUNNING, ActivitySession.STATUS_PAUSED}:
+                raise ValidationError("Only active sessions can be finished.")
+
+            now = timezone.now()
+            elapsed_seconds = locked.effective_elapsed_seconds(now=now)
+            if elapsed_seconds < locked.target_duration_seconds and not save_partial:
+                raise ValidationError("Use partial save or resume the workout.")
+
+            duration_minutes = max(1, round(elapsed_seconds / 60))
+            target_date = timezone.localdate(now)
+            final_log, log_created = ActivityLog.objects.get_or_create(
+                source_session=locked,
+                defaults={
+                    "user": locked.user,
+                    "exercise": locked.exercise,
+                    "duration_minutes": duration_minutes,
+                },
+            )
+            log_changed_fields = []
+            if final_log.date != target_date:
+                final_log.date = target_date
+                log_changed_fields.append("date")
+            if final_log.duration_minutes != duration_minutes:
+                final_log.duration_minutes = duration_minutes
+                log_changed_fields.append("duration_minutes")
+            if log_changed_fields:
+                final_log.save(update_fields=log_changed_fields)
+
+            locked.status = ActivitySession.STATUS_COMPLETED
+            locked.ended_at = now
+            locked.actual_duration_seconds = elapsed_seconds
+            locked.calories_burned = final_log.calories_burned
+            locked = ActivitySessionRepository.save(
+                locked,
+                update_fields=[
+                    "status",
+                    "ended_at",
+                    "actual_duration_seconds",
+                    "calories_burned",
+                    "updated_at",
+                ],
+            )
+            if log_created:
+                log_id = final_log.id
+                session_id = locked.id
+                transaction.on_commit(
+                    lambda: cls._emit_session_completed_side_effects(
+                        activity_log_id=log_id,
+                        session_id=session_id,
+                    )
+                )
+            return locked
+
+    @staticmethod
+    def _emit_session_completed_side_effects(*, activity_log_id: int, session_id: int) -> None:
+        try:
+            activity_log = ActivityLog.objects.select_related("user", "exercise").get(id=activity_log_id)
+        except ActivityLog.DoesNotExist:
+            return
+        ActivityService.emit_activity_log_side_effects(
+            activity_log,
+            points_idempotency_key=f"activity_session_completed:{session_id}",
         )
 
     @classmethod
@@ -237,19 +285,19 @@ class ActivitySessionService:
     @classmethod
     def build_today_summary(cls, *, user) -> dict:
         today = cls.system_local_date()
-        profile = getattr(user, "userprofile", None)
-        logs = list(ActivityRepository.list_for_user_on_date(user, today))
-        step_log = StepLog.objects.filter(user=user, date=today).first()
-        steps = int(getattr(step_log, "steps_count", 0) or 0)
-        steps_target = int(getattr(profile, "daily_step_goal", 0) or 0)
-        steps_calories = int((steps or 0) * 0.04)
-        active_minutes = sum(int(log.duration_minutes or 0) for log in logs)
-        calories_burned = sum(int(log.calories_burned or 0) for log in logs) + steps_calories
-        burn_target = int(getattr(profile, "daily_burn_goal", 0) or 0)
-        burn_progress = round(min(calories_burned / burn_target, 1.0) * 100) if burn_target > 0 else 0
-        steps_progress = round(min(steps / steps_target, 1.0) * 100) if steps_target > 0 else 0
-        goal_progress = max(burn_progress, steps_progress)
-        if burn_target > 0 and calories_burned >= burn_target:
+        movement = MovementEvaluator.evaluate(user=user, target_date=today)
+        steps_component = dict(movement["components"]["steps"])
+        exercise_component = dict(movement["components"]["exercise"])
+        active_calories = dict(movement["active_calories"])
+        steps = int(steps_component.get("current") or 0)
+        steps_target = int(steps_component.get("target") or 0)
+        active_minutes = int(exercise_component.get("current") or 0)
+        calories_burned = int(active_calories.get("value") or 0)
+        burn_target = int(active_calories.get("target") or 0)
+        burn_progress = int(active_calories.get("percent") or 0)
+        steps_progress = int(steps_component.get("progress_percent") or 0)
+        goal_progress = int(movement.get("score") or 0)
+        if burn_target > 0 and calories_burned >= burn_target and movement.get("is_complete"):
             message = "Daily burn goal completed. Keep the momentum going."
         elif burn_target > 0:
             message = f"You are {max(burn_target - calories_burned, 0)} kcal away from your daily burn goal."
@@ -266,6 +314,8 @@ class ActivitySessionService:
             "goal_progress_percent": goal_progress,
             "burn_progress_percent": burn_progress,
             "steps_progress_percent": steps_progress,
+            "movement": movement,
+            "active_calories": active_calories,
             "message": message,
         }
 
@@ -317,6 +367,10 @@ class ActivitySessionService:
             "goal_achievement_rate": achievement,
             "remaining_minutes": max(weekly_goal_minutes - total_minutes, 0),
             "best_activity": best_activity,
+            "active_time": MovementEvaluator.weekly_active_time(
+                user=user,
+                target_date=cls.system_local_date(),
+            ),
         }
 
     @classmethod

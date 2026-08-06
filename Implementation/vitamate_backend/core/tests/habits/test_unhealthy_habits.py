@@ -4,7 +4,15 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import MealLog, UnhealthyHabit, UnhealthyHabitLog, UnhealthyHabitPointEvent
+from core.models import (
+    FoodItem,
+    MealLog,
+    NutritionFacts,
+    UnhealthyHabit,
+    UnhealthyHabitLog,
+    UnhealthyHabitPointEvent,
+)
+from core.services.habits.habit_projection_service import TrackerToHabitProjectionService
 from gamification.models import UserScore
 from test_utils.helpers import auth_client_for_user, create_user_with_profile
 
@@ -51,6 +59,151 @@ class UnhealthyHabitTests(APITestCase):
         self.assertTrue({"data", "meta"}.issubset(res.data.keys()))
         self.assertEqual(len(res.data["data"]["habits"]), 3)
         self.assertIn("summary", res.data["data"])
+
+    def test_no_log_is_not_completed_success(self):
+        habit_id = self._create_setup(habit_type="fast_food", daily_limit=None, weekly_limit=2)
+
+        res = self.client_auth.get("/api/habits/unhealthy/overview/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        habit = next(item for item in res.data["data"]["habits"] if item["id"] == habit_id)
+        self.assertEqual(habit["evaluation"]["status"], "not_logged")
+        self.assertFalse(habit["evaluation"]["is_complete"])
+        self.assertEqual(res.data["data"]["summary"]["completed_today"], 0)
+
+    def test_daily_check_in_confirms_abstinence(self):
+        habit_id = self._create_setup(habit_type="smoking", daily_limit=5)
+
+        res = self.client_auth.post(
+            f"/api/habits/unhealthy/{habit_id}/daily-check-in/",
+            {"used": False, "idempotency_key": "today"},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["data"]["evaluation"]["status"], "confirmed_abstinent")
+        self.assertTrue(res.data["data"]["evaluation"]["is_complete"])
+
+        repeat = self.client_auth.post(
+            f"/api/habits/unhealthy/{habit_id}/daily-check-in/",
+            {"used": False, "idempotency_key": "today"},
+            format="json",
+        )
+        self.assertEqual(repeat.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(UnhealthyHabitLog.objects.filter(habit_id=habit_id).count(), 1)
+
+    def test_atomic_setup_endpoint_creates_complete_habit_once(self):
+        res = self.client_auth.post(
+            "/api/habits/unhealthy/setup/",
+            {
+                "idempotency_key": "setup-fast-food",
+                "habit": {"habit_type": "fast_food", "goal_type": "reduce"},
+                "baseline": {
+                    "initial_quantity": 3,
+                    "initial_frequency": 3,
+                    "unit": "meals",
+                    "common_trigger": "late work",
+                },
+                "plan": {"goal_type": "reduce", "weekly_limit": 2},
+                "reminders": [
+                    {
+                        "time_of_day": "18:00",
+                        "message": "Choose the planned meal first.",
+                        "is_active": True,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res.data["data"]["habit"]["is_setup"])
+        self.assertEqual(len(res.data["data"]["habit"]["reminders"]), 1)
+
+        repeat = self.client_auth.post(
+            "/api/habits/unhealthy/setup/",
+            {
+                "idempotency_key": "setup-fast-food",
+                "habit": {"habit_type": "fast_food", "goal_type": "reduce"},
+                "baseline": {"initial_quantity": 3, "unit": "meals"},
+            },
+            format="json",
+        )
+        self.assertEqual(repeat.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(UnhealthyHabit.objects.filter(user=self.user, habit_type="fast_food").count(), 1)
+
+    def test_fast_food_meal_projects_to_habit_once_without_habit_points(self):
+        habit_id = self._create_setup(habit_type="fast_food", daily_limit=None, weekly_limit=2)
+        food = FoodItem.objects.create(
+            name="Burger meal",
+            category="Fast food",
+            source=FoodItem.SOURCE_MANUAL,
+            calories_100g=250,
+        )
+
+        res = self.client_auth.post(
+            "/api/meals/",
+            {
+                "food": food.id,
+                "meal_type": "lunch",
+                "quantity_grams": 200,
+                "is_fast_food": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        meal = MealLog.objects.get(id=res.data["id"])
+        projection = UnhealthyHabitLog.objects.get(habit_id=habit_id)
+        self.assertEqual(projection.source_type, UnhealthyHabitLog.SOURCE_TYPE_TRACKER_PROJECTION)
+        self.assertEqual(projection.reward_owner_domain, "nutrition")
+        self.assertEqual(projection.linked_meal_log_id, meal.id)
+        self.assertEqual(projection.meal_type, "lunch")
+        self.assertEqual(UnhealthyHabitPointEvent.objects.filter(habit_id=habit_id).count(), 0)
+
+        TrackerToHabitProjectionService.sync_from_meal(meal_log=meal)
+        self.assertEqual(UnhealthyHabitLog.objects.filter(habit_id=habit_id).count(), 1)
+
+    def test_meal_can_project_to_fast_food_and_caffeine_without_duplicates(self):
+        fast_food_habit_id = self._create_setup(habit_type="fast_food", daily_limit=None, weekly_limit=2)
+        caffeine_habit_id = self._create_setup(habit_type="caffeine", daily_limit=300)
+        food = FoodItem.objects.create(
+            name="Burger and cola",
+            category="Fast food",
+            item_type=FoodItem.TYPE_FOOD,
+            source=FoodItem.SOURCE_MANUAL,
+            contains_caffeine=True,
+            calories_100g=300,
+        )
+        NutritionFacts.objects.create(
+            food_item=food,
+            basis_type=NutritionFacts.BASIS_PER_100G,
+            basis_value=100,
+            calories_kcal=300,
+            caffeine_mg=40,
+        )
+
+        res = self.client_auth.post(
+            "/api/meals/",
+            {
+                "food": food.id,
+                "meal_type": "dinner",
+                "quantity_grams": 200,
+                "is_fast_food": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        meal = MealLog.objects.get(id=res.data["id"])
+        projections = UnhealthyHabitLog.objects.filter(source_ref=f"meal_log:{meal.id}")
+        self.assertEqual(projections.count(), 2)
+        self.assertTrue(projections.filter(habit_id=fast_food_habit_id, meal_type="dinner").exists())
+        self.assertTrue(projections.filter(habit_id=caffeine_habit_id, caffeine_mg__gt=0).exists())
+
+        TrackerToHabitProjectionService.sync_from_meal(meal_log=meal)
+        self.assertEqual(UnhealthyHabitLog.objects.filter(source_ref=f"meal_log:{meal.id}").count(), 2)
+        self.assertEqual(UnhealthyHabitPointEvent.objects.filter(habit_id__in=[fast_food_habit_id, caffeine_habit_id]).count(), 0)
 
     def test_setup_and_log_caffeine_syncs_to_nutrition_and_awards_points(self):
         habit_id = self._create_setup()

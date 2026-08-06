@@ -3,32 +3,18 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/network_error_mapper.dart';
-import '../../../core/notifications/notifications_service.dart';
-import '../../../core/runtime/app_runtime.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../data/chronic_conditions_api.dart';
 import '../data/chronic_conditions_repository.dart';
 import '../models/chronic_condition.dart';
 
-typedef ReminderSync =
-    Future<void> Function(List<ChronicMedicationReminderPlan> plans);
-
-Future<void> _noopReminderSync(List<ChronicMedicationReminderPlan> _) async {}
-
 class ChronicConditionsController extends ChangeNotifier {
   ChronicConditionsController({
     ChronicConditionsApi? api,
-    ReminderSync? reminderSync,
     ChronicConditionsRepository? repository,
-  }) : _repository = repository ?? ChronicConditionsRepository(api: api),
-       _reminderSync =
-           reminderSync ??
-           (AppRuntime.notificationsEnabled
-               ? NotificationsService.syncChronicMedicationReminders
-               : _noopReminderSync);
+  }) : _repository = repository ?? ChronicConditionsRepository(api: api);
 
   final ChronicConditionsRepository _repository;
-  final ReminderSync _reminderSync;
   final Map<int, ChronicCondition> _conditionDetailsById =
       <int, ChronicCondition>{};
   final Set<int> _loadingConditionIds = <int>{};
@@ -101,7 +87,6 @@ class ChronicConditionsController extends ChangeNotifier {
       loading = false;
       notifyListeners();
     }
-    unawaited(_syncMedicationReminders());
   }
 
   Future<bool> createCondition({
@@ -220,7 +205,6 @@ class ChronicConditionsController extends ChangeNotifier {
         HealthSyncScope.homeOverview,
         HealthSyncScope.progressHistory,
       });
-      unawaited(_syncMedicationReminders());
     }, failureMessage: 'Failed to deactivate the condition.');
   }
 
@@ -265,8 +249,7 @@ class ChronicConditionsController extends ChangeNotifier {
     return _runDoseAction(
       scheduleId: scheduleId,
       action: () => _repository.markMedicationTaken(scheduleId),
-      afterResult: (_) =>
-          NotificationsService.cancelChronicMedicationSnooze(scheduleId),
+      afterResult: (_) async {},
       failureMessage: 'Failed to update medication status.',
     );
   }
@@ -275,8 +258,7 @@ class ChronicConditionsController extends ChangeNotifier {
     return _runDoseAction(
       scheduleId: scheduleId,
       action: () => _repository.markMedicationMissed(scheduleId),
-      afterResult: (_) =>
-          NotificationsService.cancelChronicMedicationSnooze(scheduleId),
+      afterResult: (_) async {},
       failureMessage: 'Failed to mark the dose as missed.',
     );
   }
@@ -291,23 +273,7 @@ class ChronicConditionsController extends ChangeNotifier {
         scheduleId,
         snoozeMinutes: snoozeMinutes,
       ),
-      afterResult: (result) async {
-        final dose = findDoseEntry(scheduleId);
-        if (dose == null || result.scheduledFor.isEmpty) {
-          return;
-        }
-        final reminderAt = DateTime.tryParse(result.scheduledFor);
-        if (reminderAt == null) {
-          return;
-        }
-        await NotificationsService.scheduleChronicMedicationSnooze(
-          scheduleId: scheduleId,
-          medicationName: dose.medication.name,
-          conditionName: dose.condition.conditionType.name,
-          dosage: dose.medication.dosageLabel,
-          reminderAt: reminderAt,
-        );
-      },
+      afterResult: (_) async {},
       failureMessage: 'Failed to snooze the dose.',
     );
   }
@@ -319,8 +285,7 @@ class ChronicConditionsController extends ChangeNotifier {
     return _runDoseAction(
       scheduleId: scheduleId,
       action: () => _repository.skipMedicationDose(scheduleId, reason: reason),
-      afterResult: (_) =>
-          NotificationsService.cancelChronicMedicationSnooze(scheduleId),
+      afterResult: (_) async {},
       failureMessage: 'Failed to skip the dose.',
     );
   }
@@ -394,7 +359,6 @@ class ChronicConditionsController extends ChangeNotifier {
       _conditionDetailsById[conditionId] = detail;
       todayDoses = _flattenTodayDoses(_detailedActiveConditions());
       notifyListeners();
-      unawaited(_syncMedicationReminders());
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
         e,
@@ -506,52 +470,6 @@ class ChronicConditionsController extends ChangeNotifier {
     }
     doses.sort((a, b) => a.schedule.timeOfDay.compareTo(b.schedule.timeOfDay));
     return doses;
-  }
-
-  Future<void> _syncMedicationReminders() async {
-    final detailedConditions = _detailedActiveConditions();
-    if (detailedConditions.isEmpty) {
-      return;
-    }
-    final plans = <ChronicMedicationReminderPlan>[];
-    for (final condition in detailedConditions) {
-      for (final medication in condition.medications.where(
-        (item) => item.isActive && item.reminderEnabled,
-      )) {
-        for (final schedule in medication.schedules) {
-          final parts = schedule.timeOfDay.split(':');
-          if (parts.length < 2) {
-            continue;
-          }
-          final hour = int.tryParse(parts[0]);
-          final minute = int.tryParse(parts[1]);
-          if (hour == null || minute == null) {
-            continue;
-          }
-          plans.add(
-            ChronicMedicationReminderPlan(
-              scheduleId: schedule.id,
-              medicationName: medication.name,
-              conditionName: condition.conditionType.name,
-              dosage: medication.dosageLabel,
-              hour: hour,
-              minute: minute,
-              leadMinutes: schedule.reminderLeadMinutes > 0
-                  ? schedule.reminderLeadMinutes
-                  : medication.reminderLeadMinutes,
-              recurrenceDays: schedule.recurrenceDays.isNotEmpty
-                  ? schedule.recurrenceDays
-                  : medication.recurrencePattern,
-            ),
-          );
-        }
-      }
-    }
-    try {
-      await _reminderSync(plans);
-    } catch (_) {
-      // Reminder sync should not block rendering or API workflows.
-    }
   }
 
   List<ChronicCondition> _upsertCondition(

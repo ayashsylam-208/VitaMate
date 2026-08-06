@@ -4,6 +4,7 @@ import hashlib
 import json
 
 from django.db import transaction
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from core.models import (
@@ -27,16 +28,37 @@ class ConstraintMaterializer:
         trigger_reference: str = "",
         input_signature: str,
         tracker_type: str | None = None,
+        run: ConstraintResolutionRun | None = None,
+        correlation_id: str = "",
+        idempotency_key: str | None = None,
+        sync_mode: str = ConstraintResolutionRun.SYNC_MODE_SYNCHRONOUS,
+        metadata: dict | None = None,
     ) -> ConstraintResolutionRun:
-        run = ConstraintResolutionRun.objects.create(
-            user=user,
-            trigger_type=trigger_type,
-            trigger_reference=str(trigger_reference or ""),
-            input_signature=input_signature,
-            run_status=ConstraintResolutionRun.STATUS_RUNNING,
-        )
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=user.pk)
+            run = cls._prepare_run(
+                user=user,
+                run=run,
+                trigger_type=trigger_type,
+                trigger_reference=trigger_reference,
+                input_signature=input_signature,
+                tracker_type=tracker_type,
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+                sync_mode=sync_mode,
+                metadata=metadata,
+            )
+            if run.run_status in {
+                ConstraintResolutionRun.STATUS_SUCCEEDED,
+                ConstraintResolutionRun.STATUS_SKIPPED,
+            }:
+                return run
+
         try:
             with transaction.atomic():
+                get_user_model().objects.select_for_update().get(pk=user.pk)
+                run = ConstraintResolutionRun.objects.select_for_update().get(pk=run.pk)
+
                 now = timezone.now()
                 active_query = ResolvedTrackerConstraint.objects.filter(
                     user=user,
@@ -44,6 +66,26 @@ class ConstraintMaterializer:
                 )
                 if tracker_type:
                     active_query = active_query.filter(tracker_type=tracker_type)
+                active_rows = list(active_query.select_for_update())
+                if cls._same_materialized_result(active_rows=active_rows, constraints=constraints):
+                    run.run_status = ConstraintResolutionRun.STATUS_SKIPPED
+                    run.completed_at = now
+                    run.total_constraints_generated = 0
+                    run.total_constraints_superseded = 0
+                    run.metadata = {
+                        **dict(run.metadata or {}),
+                        "skip_reason": "unchanged_constraints",
+                    }
+                    run.save(
+                        update_fields=[
+                            "run_status",
+                            "completed_at",
+                            "total_constraints_generated",
+                            "total_constraints_superseded",
+                            "metadata",
+                        ]
+                    )
+                    return run
                 superseded_count = active_query.update(
                     status=ResolvedTrackerConstraint.STATUS_SUPERSEDED,
                     effective_to=now,
@@ -85,23 +127,115 @@ class ConstraintMaterializer:
 
                 run.total_constraints_generated = len(created)
                 run.total_constraints_superseded = superseded_count
-                run.run_status = ConstraintResolutionRun.STATUS_COMPLETED
+                run.run_status = ConstraintResolutionRun.STATUS_SUCCEEDED
                 run.completed_at = timezone.now()
+                run.failed_at = None
+                run.error_code = ""
+                run.error_message = ""
                 run.save(
                     update_fields=[
                         "total_constraints_generated",
                         "total_constraints_superseded",
                         "run_status",
                         "completed_at",
+                        "failed_at",
+                        "error_code",
+                        "error_message",
                     ]
                 )
         except Exception as exc:
+            if run is None:
+                raise
             run.run_status = ConstraintResolutionRun.STATUS_FAILED
-            run.completed_at = timezone.now()
+            run.failed_at = timezone.now()
+            run.completed_at = run.failed_at
+            run.error_code = exc.__class__.__name__
             run.error_message = str(exc)
-            run.save(update_fields=["run_status", "completed_at", "error_message"])
+            run.save(
+                update_fields=[
+                    "run_status",
+                    "failed_at",
+                    "completed_at",
+                    "error_code",
+                    "error_message",
+                ]
+            )
             raise
         return run
+
+    @classmethod
+    def _prepare_run(
+        cls,
+        *,
+        user,
+        run,
+        trigger_type,
+        trigger_reference,
+        input_signature,
+        tracker_type,
+        correlation_id,
+        idempotency_key,
+        sync_mode,
+        metadata,
+    ) -> ConstraintResolutionRun:
+        if run is None and idempotency_key:
+            run = ConstraintResolutionRun.objects.filter(idempotency_key=idempotency_key).first()
+        if run is None:
+            run = ConstraintResolutionRun.objects.create(
+                user=user,
+                trigger_type=trigger_type,
+                trigger_reference=str(trigger_reference or ""),
+                input_signature=input_signature,
+                run_status=ConstraintResolutionRun.STATUS_PENDING,
+                sync_mode=sync_mode,
+                correlation_id=str(correlation_id or ""),
+                idempotency_key=idempotency_key or None,
+                metadata=dict(metadata or {}),
+                affected_trackers=[tracker_type] if tracker_type else [],
+            )
+        else:
+            run = ConstraintResolutionRun.objects.select_for_update().get(pk=run.pk)
+
+        if run.run_status in {
+            ConstraintResolutionRun.STATUS_SUCCEEDED,
+            ConstraintResolutionRun.STATUS_SKIPPED,
+        }:
+            return run
+
+        if run.run_status == ConstraintResolutionRun.STATUS_FAILED:
+            run.retry_count += 1
+        run.run_status = ConstraintResolutionRun.STATUS_RUNNING
+        run.input_signature = input_signature
+        run.sync_mode = sync_mode or run.sync_mode
+        run.correlation_id = str(correlation_id or run.correlation_id or "")
+        run.metadata = {**dict(run.metadata or {}), **dict(metadata or {})}
+        run.affected_trackers = [tracker_type] if tracker_type else list(run.affected_trackers or [])
+        run.completed_at = None
+        run.failed_at = None
+        run.error_code = ""
+        run.error_message = ""
+        run.save(
+            update_fields=[
+                "run_status",
+                "input_signature",
+                "sync_mode",
+                "correlation_id",
+                "metadata",
+                "affected_trackers",
+                "retry_count",
+                "completed_at",
+                "failed_at",
+                "error_code",
+                "error_message",
+            ]
+        )
+        return run
+
+    @classmethod
+    def _same_materialized_result(cls, *, active_rows, constraints) -> bool:
+        active_hashes = sorted(row.version_hash for row in active_rows)
+        candidate_hashes = sorted(cls._version_hash(candidate) for candidate in constraints)
+        return active_hashes == candidate_hashes
 
     @staticmethod
     def _version_hash(candidate: ConstraintCandidate) -> str:

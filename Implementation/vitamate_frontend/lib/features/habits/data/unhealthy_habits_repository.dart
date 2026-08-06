@@ -3,7 +3,7 @@ import 'unhealthy_habits_api.dart';
 
 class UnhealthyHabitsRepository {
   UnhealthyHabitsRepository({UnhealthyHabitsApi? api})
-      : _api = api ?? UnhealthyHabitsApi();
+    : _api = api ?? UnhealthyHabitsApi();
 
   final UnhealthyHabitsApi _api;
 
@@ -12,8 +12,27 @@ class UnhealthyHabitsRepository {
   Future<UnhealthyHabit> createHabit({
     required String habitType,
     required String goalType,
-  }) =>
-      _api.createHabit(habitType: habitType, goalType: goalType);
+  }) => _api.createHabit(habitType: habitType, goalType: goalType);
+
+  Future<UnhealthyHabit> setupHabit({
+    required String habitType,
+    required String goalType,
+    required double initialQuantity,
+    required String unit,
+    required String commonTrigger,
+    String cutoffTime = '',
+    String reminderTime = '',
+  }) {
+    return _api.setupHabit(
+      habitType: habitType,
+      goalType: goalType,
+      initialQuantity: initialQuantity,
+      unit: unit,
+      commonTrigger: commonTrigger,
+      cutoffTime: cutoffTime,
+      reminderTime: reminderTime,
+    );
+  }
 
   Future<void> saveBaseline({
     required int habitId,
@@ -47,7 +66,7 @@ class UnhealthyHabitsRepository {
     );
   }
 
-  Future<void> logHabit({
+  Future<UnhealthyHabitWriteResult> logHabit({
     required int habitId,
     required double quantity,
     required String unit,
@@ -58,6 +77,8 @@ class UnhealthyHabitsRepository {
     double caloriesKcal = 0,
     String foodName = '',
     bool healthyReplacement = false,
+    String mealType = 'unknown',
+    DateTime? loggedAt,
   }) {
     return _api.logHabit(
       habitId: habitId,
@@ -70,7 +91,24 @@ class UnhealthyHabitsRepository {
       caloriesKcal: caloriesKcal,
       foodName: foodName,
       healthyReplacement: healthyReplacement,
+      mealType: mealType,
+      loggedAt: loggedAt,
     );
+  }
+
+  Future<UnhealthyHabitWriteResult> dailyCheckIn({
+    required int habitId,
+    required bool used,
+  }) {
+    return _api.dailyCheckIn(habitId: habitId, used: used);
+  }
+
+  Future<UnhealthyHabit> pauseHabit({required int habitId}) {
+    return _api.pauseHabit(habitId: habitId);
+  }
+
+  Future<UnhealthyHabit> resumeHabit({required int habitId}) {
+    return _api.resumeHabit(habitId: habitId);
   }
 
   Future<void> saveReminder({

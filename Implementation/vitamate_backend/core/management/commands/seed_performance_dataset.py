@@ -25,7 +25,6 @@ from core.models import (
     HealthStateDelta,
     MealLog,
     Medicine,
-    NotificationDispatchRecord,
     ResolvedTrackerConstraint,
     SleepLog,
     StepLog,
@@ -34,6 +33,7 @@ from core.models import (
     UserNutrientTarget,
     WaterLog,
 )
+from core.services.reference_data_bootstrap import ensure_reference_data
 from core.services.nutrition.nutrition_service import NutritionService
 from gamification.models import UserScore
 from users.services.profile_metrics_calculator import ProfileMetricsCalculator
@@ -61,6 +61,7 @@ class Command(BaseCommand):
         parser.add_argument("--days", type=int, default=7)
 
     def handle(self, *args, **options):
+        ensure_reference_data()
         profile = options["profile"]
         if profile != "representative":
             raise CommandError(
@@ -684,7 +685,6 @@ class Command(BaseCommand):
         UnifiedHealthState.objects.filter(user=user).delete()
         HealthStateComputationRun.objects.filter(user=user).delete()
         HealthStateDelta.objects.filter(user=user).delete()
-        NotificationDispatchRecord.objects.filter(user=user).delete()
         UserScore.objects.filter(user=user).delete()
 
     @staticmethod

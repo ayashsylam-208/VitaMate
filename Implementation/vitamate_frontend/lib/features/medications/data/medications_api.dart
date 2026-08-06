@@ -46,9 +46,40 @@ class MedicationsApi {
     return Map<String, dynamic>.from(res.data as Map);
   }
 
-  Future<List<dynamic>> fetchTodayPlan() async {
-    final res = await HttpClient.dio.get(ApiEndpoints.medicationsToday);
-    return (res.data as List).cast<dynamic>();
+  Future<dynamic> fetchTodayPlan({String? date}) async {
+    final res = await HttpClient.dio.get(
+      ApiEndpoints.medicationsToday,
+      queryParameters: {if (date != null && date.isNotEmpty) 'date': date},
+    );
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> materializePlans() async {
+    final res = await HttpClient.dio.post(ApiEndpoints.medicationsMaterialize);
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  Future<Map<String, dynamic>> logPrnDose(
+    int medicationId,
+    Map<String, dynamic> payload,
+  ) async {
+    final res = await HttpClient.dio.post(
+      ApiEndpoints.medicationPrnDose(medicationId),
+      data: payload,
+    );
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchMedicationHistory({
+    String status = 'all',
+    int page = 1,
+    int pageSize = 30,
+  }) async {
+    final res = await HttpClient.dio.get(
+      ApiEndpoints.medicationsHistory,
+      queryParameters: {'status': status, 'page': page, 'page_size': pageSize},
+    );
+    return Map<String, dynamic>.from(res.data as Map);
   }
 
   Future<Map<String, dynamic>> markDoseTaken(
@@ -104,11 +135,6 @@ class MedicationsApi {
     final res = await HttpClient.dio.get(
       ApiEndpoints.medicationAdherenceSummary,
     );
-    return Map<String, dynamic>.from(res.data as Map);
-  }
-
-  Future<Map<String, dynamic>> fetchReminderSync() async {
-    final res = await HttpClient.dio.get(ApiEndpoints.medicationReminderSync);
     return Map<String, dynamic>.from(res.data as Map);
   }
 }

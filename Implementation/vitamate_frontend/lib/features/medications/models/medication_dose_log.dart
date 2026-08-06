@@ -6,10 +6,17 @@ class MedicationDoseLog {
   final String? linkedConditionName;
   final DateTime? scheduledFor;
   final String status;
+  final String rawStatus;
   final DateTime? snoozedUntil;
+  final DateTime? takenAt;
   final String doseAmount;
   final String doseUnit;
   final String form;
+  final String mealRelation;
+  final String notes;
+  final int pointsApplied;
+  final String? scheduledDate;
+  final bool isPrn;
 
   const MedicationDoseLog({
     required this.logId,
@@ -19,10 +26,17 @@ class MedicationDoseLog {
     required this.linkedConditionName,
     required this.scheduledFor,
     required this.status,
+    required this.rawStatus,
     required this.snoozedUntil,
+    required this.takenAt,
     required this.doseAmount,
     required this.doseUnit,
     required this.form,
+    required this.mealRelation,
+    required this.notes,
+    required this.pointsApplied,
+    required this.scheduledDate,
+    required this.isPrn,
   });
 
   factory MedicationDoseLog.fromJson(Map<String, dynamic> json) {
@@ -37,10 +51,17 @@ class MedicationDoseLog {
           linked['name']?.toString(),
       scheduledFor: DateTime.tryParse((json['scheduled_for'] ?? '').toString()),
       status: (json['status'] ?? 'pending').toString(),
+      rawStatus: (json['raw_status'] ?? json['status'] ?? 'pending').toString(),
       snoozedUntil: DateTime.tryParse((json['snoozed_until'] ?? '').toString()),
+      takenAt: DateTime.tryParse((json['taken_at'] ?? '').toString()),
       doseAmount: (json['dose_amount'] ?? '').toString(),
       doseUnit: (json['dose_unit'] ?? '').toString(),
       form: (json['form'] ?? '').toString(),
+      mealRelation: (json['meal_relation'] ?? 'none').toString(),
+      notes: (json['notes'] ?? '').toString(),
+      pointsApplied: _asInt(json['points_applied']),
+      scheduledDate: json['scheduled_date']?.toString(),
+      isPrn: _asBool(json['is_prn']),
     );
   }
 
@@ -49,6 +70,15 @@ class MedicationDoseLog {
     doseUnit,
     form,
   ].where((item) => item.trim().isNotEmpty).join(' ');
+}
+
+bool _asBool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = value?.toString().toLowerCase();
+  if (text == 'true') return true;
+  if (text == 'false') return false;
+  return false;
 }
 
 int _asInt(dynamic value) {

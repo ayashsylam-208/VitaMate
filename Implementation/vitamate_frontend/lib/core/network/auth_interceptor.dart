@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 
+import '../auth/session_expiry_coordinator.dart';
 import '../config/api_endpoints.dart';
 import '../storage/secure_storage.dart';
 
@@ -52,6 +53,7 @@ class AuthInterceptor extends QueuedInterceptor {
       baseUrl: _baseUrlFor(err.requestOptions),
     );
     if (newAccess == null || newAccess.isEmpty) {
+      await AuthSessionCoordinator.handleExpiredSession();
       return handler.next(err);
     }
 
@@ -59,6 +61,9 @@ class AuthInterceptor extends QueuedInterceptor {
       final response = await _retryRequest(err.requestOptions, newAccess);
       return handler.resolve(response);
     } on DioException catch (retryError) {
+      if (retryError.response?.statusCode == 401) {
+        await AuthSessionCoordinator.handleExpiredSession();
+      }
       return handler.next(retryError);
     } catch (retryError) {
       return handler.next(
@@ -160,10 +165,7 @@ class AuthInterceptor extends QueuedInterceptor {
         receiveDataWhenStatusError: requestOptions.receiveDataWhenStatusError,
         validateStatus: requestOptions.validateStatus,
         listFormat: requestOptions.listFormat,
-        extra: {
-          ...requestOptions.extra,
-          _retryKey: true,
-        },
+        extra: {...requestOptions.extra, _retryKey: true},
       ),
     );
   }

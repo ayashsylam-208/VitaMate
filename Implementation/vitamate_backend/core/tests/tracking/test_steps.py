@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import timedelta
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -42,17 +43,33 @@ class StepsTests(APITestCase):
     def test_repository_upsert_allows_zero_values(self):
         StepRepository.upsert_for_user_date(
             user=self.user,
-            log_date=date.today(),
+            log_date=timezone.localdate(),
             steps_count=1200,
             distance_km=0.95,
         )
 
         updated = StepRepository.upsert_for_user_date(
             user=self.user,
-            log_date=date.today(),
+            log_date=timezone.localdate(),
             steps_count=0,
             distance_km=0,
         )
 
         self.assertEqual(updated.steps_count, 0)
         self.assertEqual(updated.distance_km, 0)
+
+    def test_step_sync_rejects_stale_local_date(self):
+        yesterday = timezone.localdate() - timedelta(days=1)
+
+        res = self.client_auth.post(
+            "/api/steps/",
+            {
+                "steps_count": 1500,
+                "distance_km": 1.0,
+                "local_date": yesterday.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(StepLog.objects.filter(user=self.user).count(), 0)

@@ -1,4 +1,5 @@
 import '../../../auth/models/user_profile.dart';
+import '../../../core/notification_hub/models/notification_preferences.dart';
 
 class ActivityReminderSettings {
   const ActivityReminderSettings({
@@ -39,6 +40,22 @@ class ActivityReminderSettings {
       inactiveReminderEnabled: profile.inactiveReminderEnabled,
       inactiveReminderHours: profile.inactiveReminderHours,
       legacyIntervalHours: profile.activityReminderIntervalHours,
+    );
+  }
+
+  factory ActivityReminderSettings.fromNotificationPreferences(
+    NotificationPreferences preferences,
+  ) {
+    final days = preferences.activityReminderDays.isEmpty
+        ? const <int>[1, 2, 3, 4, 5, 6, 7]
+        : preferences.activityReminderDays;
+    return ActivityReminderSettings(
+      dailyReminderEnabled: preferences.enableActivityReminders,
+      reminderTime: preferences.activityReminderTime,
+      reminderDays: days,
+      inactiveReminderEnabled: preferences.inactiveReminderEnabled,
+      inactiveReminderHours: preferences.inactiveReminderHours,
+      legacyIntervalHours: preferences.activityReminderIntervalHours,
     );
   }
 

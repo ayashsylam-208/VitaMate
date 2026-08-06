@@ -38,6 +38,15 @@ class ResolvedTrackerConstraintSerializer(serializers.ModelSerializer):
 
 
 class ConstraintResolutionRunSerializer(serializers.ModelSerializer):
+    successful = serializers.SerializerMethodField()
+
+    @staticmethod
+    def get_successful(obj):
+        return obj.run_status in {
+            ConstraintResolutionRun.STATUS_SUCCEEDED,
+            ConstraintResolutionRun.STATUS_SKIPPED,
+        }
+
     class Meta:
         model = ConstraintResolutionRun
         fields = [
@@ -46,11 +55,20 @@ class ConstraintResolutionRunSerializer(serializers.ModelSerializer):
             "trigger_reference",
             "input_signature",
             "run_status",
+            "successful",
+            "sync_mode",
+            "correlation_id",
+            "idempotency_key",
+            "metadata",
+            "affected_trackers",
             "total_constraints_generated",
             "total_constraints_superseded",
             "started_at",
             "completed_at",
+            "failed_at",
+            "error_code",
             "error_message",
+            "retry_count",
         ]
 
 

@@ -1,13 +1,16 @@
-from datetime import date
 import json
 import time
 
 from rest_framework import views
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.utils.dateparse import parse_date
+from django.utils import timezone
 
 from core.services.orchestration.read_model_service import ReadModelService
 from core.services.tracking.health_tracker_coordinator import HealthTrackerCoordinator
+from gamification.services.motivation_feed_service import MotivationFeedService
+from gamification.services.motivation_service import MotivationService
 
 
 health_tracker_coordinator = HealthTrackerCoordinator()
@@ -29,7 +32,7 @@ class DashboardView(views.APIView):
     def get(self, request):
         payload = health_tracker_coordinator.build_dashboard(
             user=request.user,
-            today=date.today(),
+            today=timezone.localdate(),
         )
         if payload is None:
             return Response({"error": "Profile not found"}, status=404)
@@ -40,13 +43,15 @@ class StatsHistoryView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        history = health_tracker_coordinator.build_history(
+        payload = ReadModelService.progress_history(
             user=request.user,
-            today=date.today(),
+            request_id=getattr(request, "request_id", "legacy-history"),
             days=7,
         )
+        history = list(dict(payload.get("data") or {}).get("history") or [])
         if history is None:
             return Response({"error": "Profile not found"}, status=404)
+        _mark_serializer_timing(request, {"history": history})
         return Response({"history": history})
 
 
@@ -120,9 +125,11 @@ class HydrationSummaryView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        target_date = parse_date(request.query_params.get("date") or "") or timezone.localdate()
         payload = ReadModelService.hydration_summary(
             user=request.user,
             request_id=request.request_id,
+            target_date=target_date,
         )
         _mark_serializer_timing(request, payload)
         return Response(payload)
@@ -184,6 +191,108 @@ class ChronicOverviewView(views.APIView):
             user=request.user,
             request_id=request.request_id,
             view=request.query_params.get("view", ""),
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationOverviewView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payload = MotivationService.overview(
+            user=request.user,
+            request_id=request.request_id,
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationPointsView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            range_days = int(request.query_params.get("range_days", 7))
+        except (TypeError, ValueError):
+            range_days = 7
+        payload = MotivationService.points(
+            user=request.user,
+            request_id=request.request_id,
+            range_days=range_days,
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationMissionsView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payload = MotivationService.missions(
+            user=request.user,
+            request_id=request.request_id,
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationMissionRefreshView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, mission_id: int):
+        try:
+            payload = MotivationService.refresh_mission(
+                user=request.user,
+                mission_id=mission_id,
+                request_id=request.request_id,
+            )
+        except ValueError:
+            return Response({"detail": "Mission not found."}, status=404)
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationBadgesView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payload = MotivationService.badges(
+            user=request.user,
+            request_id=request.request_id,
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationFeedView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payload = MotivationFeedService.feed(
+            user=request.user,
+            request_id=request.request_id,
+        )
+        _mark_serializer_timing(request, payload)
+        return Response(payload)
+
+
+class MotivationCelebrationsAckView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        raw_ids = request.data.get("ids", []) if isinstance(request.data, dict) else []
+        if not isinstance(raw_ids, list):
+            return Response({"detail": "ids must be a list."}, status=400)
+        try:
+            ids = [int(item) for item in raw_ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "ids must contain integers."}, status=400)
+
+        payload = MotivationFeedService.acknowledge_celebrations(
+            user=request.user,
+            ids=ids,
+            request_id=request.request_id,
         )
         _mark_serializer_timing(request, payload)
         return Response(payload)
@@ -253,6 +362,27 @@ class OpenApiSchemaView(views.APIView):
                 },
                 "/api/habits/unhealthy/{id}/pause/": {
                     "post": {"summary": "Pause an unhealthy habit"}
+                },
+                "/api/motivation/overview/": {
+                    "get": {"summary": "Motivation overview"}
+                },
+                "/api/motivation/points/": {
+                    "get": {"summary": "Motivation points history"}
+                },
+                "/api/motivation/missions/": {
+                    "get": {"summary": "Motivation daily missions"}
+                },
+                "/api/motivation/missions/{id}/refresh/": {
+                    "post": {"summary": "Refresh mission progress"}
+                },
+                "/api/motivation/badges/": {
+                    "get": {"summary": "Motivation badges and progress"}
+                },
+                "/api/motivation/feed/": {
+                    "get": {"summary": "Motivation experience feed"}
+                },
+                "/api/motivation/celebrations/ack/": {
+                    "post": {"summary": "Acknowledge motivation celebrations"}
                 },
             },
         }

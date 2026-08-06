@@ -50,4 +50,32 @@ void main() {
     expect(message, contains('Android emulator uses http://10.0.2.2:8000'));
     expect(message, contains('adb reverse'));
   });
+
+  test('preserves structured API detail for a recoverable 503 response', () {
+    final request = RequestOptions(path: '/api/nutrition/ai-meals/analyze/');
+    final error = DioException(
+      requestOptions: request,
+      response: Response(
+        requestOptions: request,
+        statusCode: 503,
+        headers: Headers.fromMap(const {
+          Headers.contentTypeHeader: ['application/json'],
+        }),
+        data: const {
+          'detail': 'The meal analysis service is unavailable.',
+          'code': 'analysis_unavailable',
+          'retryable': true,
+        },
+      ),
+      type: DioExceptionType.badResponse,
+    );
+
+    final message = NetworkErrorMapper.toMessage(
+      error,
+      fallback: 'Meal analysis failed.',
+    );
+
+    expect(message, 'The meal analysis service is unavailable.');
+    expect(message, isNot(contains('database')));
+  });
 }

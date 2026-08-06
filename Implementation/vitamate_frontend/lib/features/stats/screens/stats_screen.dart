@@ -211,6 +211,13 @@ class _ProgressOverviewBody extends StatelessWidget {
             onOpenDetail: onOpenDetail,
           ),
           const SizedBox(height: 14),
+          _FeaturedTrackerSection(
+            title: 'Motivation progress',
+            subtitle: 'Missions, streaks, badges, and points history.',
+            card: _findCard(cards, 'motivation'),
+            onOpenDetail: onOpenDetail,
+          ),
+          const SizedBox(height: 14),
           _TimelineSection(days: overview.timeline),
           const SizedBox(height: 14),
           _FeaturedTrackerSection(
@@ -1485,6 +1492,8 @@ IconData _trackerIcon(String code) {
       return Icons.health_and_safety_rounded;
     case 'habits':
       return Icons.flag_rounded;
+    case 'motivation':
+      return Icons.stars_rounded;
   }
   return Icons.insights_rounded;
 }
@@ -1507,6 +1516,8 @@ Color _trackerColor(String code) {
       return const Color(0xFF5B4BE8);
     case 'habits':
       return VitaMateTheme.warning;
+    case 'motivation':
+      return VitaMateTheme.primary;
   }
   return VitaMateTheme.primary;
 }
@@ -1532,6 +1543,9 @@ String _formatValue(double current, double? target, String unit) {
 
 String _formatNumber(double value, String unit) {
   if (unit == 'steps' || unit == 'kcal' || unit == 'doses') {
+    return NumberFormat.decimalPattern().format(value.round());
+  }
+  if (unit == 'missions' || unit == 'today') {
     return NumberFormat.decimalPattern().format(value.round());
   }
   if (unit == '%') {

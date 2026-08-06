@@ -4,6 +4,10 @@ class NutritionSummary {
   final int burnedCalories;
   final int remainingCalories;
   final int points;
+  final double progressPercent;
+  final String status;
+  final String statusReason;
+  final List<NutritionSummaryMetric> metrics;
   final double proteinG;
   final double carbsG;
   final double fatG;
@@ -36,6 +40,10 @@ class NutritionSummary {
     required this.burnedCalories,
     required this.remainingCalories,
     required this.points,
+    this.progressPercent = 0,
+    this.status = 'not_configured',
+    this.statusReason = '',
+    this.metrics = const <NutritionSummaryMetric>[],
     this.proteinG = 0,
     this.carbsG = 0,
     this.fatG = 0,
@@ -103,6 +111,10 @@ class NutritionSummary {
       burnedCalories: _toInt(json['burned_calories']),
       remainingCalories: _toInt(json['remaining_calories']),
       points: _toInt(json['points']),
+      progressPercent: _toDouble(json['progress_percent']),
+      status: (json['status'] ?? 'not_configured').toString(),
+      statusReason: (json['status_reason'] ?? '').toString(),
+      metrics: _summaryMetrics(json['metrics']),
       proteinG: _toDouble(json['protein_g']),
       carbsG: _toDouble(json['carbs_g']),
       fatG: _toDouble(json['fat_g']),
@@ -161,6 +173,10 @@ class NutritionSummary {
       burnedCalories: toInt(summary['calories_burned']),
       remainingCalories: toInt(summary['calories_remaining']),
       points: toInt(d['points'] ?? gamification['points']),
+      progressPercent: toDouble(summary['progress_percent']),
+      status: (summary['status'] ?? 'not_configured').toString(),
+      statusReason: (summary['status_reason'] ?? '').toString(),
+      metrics: _summaryMetrics(summary['metrics']),
       proteinG: toDouble(summary['protein_g']),
       carbsG: toDouble(summary['carbs_g']),
       fatG: toDouble(summary['fat_g']),
@@ -188,6 +204,54 @@ class NutritionSummary {
       caffeineMg: toDouble(summary['caffeine_mg']),
     );
   }
+}
+
+class NutritionSummaryMetric {
+  const NutritionSummaryMetric({
+    required this.code,
+    required this.label,
+    required this.value,
+    required this.target,
+    required this.unit,
+    required this.progressPercent,
+    required this.status,
+    required this.reason,
+    required this.targetKind,
+  });
+
+  final String code;
+  final String label;
+  final double value;
+  final double target;
+  final String unit;
+  final double progressPercent;
+  final String status;
+  final String reason;
+  final String targetKind;
+
+  factory NutritionSummaryMetric.fromJson(Map<String, dynamic> json) =>
+      NutritionSummaryMetric(
+        code: (json['code'] ?? '').toString(),
+        label: (json['label'] ?? '').toString(),
+        value: _toDouble(json['value']),
+        target: _toDouble(json['target']),
+        unit: (json['unit'] ?? '').toString(),
+        progressPercent: _toDouble(json['progress_percent']),
+        status: (json['status'] ?? 'not_configured').toString(),
+        reason: (json['reason'] ?? '').toString(),
+        targetKind: (json['target_kind'] ?? '').toString(),
+      );
+}
+
+List<NutritionSummaryMetric> _summaryMetrics(dynamic value) {
+  if (value is! List) return const <NutritionSummaryMetric>[];
+  return value
+      .whereType<Map>()
+      .map(
+        (item) =>
+            NutritionSummaryMetric.fromJson(Map<String, dynamic>.from(item)),
+      )
+      .toList(growable: false);
 }
 
 int _toInt(dynamic v) {

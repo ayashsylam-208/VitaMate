@@ -56,6 +56,14 @@ class NetworkErrorMapper {
       return 'The backend at $baseUrl took too long to respond.';
     }
 
+    // Django APIs return a safe, user-facing `detail` for recoverable service
+    // failures such as an unavailable AI runtime. Preserve that explanation
+    // instead of replacing every structured 5xx response with a database hint.
+    final apiDetail = htmlPayload ? null : _apiDetail(data);
+    if (apiDetail != null) {
+      return apiDetail;
+    }
+
     if (statusCode != null && statusCode >= 500) {
       final target = requestPath.isNotEmpty ? requestPath : 'the requested API';
       if (htmlPayload) {
@@ -66,11 +74,11 @@ class NetworkErrorMapper {
           'Check the server logs and database connection.';
     }
 
+    if (statusCode == 401) {
+      return 'Your session expired. Please sign in again.';
+    }
+
     if (data is Map) {
-      final code = data['code']?.toString();
-      if (statusCode == 401 && code == 'token_not_valid') {
-        return 'Your session expired. Please sign in again.';
-      }
       final firstValue = data.values.isNotEmpty ? data.values.first : null;
       if (firstValue is List && firstValue.isNotEmpty) {
         return firstValue.first.toString();
@@ -89,6 +97,20 @@ class NetworkErrorMapper {
       return data.trim();
     }
     return fallback;
+  }
+
+  static String? _apiDetail(dynamic data) {
+    if (data is! Map) {
+      return null;
+    }
+    final detail = data['detail'];
+    if (detail is String && detail.trim().isNotEmpty) {
+      return detail.trim();
+    }
+    if (detail is List && detail.isNotEmpty) {
+      return detail.first.toString();
+    }
+    return null;
   }
 
   static bool _looksLikeHtml(dynamic data) {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/vitamate_theme.dart';
+
 class VitaMateAppBar extends StatelessWidget implements PreferredSizeWidget {
   const VitaMateAppBar({super.key});
 
@@ -9,28 +11,25 @@ class VitaMateAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     return AppBar(
-      backgroundColor: const Color(0xFFDDEEFF),
+      backgroundColor: VitaMateTheme.surface,
       elevation: 0,
-
-      // ❌ لا centerTitle
       centerTitle: false,
-
       title: Row(
-        mainAxisAlignment: MainAxisAlignment.start, // 👈 كل المجموعة عاليمين
+        mainAxisAlignment: MainAxisAlignment.start,
         mainAxisSize: MainAxisSize.max,
         children: [
           Image.asset(
-            'assets/images/IMG_8868.PNG',
+            'assets/images/finallogo.png',
             height: 30,
             fit: BoxFit.contain,
           ),
-          const SizedBox(width: 2), // 👈 تلاصق خفيف
+          const SizedBox(width: 8),
           const Text(
             'VitaMate',
             style: TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 20,
-              color: Color(0xFF0B6FAE),
+              color: VitaMateTheme.primaryDeep,
             ),
           ),
         ],

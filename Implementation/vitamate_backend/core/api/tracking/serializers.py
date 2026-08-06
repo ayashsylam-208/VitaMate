@@ -6,6 +6,17 @@ from core.models import ActivityLog, ActivitySession, Exercise, SleepLog, StepLo
 class StepLogSerializer(serializers.ModelSerializer):
     calories_burned = serializers.ReadOnlyField()
     burn_rate_kcal_per_km = serializers.ReadOnlyField()
+    local_date = serializers.DateField(write_only=True, required=False)
+
+    def validate_steps_count(self, value):
+        if value < 0:
+            raise serializers.ValidationError("steps_count must be greater than or equal to 0.")
+        return value
+
+    def validate_distance_km(self, value):
+        if value < 0:
+            raise serializers.ValidationError("distance_km must be greater than or equal to 0.")
+        return value
 
     class Meta:
         model = StepLog
@@ -19,8 +30,17 @@ class ActivityLogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ActivityLog
-        fields = ["id", "user", "exercise", "exercise_name", "duration_minutes", "date", "calories_burned"]
-        read_only_fields = ["user", "date", "calories_burned"]
+        fields = [
+            "id",
+            "user",
+            "exercise",
+            "exercise_name",
+            "source_session",
+            "duration_minutes",
+            "date",
+            "calories_burned",
+        ]
+        read_only_fields = ["user", "source_session", "date", "calories_burned"]
 
 
 class ExerciseSerializer(serializers.ModelSerializer):
@@ -43,6 +63,7 @@ class ExerciseSerializer(serializers.ModelSerializer):
 class ActivitySessionSerializer(serializers.ModelSerializer):
     exercise_name = serializers.CharField(source="exercise.name", read_only=True)
     exercise_icon_key = serializers.CharField(source="exercise.icon_key", read_only=True)
+    final_activity_log_id = serializers.SerializerMethodField()
     actual_duration_seconds = serializers.SerializerMethodField()
     remaining_duration_seconds = serializers.SerializerMethodField()
     progress_percent = serializers.SerializerMethodField()
@@ -62,6 +83,12 @@ class ActivitySessionSerializer(serializers.ModelSerializer):
     def get_calories_burned(self, obj):
         return obj.effective_calories_burned()
 
+    def get_final_activity_log_id(self, obj):
+        try:
+            return obj.final_activity_log.id
+        except Exception:
+            return None
+
     class Meta:
         model = ActivitySession
         fields = [
@@ -79,6 +106,7 @@ class ActivitySessionSerializer(serializers.ModelSerializer):
             "met_value_snapshot",
             "estimated_calories",
             "calories_burned",
+            "final_activity_log_id",
             "started_at",
             "paused_at",
             "ended_at",
@@ -132,7 +160,16 @@ class SleepLogSerializer(serializers.ModelSerializer):
         profile = getattr(obj.user, "userprofile", None)
         if not profile or not profile.recommended_sleep_hours:
             return 0
-        goal = profile.recommended_sleep_hours
+        from core.services.constraints import EffectiveConstraintReader
+
+        goal = EffectiveConstraintReader.get_effective_constraint(
+            user=obj.user,
+            tracker_type="sleep",
+            constraint_key="sleep_hours",
+            default_value=profile.recommended_sleep_hours,
+            default_unit="hours",
+            default_source="profile_fallback",
+        ).value
         return 10 if obj.duration_hours >= 0.9 * goal else 0
 
     class Meta:

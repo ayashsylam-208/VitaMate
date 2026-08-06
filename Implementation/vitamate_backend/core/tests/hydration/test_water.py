@@ -1,8 +1,12 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import FoodItem, MealLog, NutritionFacts, WaterLog
-from gamification.models import UserScore
+from core.models import Exercise, FoodItem, MealLog, NutritionFacts, WaterLog
+from core.services.tracking.activity_service import ActivityService
+from gamification.models import PointsTransaction, UserScore
 from test_utils.helpers import auth_client_for_user, create_user_with_profile
 
 
@@ -24,6 +28,7 @@ class WaterTests(APITestCase):
         fat=0,
         sugars=0,
         caffeine=0,
+        water=100,
         created_by=None,
     ):
         item = FoodItem.objects.create(
@@ -46,6 +51,7 @@ class WaterTests(APITestCase):
             carbohydrates_g=carbs,
             fat_g=fat,
             sugars_g=sugars,
+            water_g=water,
             caffeine_mg=caffeine,
         )
         return item
@@ -203,4 +209,199 @@ class WaterTests(APITestCase):
     def test_points_awarded_on_water_log(self):
         self.client_auth.post("/api/water/", {"amount_liter": 0.25}, format="json")
         score = UserScore.objects.get(user=self.user)
-        self.assertGreaterEqual(score.total_points, 5)
+        self.assertEqual(score.total_points, 3)
+        self.assertEqual(
+            PointsTransaction.objects.filter(user=self.user, rule_code="WATER_LOGGED").count(),
+            1,
+        )
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEAL_LOGGED").exists()
+        )
+
+    def test_logging_water_three_times_does_not_create_meal_points(self):
+        for _ in range(3):
+            res = self.client_auth.post("/api/water/", {"amount_ml": 250}, format="json")
+            self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        score = UserScore.objects.get(user=self.user)
+        self.assertEqual(score.total_points, 9)
+        self.assertEqual(
+            PointsTransaction.objects.filter(user=self.user, rule_code="WATER_LOGGED").count(),
+            3,
+        )
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEAL_LOGGED").exists()
+        )
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEALS_LOGGED_3").exists()
+        )
+
+    def test_logging_water_three_times_does_not_complete_three_meals_mission(self):
+        for _ in range(3):
+            self.client_auth.post("/api/water/", {"amount_ml": 250}, format="json")
+
+        missions = self.client_auth.get("/api/motivation/missions/")
+        self.assertEqual(missions.status_code, status.HTTP_200_OK)
+        nutrition_mission = next(
+            item for item in missions.data["data"]["missions"] if item["mission_type"] == "nutrition_meals"
+        )
+        self.assertNotEqual(nutrition_mission["status"], "completed")
+        self.assertEqual(nutrition_mission["current_value"], 0.0)
+
+    def test_delete_water_log_reverses_points_and_keeps_ledger_history(self):
+        create_res = self.client_auth.post("/api/water/", {"amount_liter": 0.5}, format="json")
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        log_id = create_res.data["id"]
+
+        delete_res = self.client_auth.delete(f"/api/water/{log_id}/")
+        self.assertEqual(delete_res.status_code, status.HTTP_204_NO_CONTENT)
+
+        score = UserScore.objects.get(user=self.user)
+        self.assertEqual(score.total_points, 0)
+        txs = PointsTransaction.objects.filter(
+            user=self.user,
+            source_type=PointsTransaction.SOURCE_HYDRATION,
+            source_id=str(log_id),
+        ).order_by("created_at", "id")
+        self.assertEqual(txs.count(), 2)
+        self.assertEqual(sum(int(item.points or 0) for item in txs), 0)
+        self.assertTrue(any(item.reversal_of_id for item in txs))
+
+    def test_hydration_summary_uses_active_target_after_activity(self):
+        self.user.userprofile.daily_water_target = 2.5
+        self.user.userprofile.save(update_fields=["daily_water_target"])
+        exercise = Exercise.objects.create(name="Walk", met_value=3.0)
+        with self.captureOnCommitCallbacks(execute=True):
+            ActivityService.log_activity(
+                user=self.user,
+                exercise=exercise,
+                duration_minutes=30,
+            )
+
+        response = self.client_auth.get("/api/hydration/summary/")
+        dashboard_response = self.client_auth.get("/api/home/overview/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(dashboard_response.status_code, status.HTTP_200_OK)
+        data = response.data["data"]
+        self.assertEqual(data["base_target_ml"], 2500)
+        self.assertEqual(data["adjusted_target_ml"], 2850)
+        self.assertEqual(data["active_target_ml"], 2850)
+        self.assertEqual(
+            dashboard_response.data["data"]["water_active_target_ml"],
+            data["active_target_ml"],
+        )
+        self.assertIn("activity", data["adjustment_reasons"])
+        self.assertEqual(
+            response.data["meta"]["snapshot_version"],
+            dashboard_response.data["meta"]["snapshot_version"],
+        )
+
+    def test_hydration_logs_route_uses_snapshot_contribution_not_raw_volume(self):
+        coffee = self._create_beverage(
+            name="Americano",
+            category="Coffee",
+            caffeine=95,
+            water=80,
+        )
+
+        create_response = self.client_auth.post(
+            "/api/hydration/logs/",
+            {"food_item_id": coffee.id, "amount_ml": 250},
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create_response.data["hydration_ml"], 200)
+
+        summary_response = self.client_auth.get("/api/hydration/summary/")
+        self.assertEqual(summary_response.status_code, status.HTTP_200_OK)
+        data = summary_response.data["data"]
+        self.assertEqual(data["consumed_volume_ml"], 250)
+        self.assertEqual(data["hydration_contribution_ml"], 200)
+        self.assertEqual(data["other_drinks_contribution_ml"], 200)
+        self.assertEqual(data["water_contribution_ml"], 0)
+
+    def test_named_coffee_without_catalog_creates_backend_snapshot(self):
+        create_response = self.client_auth.post(
+            "/api/hydration/logs/",
+            {
+                "drink_type": "coffee",
+                "custom_name": "Coffee",
+                "amount_ml": 250,
+                "metadata": {"caffeine_mg": 80},
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create_response.data["beverage_type"], "coffee")
+        self.assertEqual(create_response.data["hydration_ml"], 245)
+        self.assertEqual(create_response.data["nutrition_preview"]["caffeine"], 80)
+
+    def test_hydration_summary_points_are_read_from_transactions(self):
+        response = self.client_auth.post(
+            "/api/hydration/logs/",
+            {"amount_ml": 250},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        summary_response = self.client_auth.get("/api/hydration/summary/")
+
+        self.assertEqual(summary_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(summary_response.data["data"]["points_earned_today"], 3)
+
+    def test_consumed_at_drives_date_filters(self):
+        yesterday_at = timezone.now() - timedelta(days=1, hours=1)
+        response = self.client_auth.post(
+            "/api/hydration/logs/",
+            {
+                "amount_ml": 330,
+                "consumed_at": yesterday_at.isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        all_response = self.client_auth.get("/api/hydration/logs/")
+        legacy_today_response = self.client_auth.get("/api/water/")
+        yesterday_response = self.client_auth.get(
+            "/api/hydration/logs/",
+            {"date": timezone.localdate(yesterday_at).isoformat()},
+        )
+
+        self.assertEqual(all_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(legacy_today_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(yesterday_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(all_response.data), 1)
+        self.assertEqual(len(legacy_today_response.data), 0)
+        self.assertEqual(len(yesterday_response.data), 1)
+        self.assertEqual(yesterday_response.data[0]["amount_ml"], 330)
+
+    def test_hydration_logs_pagination_is_opt_in(self):
+        for amount in (150, 250, 500):
+            response = self.client_auth.post(
+                "/api/hydration/logs/",
+                {"amount_ml": amount},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        legacy_response = self.client_auth.get("/api/hydration/logs/")
+        page_response = self.client_auth.get(
+            "/api/hydration/logs/",
+            {"page": 1, "page_size": 2},
+        )
+        cursor_response = self.client_auth.get(
+            "/api/hydration/logs/",
+            {"cursor": "2", "page_size": 2},
+        )
+
+        self.assertEqual(legacy_response.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(legacy_response.data, list)
+        self.assertEqual(len(legacy_response.data), 3)
+        self.assertEqual(page_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(page_response.data["data"]), 2)
+        self.assertEqual(page_response.data["pagination"]["next_cursor"], "2")
+        self.assertEqual(cursor_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(cursor_response.data["data"]), 1)

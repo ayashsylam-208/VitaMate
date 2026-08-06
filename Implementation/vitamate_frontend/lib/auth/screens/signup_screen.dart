@@ -3,33 +3,38 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/notifications/notifications_service.dart';
+import '../../core/notification_hub/notification_hub.dart';
 import '../../core/routing/routes.dart';
+import '../../core/theme/vitamate_theme.dart';
 import '../../shared/utils/validators.dart';
 import '../state/auth_controller.dart';
 
 const _pageBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF5F0FF), Color(0xFFFFFDFF), Color(0xFFF2F0FF)],
+  colors: [
+    VitaMateTheme.background,
+    VitaMateTheme.surface,
+    VitaMateTheme.softSurface,
+  ],
 );
 
 const _shellBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF4EEFF), Color(0xFFFFFDFF)],
+  colors: [VitaMateTheme.softSurface, VitaMateTheme.surface],
 );
 
 const _buttonGradient = LinearGradient(
   begin: Alignment.centerLeft,
   end: Alignment.centerRight,
-  colors: [Color(0xFF8D4BEE), Color(0xFFA217F4)],
+  colors: [VitaMateTheme.primaryGlow, VitaMateTheme.primary],
 );
 
-const _deepPurple = Color(0xFF42118B);
-const _midPurple = Color(0xFF8A33FF);
-const _hintPurple = Color(0xFFB06AFF);
-const _strokePurple = Color(0xFFE7D5FF);
+const _deepPurple = VitaMateTheme.primaryDeep;
+const _midPurple = VitaMateTheme.primary;
+const _hintPurple = VitaMateTheme.textMuted;
+const _strokePurple = VitaMateTheme.border;
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -120,11 +125,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         return;
       }
 
-      unawaited(
-        NotificationsService.showWelcomeNewUser().catchError((error) {
-          debugPrint('SignUpScreen: welcome notification failed: $error');
-        }),
-      );
+      unawaited(InAppEventPresenter.showWelcomeNewUser());
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.onboarding);
     } finally {
@@ -173,7 +174,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final disableAndroidAutofill =
         defaultTargetPlatform == TargetPlatform.android;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: VitaMateTheme.background,
       resizeToAvoidBottomInset: true,
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
@@ -210,7 +211,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               children: [
                                 Center(
                                   child: Image.asset(
-                                    'assets/images/logo.png',
+                                    'assets/images/finallogo.png',
                                     height: isVeryCompact
                                         ? 56
                                         : isCompact

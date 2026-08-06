@@ -1,7 +1,8 @@
 from datetime import date, timedelta
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.db import transaction
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
 from core.models import (
@@ -9,8 +10,10 @@ from core.models import (
     HealthStateDelta,
     UnifiedHealthState,
 )
-from core.services.orchestration.notification_decision_service import (
-    NotificationDecisionService,
+from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
+from core.services.orchestration.health_state_orchestrator import (
+    HealthStateOrchestrator,
+    HealthStateUpdateError,
 )
 from core.services.orchestration.tracker_dependency_map import (
     HealthStateTriggers,
@@ -109,7 +112,7 @@ class HealthTrackerCoordinatorReadTests(TestCase):
 
     def test_dashboard_prefers_materialized_state_without_side_effects(self):
         self._create_state(
-            state_date=date.today(),
+            state_date=timezone.localdate(),
             window_kind=UnifiedHealthState.WINDOW_CURRENT,
             progress_summary=self._dashboard_progress(calories_target=2550, calories_consumed=620),
             version=3,
@@ -122,7 +125,10 @@ class HealthTrackerCoordinatorReadTests(TestCase):
         ) as recompute_mock, patch(
             "core.services.tracking.health_tracker_coordinator.HealthStateProjectionService.build_projection"
         ) as projection_mock:
-            payload = self.coordinator.build_dashboard(user=self.user, today=date.today())
+            payload = self.coordinator.build_dashboard(
+                user=self.user,
+                today=timezone.localdate(),
+            )
 
         self.assertEqual(payload["summary"]["calories_target"], 2550)
         self.assertEqual(payload["summary"]["calories_consumed"], 620)
@@ -134,7 +140,7 @@ class HealthTrackerCoordinatorReadTests(TestCase):
         projection_mock.assert_not_called()
 
     def test_history_reads_materialized_daily_snapshots_first(self):
-        today = date.today()
+        today = timezone.localdate()
         start = today - timedelta(days=6)
         for offset in range(7):
             day = start + timedelta(days=offset)
@@ -175,39 +181,37 @@ class HealthTrackerCoordinatorReadTests(TestCase):
         self.assertEqual(history[-1]["water_current"], 6.0)
         projection_mock.assert_not_called()
 
-    def test_dashboard_fallback_is_read_only_when_snapshot_missing(self):
+    def test_dashboard_bootstrap_persists_snapshot_when_missing(self):
         with patch(
-            "core.services.chronic.condition_integration_coordinator.ConditionIntegrationCoordinator.sync_all_for_user"
-        ) as sync_mock, patch(
-            "core.services.constraints.constraint_recompute_dispatcher.ConstraintRecomputeDispatcher.dispatch_for_user"
-        ) as recompute_mock:
-            payload = self.coordinator.build_dashboard(user=self.user, today=date.today())
+            "core.services.orchestration.health_state_orchestrator.NotificationHubRefreshService.refresh_user"
+        ):
+            payload = self.coordinator.build_dashboard(
+                user=self.user,
+                today=timezone.localdate(),
+            )
 
         self.assertIsNotNone(payload)
-        self.assertEqual(UnifiedHealthState.objects.filter(user=self.user).count(), 0)
-        sync_mock.assert_not_called()
-        recompute_mock.assert_not_called()
+        self.assertTrue(
+            UnifiedHealthState.objects.filter(
+                user=self.user,
+                state_date=timezone.localdate(),
+                window_kind=UnifiedHealthState.WINDOW_CURRENT,
+            ).exists()
+        )
+        self.assertIn("state_version", payload)
 
-    def test_history_fallback_uses_lightweight_history_builder(self):
-        today = date.today()
-        start = today - timedelta(days=6)
-        history_entries = [
-            {"date": str(start + timedelta(days=offset)), "water_current": float(offset)}
-            for offset in range(7)
-        ]
+    def test_history_missing_snapshots_are_not_fabricated(self):
+        today = timezone.localdate()
 
         with patch(
             "core.services.tracking.health_tracker_coordinator.HealthStateProjectionService.build_history_entry",
-            side_effect=history_entries,
         ) as history_entry_mock, patch(
             "core.services.tracking.health_tracker_coordinator.HealthStateProjectionService.build_projection"
         ) as projection_mock:
             history = self.coordinator.build_history(user=self.user, today=today, days=7)
 
-        self.assertEqual(len(history), 7)
-        self.assertEqual(history[0]["date"], str(start))
-        self.assertEqual(history[-1]["water_current"], 6.0)
-        self.assertEqual(history_entry_mock.call_count, 7)
+        self.assertEqual(history, [])
+        history_entry_mock.assert_not_called()
         projection_mock.assert_not_called()
 
 
@@ -233,12 +237,12 @@ class HealthStateWriteFlowTests(TestCase):
         self.assertGreaterEqual(len(callbacks), 1)
         current_state = UnifiedHealthState.objects.filter(
             user=self.user,
-            state_date=date.today(),
+            state_date=timezone.localdate(),
             window_kind=UnifiedHealthState.WINDOW_CURRENT,
         ).first()
         daily_state = UnifiedHealthState.objects.filter(
             user=self.user,
-            state_date=date.today(),
+            state_date=timezone.localdate(),
             window_kind=UnifiedHealthState.WINDOW_DAILY,
         ).first()
         run = HealthStateComputationRun.objects.filter(user=self.user).order_by("-id").first()
@@ -255,8 +259,86 @@ class HealthStateWriteFlowTests(TestCase):
             ).exists()
         )
 
+        run_count = HealthStateComputationRun.objects.filter(user=self.user).count()
+        delta_count = HealthStateDelta.objects.filter(user=self.user).count()
+        duplicate_result = HealthStateOrchestrator().handle_event(
+            user=self.user,
+            trigger_type=HealthStateTriggers.MEAL_LOGGED,
+            payload={
+                "trigger_reference": run.trigger_reference,
+                "correlation_id": run.correlation_id,
+                "idempotency_key": run.idempotency_key,
+            },
+            synchronous=True,
+        )
+        self.assertEqual(duplicate_result["run_id"], run.id)
+        self.assertEqual(duplicate_result["warnings"], ["duplicate_event_skipped"])
+        self.assertEqual(HealthStateComputationRun.objects.filter(user=self.user).count(), run_count)
+        self.assertEqual(HealthStateDelta.objects.filter(user=self.user).count(), delta_count)
 
-class DependencyAndNotificationTests(TestCase):
+    def test_failed_recompute_rolls_back_state_and_retries_same_run(self):
+        payload = {
+            "trigger_reference": "retryable-meal-event",
+            "idempotency_key": f"health-state-retry-test:{self.user.id}",
+            "event_dates": [timezone.localdate()],
+            "today": timezone.localdate(),
+        }
+        with patch(
+            "core.services.orchestration.health_state_projection_service."
+            "HealthStateProjectionService.build_projection",
+            side_effect=RuntimeError("projection failed"),
+        ):
+            with self.assertRaises(HealthStateUpdateError):
+                HealthStateOrchestrator().handle_event(
+                    user=self.user,
+                    trigger_type=HealthStateTriggers.MEAL_LOGGED,
+                    payload=payload,
+                    synchronous=True,
+                )
+
+        run = HealthStateComputationRun.objects.get(
+            idempotency_key=payload["idempotency_key"]
+        )
+        self.assertEqual(run.run_status, HealthStateComputationRun.STATUS_FAILED)
+        self.assertEqual(run.error_code, "RuntimeError")
+        self.assertFalse(UnifiedHealthState.objects.filter(user=self.user).exists())
+        self.assertFalse(HealthStateDelta.objects.filter(user=self.user).exists())
+
+        result = HealthStateOrchestrator().handle_event(
+            user=self.user,
+            trigger_type=HealthStateTriggers.MEAL_LOGGED,
+            payload=payload,
+            synchronous=True,
+        )
+        run.refresh_from_db()
+        self.assertEqual(result["run_id"], run.id)
+        self.assertEqual(run.run_status, HealthStateComputationRun.STATUS_COMPLETED)
+        self.assertEqual(run.retry_count, 1)
+        self.assertTrue(UnifiedHealthState.objects.filter(user=self.user).exists())
+
+
+class HealthStateTransactionTests(TransactionTestCase):
+    reset_sequences = True
+
+    def test_rolled_back_domain_write_does_not_publish_health_state_event(self):
+        user = create_user_with_profile(username="rolled-back-health-state-event")
+        with patch(
+            "core.services.orchestration.health_state_event_publisher."
+            "dispatch_health_state_event"
+        ) as dispatch_mock:
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    HealthStateEventPublisher.publish_on_commit(
+                        user=user,
+                        trigger_type=HealthStateTriggers.MEAL_LOGGED,
+                        payload={"trigger_reference": "rolled-back"},
+                    )
+                    raise RuntimeError("force rollback")
+
+        dispatch_mock.assert_not_called()
+
+
+class DependencyPlanTests(TestCase):
     def test_backdated_medication_adherence_recomputes_current_and_daily(self):
         plan = TrackerDependencyMap.build_plan(
             trigger_type=HealthStateTriggers.MEDICATION_ADHERENCE_CHANGED,
@@ -267,33 +349,3 @@ class DependencyAndNotificationTests(TestCase):
         self.assertTrue(plan.recompute_daily)
         self.assertTrue(plan.recompute_current)
         self.assertEqual(plan.event_dates, (date(2026, 4, 10),))
-
-    def test_notification_decision_service_uses_delta_changes(self):
-        candidates = NotificationDecisionService.decide(
-            delta_payload={
-                "state_date": "2026-04-19",
-                "metrics_before": {
-                    "medication_adherence_percent": 92,
-                    "medication_overdue_today": 0,
-                },
-                "metrics_after": {
-                    "medication_adherence_percent": 70,
-                    "medication_overdue_today": 2,
-                },
-                "warnings_added": [
-                    {
-                        "code": "bp_high",
-                        "level": "critical",
-                        "message": "Blood pressure is high",
-                    }
-                ],
-                "warnings_resolved": [],
-                "achievements_added": [{"code": "hydration_goal_reached"}],
-            }
-        )
-
-        types = {item["type"] for item in candidates}
-        self.assertIn("warning_triggered", types)
-        self.assertIn("medication_adherence_drop", types)
-        self.assertIn("medication_overdue", types)
-        self.assertIn("achievement", types)

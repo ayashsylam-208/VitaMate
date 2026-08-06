@@ -1,21 +1,22 @@
 import 'package:flutter/material.dart';
 
 class VitaMateTheme {
-  static const Color background = Color(0xFFF5F0FF);
+  static const Color background = Color(0xFFF4F0FF);
   static const Color shellBackground = Color(0xFFF8F4FF);
   static const Color surface = Color(0xFFFFFDFF);
-  static const Color softSurface = Color(0xFFF7EEFF);
-  static const Color primary = Color(0xFF8A33FF);
-  static const Color primaryDeep = Color(0xFF42118B);
-  static const Color accent = Color(0xFFF043C0);
-  static const Color textPrimary = Color(0xFF4B1D7E);
-  static const Color textMuted = Color(0xFF956CC7);
-  static const Color border = Color(0xFFE7D5FF);
-  static const Color borderStrong = Color(0xFFD8B8FF);
+  static const Color softSurface = Color(0xFFF1EAFF);
+  static const Color primary = Color(0xFF5D2DE1);
+  static const Color primaryDeep = Color(0xFF2F136E);
+  static const Color primaryGlow = Color(0xFF8A5CFF);
+  static const Color accent = Color(0xFF7E52FF);
+  static const Color textPrimary = Color(0xFF32205F);
+  static const Color textMuted = Color(0xFF7962A8);
+  static const Color border = Color(0xFFE4D9FF);
+  static const Color borderStrong = Color(0xFFD2C1FF);
   static const Color success = Color(0xFF3FA26A);
   static const Color warning = Color(0xFFEC8A2D);
   static const Color danger = Color(0xFFE35D7A);
-  static const Color shadow = Color(0x1457369A);
+  static const Color shadow = Color(0x16382189);
 
   static ThemeData light() {
     const colorScheme = ColorScheme(

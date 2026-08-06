@@ -11,8 +11,14 @@ from core.models import (
     ConditionType,
     HealthIndicatorRecord,
     HealthTarget,
+    ResolvedTrackerConstraint,
+    UnifiedHealthState,
     UserCondition,
 )
+from core.services.chronic.condition_integration_coordinator import (
+    ConditionIntegrationCoordinator,
+)
+from core.services.constraints import EffectiveConstraintReader
 from gamification.repositories.user_score_repository import UserScoreRepository
 from test_utils.helpers import auth_client_for_user, create_food_item, create_user_with_profile
 
@@ -401,3 +407,79 @@ class ChronicConditionApiTests(TestCase):
         score_after, _ = UserScoreRepository.get_or_create_for_user(self.user)
         self.assertGreater(score_after.total_points, score_before.total_points)
         self.assertTrue(ConditionPointsAudit.objects.filter(event_type="medication").exists())
+
+    def test_deactivate_condition_supersedes_constraints_and_preserves_history(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            create_res = self._create_condition(
+                "hypertension",
+                severity=self._severity_code("hypertension", "stage_2", "stage_1"),
+            )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        condition = UserCondition.objects.get(pk=create_res.data["id"])
+        self.assertTrue(
+            ResolvedTrackerConstraint.objects.filter(
+                user=self.user,
+                source_condition=condition,
+                status=ResolvedTrackerConstraint.STATUS_ACTIVE,
+            ).exists()
+        )
+        state_before = UnifiedHealthState.objects.get(
+            user=self.user,
+            state_date=timezone.localdate(),
+            window_kind=UnifiedHealthState.WINDOW_CURRENT,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            deactivate_res = self.client.post(
+                f"/api/chronic/user-conditions/{condition.id}/deactivate/",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(deactivate_res.status_code, status.HTTP_200_OK)
+        condition.refresh_from_db()
+        self.assertFalse(condition.is_active)
+        self.assertTrue(UserCondition.objects.filter(pk=condition.id).exists())
+        self.assertFalse(
+            ResolvedTrackerConstraint.objects.filter(
+                user=self.user,
+                source_condition=condition,
+                status=ResolvedTrackerConstraint.STATUS_ACTIVE,
+            ).exists()
+        )
+        self.assertTrue(
+            ResolvedTrackerConstraint.objects.filter(
+                user=self.user,
+                source_condition=condition,
+                status=ResolvedTrackerConstraint.STATUS_SUPERSEDED,
+            ).exists()
+        )
+        state_after = UnifiedHealthState.objects.get(
+            user=self.user,
+            state_date=timezone.localdate(),
+            window_kind=UnifiedHealthState.WINDOW_CURRENT,
+        )
+        self.assertGreater(state_after.version, state_before.version)
+
+    def test_condition_integration_facade_reads_materialized_targets(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            create_res = self._create_condition(
+                "hypertension",
+                severity=self._severity_code("hypertension", "stage_2", "stage_1"),
+            )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+
+        facade = ConditionIntegrationCoordinator().effective_constraints(
+            user=self.user,
+            profile=self.user.userprofile,
+            on_date=timezone.localdate(),
+        )
+        sodium = EffectiveConstraintReader.get_effective_constraint(
+            user=self.user,
+            tracker_type="nutrition",
+            constraint_key="sodium_mg",
+            default_value=None,
+            default_unit="mg",
+        )
+
+        self.assertEqual(facade.sodium_limit_mg, sodium.value)

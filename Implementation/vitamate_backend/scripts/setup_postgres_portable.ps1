@@ -123,17 +123,18 @@ if (-not (Test-Path (Join-Path $dataDir "PG_VERSION"))) {
     Set-Content -Path $pwFile -Value $SuperPassword -Encoding ascii
     try {
         Write-Output "Initializing PostgreSQL data directory..."
-        & $initDb.FullName -D $dataDir -U $SuperUser -A scram-sha-256 --pwfile=$pwFile
+        & $initDb.FullName -D $dataDir -U $SuperUser -A scram-sha-256 --encoding=UTF8 --locale=C --pwfile=$pwFile
     } finally {
         Remove-Item $pwFile -Force -ErrorAction SilentlyContinue
     }
 
-    $confPath = Join-Path $dataDir "postgresql.conf"
-    $confText = Get-Content $confPath -Raw
-    $confText = $confText -replace "(?m)^#?\s*listen_addresses\s*=.*$", "listen_addresses = 'localhost'"
-    $confText = $confText -replace "(?m)^#?\s*port\s*=.*$", "port = $Port"
-    Set-Content -Path $confPath -Value $confText -Encoding ascii
 }
+
+$confPath = Join-Path $dataDir "postgresql.conf"
+$confText = Get-Content $confPath -Raw
+$confText = $confText -replace "(?m)^#?\s*listen_addresses\s*=.*$", "listen_addresses = 'localhost'"
+$confText = $confText -replace "(?m)^#?\s*port\s*=.*$", "port = $Port"
+Set-Content -Path $confPath -Value $confText -Encoding ascii
 
 & $pgCtl -D $dataDir status | Out-Null
 if ($LASTEXITCODE -ne 0) {

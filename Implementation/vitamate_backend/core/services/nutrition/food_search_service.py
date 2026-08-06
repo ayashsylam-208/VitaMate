@@ -20,6 +20,7 @@ class FoodSearchService:
         limit=None,
         include_inactive: bool = False,
         own_only: bool = False,
+        offset=None,
     ):
         return FoodSearchReadRepository.search_accessible(
             user=user,
@@ -32,6 +33,7 @@ class FoodSearchService:
             include_inactive=include_inactive,
             own_only=own_only,
             limit=limit,
+            offset=offset,
         )
 
     @classmethod

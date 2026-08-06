@@ -10,6 +10,7 @@ from core.models import (
     NutritionServingOption,
     WaterLog,
 )
+from gamification.models import PointsTransaction, UserScore
 from test_utils.helpers import auth_client_for_user, create_food_item, create_user_with_profile
 
 
@@ -112,6 +113,9 @@ class NutritionTests(APITestCase):
         self.assertEqual(dash.status_code, status.HTTP_200_OK)
         self.assertEqual(dash.data["summary"]["caffeine_mg"], 100)
         self.assertAlmostEqual(float(dash.data["hydration"]["current"]), 0.245, places=3)
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEAL_LOGGED").exists()
+        )
 
     def test_nutrition_snapshot_does_not_change_when_facts_change(self):
         coffee = FoodItem.objects.create(
@@ -256,6 +260,98 @@ class NutritionTests(APITestCase):
         self.assertEqual(delete_res.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(MealLog.objects.filter(id=meal_id).exists())
         self.assertFalse(WaterLog.objects.filter(linked_meal_log_id=meal_id).exists())
+
+    def test_drink_meals_do_not_count_as_real_meals_or_unlock_three_meal_mission(self):
+        drink = FoodItem.objects.create(
+            name="Mint Tea",
+            item_type=FoodItem.TYPE_BEVERAGE,
+            category="Tea",
+            default_serving_size=250,
+            default_serving_unit="ml",
+            density_g_per_ml=1.0,
+            is_hydration_trackable=True,
+        )
+        NutritionFacts.objects.create(
+            food_item=drink,
+            basis_type=NutritionFacts.BASIS_PER_100ML,
+            basis_value=100,
+            serving_size=100,
+            serving_unit="ml",
+            calories_kcal=2,
+            water_g=100,
+        )
+
+        for _ in range(3):
+            res = self.client_auth.post(
+                "/api/meals/",
+                {"food": drink.id, "meal_type": "drink", "quantity": 250, "unit": "ml"},
+                format="json",
+            )
+            self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        score = UserScore.objects.get(user=self.user)
+        self.assertEqual(score.total_points, 9)
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEAL_LOGGED").exists()
+        )
+        self.assertFalse(
+            PointsTransaction.objects.filter(user=self.user, rule_code="MEALS_LOGGED_3").exists()
+        )
+
+        missions = self.client_auth.get("/api/motivation/missions/")
+        self.assertEqual(missions.status_code, status.HTTP_200_OK)
+        nutrition_mission = next(
+            item for item in missions.data["data"]["missions"] if item["mission_type"] == "nutrition_meals"
+        )
+        self.assertNotEqual(nutrition_mission["status"], "completed")
+        self.assertEqual(nutrition_mission["current_value"], 0.0)
+
+    def test_gain_goal_awards_points_when_calories_exceed_target(self):
+        profile = self.user.userprofile
+        profile.goal = "gain"
+        profile.daily_calorie_target = 2000
+        profile.save(update_fields=["goal", "daily_calorie_target"])
+        food = create_food_item(name="Mass Bowl", calories_100g=900)
+
+        res = self.client_auth.post(
+            "/api/meals/",
+            {"food": food.id, "meal_type": "lunch", "quantity_grams": 250},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        tx = PointsTransaction.objects.get(
+            user=self.user,
+            rule_code="NUTRITION_CALORIE_ALIGNMENT",
+            source_id="calorie_alignment",
+        )
+        self.assertEqual(tx.points, 15)
+        self.assertEqual(tx.metadata["profile_goal"], "gain")
+        self.assertEqual(tx.metadata["calorie_alignment_status"], "surplus_for_gain")
+
+    def test_loss_goal_deducts_points_when_calories_exceed_target(self):
+        profile = self.user.userprofile
+        profile.goal = "lose"
+        profile.daily_calorie_target = 2000
+        profile.save(update_fields=["goal", "daily_calorie_target"])
+        food = create_food_item(name="Over Target Meal", calories_100g=900)
+
+        res = self.client_auth.post(
+            "/api/meals/",
+            {"food": food.id, "meal_type": "dinner", "quantity_grams": 250},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        tx = PointsTransaction.objects.get(
+            user=self.user,
+            rule_code="NUTRITION_CALORIE_ALIGNMENT",
+            source_id="calorie_alignment",
+        )
+        self.assertEqual(tx.points, -10)
+        self.assertEqual(tx.event_type, PointsTransaction.EVENT_CORRECTION)
+        self.assertEqual(tx.metadata["profile_goal"], "lose")
+        self.assertEqual(tx.metadata["calorie_alignment_status"], "over_loss_target")
 
     def test_food_search_uses_alias_category_and_filters(self):
         coffee_category = FoodCategory.objects.get(code="coffee")

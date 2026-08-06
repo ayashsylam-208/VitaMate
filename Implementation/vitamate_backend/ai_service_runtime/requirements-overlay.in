@@ -1,0 +1,5 @@
+# The vendor package supplies model dependencies. These are explicit runtime
+# dependencies for the secure deployment overlay.
+fastapi
+uvicorn[standard]
+

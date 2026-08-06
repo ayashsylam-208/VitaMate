@@ -47,7 +47,7 @@ class MedicationAdherenceService:
             medication_ids=medication_ids,
             start_date=start_date,
             end_date=end_date,
-        )
+        ).filter(medication__is_prn=False)
 
     @classmethod
     def _summary_from_logs(
@@ -172,7 +172,9 @@ class MedicationAdherenceService:
             MedicationRepository.logs_for_user_on_date(
                 user=user,
                 target_date=target_date,
-            ).only("status")
+            )
+            .filter(medication__is_prn=False)
+            .only("status")
         )
         total = len(logs)
         taken = 0

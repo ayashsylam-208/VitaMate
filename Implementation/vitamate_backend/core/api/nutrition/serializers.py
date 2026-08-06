@@ -5,10 +5,12 @@ from core.models import (
     FoodItem,
     FoodItemAlias,
     MealLog,
+    MealLogComponent,
     Nutrient,
     NutritionFacts,
     NutritionServingOption,
 )
+from core.repositories.nutrition.food_item_repository import NutritionCatalogRepository
 from core.services.nutrition.micronutrient_service import MicronutrientTrackingService
 
 
@@ -83,6 +85,28 @@ class NutritionAutocompleteServingOptionSerializer(serializers.ModelSerializer):
         ]
 
 
+class MealLogComponentSerializer(serializers.ModelSerializer):
+    food_name = serializers.CharField(source="display_name_snapshot", read_only=True)
+
+    class Meta:
+        model = MealLogComponent
+        fields = [
+            "id",
+            "food_item",
+            "food_name",
+            "quantity_value",
+            "quantity_unit",
+            "resolved_grams",
+            "resolved_milliliters",
+            "confidence_score",
+            "nutrition_snapshot",
+            "source_label",
+            "is_user_confirmed",
+            "sort_order",
+        ]
+        read_only_fields = fields
+
+
 class FoodItemSerializer(serializers.ModelSerializer):
     nutrition_facts = NutritionFactsSerializer(required=False, allow_null=True)
     serving_options = NutritionServingOptionSerializer(many=True, required=False)
@@ -124,10 +148,12 @@ class FoodAutocompleteSerializer(serializers.ModelSerializer):
 
 class MealLogSerializer(serializers.ModelSerializer):
     total_calories = serializers.ReadOnlyField()
-    food_name = serializers.CharField(source="food.name", read_only=True)
+    food_name = serializers.SerializerMethodField()
+    components = MealLogComponentSerializer(many=True, read_only=True)
     serving_option_name = serializers.CharField(source="serving_option.name", read_only=True)
     serving_grams_equivalent = serializers.FloatField(required=False, allow_null=True, write_only=True)
     serving_milliliters_equivalent = serializers.FloatField(required=False, allow_null=True, write_only=True)
+    linked_habit_projection = serializers.SerializerMethodField()
     food_item = serializers.PrimaryKeyRelatedField(
         source="food",
         queryset=FoodItem.objects.all(),
@@ -135,10 +161,45 @@ class MealLogSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return
+        foods = NutritionCatalogRepository.accessible_to_user(
+            user=request.user,
+            include_inactive=False,
+        )
+        self.fields["food"].queryset = foods
+        self.fields["food_item"].queryset = foods
+        self.fields["serving_option"].queryset = NutritionServingOption.objects.filter(
+            food_item__in=foods,
+        )
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         if "food" not in attrs and self.instance is None:
             raise serializers.ValidationError({"food": "This field is required."})
+        if self.instance is not None and self.instance.is_composite:
+            component_fields = {
+                "food",
+                "quantity_grams",
+                "quantity",
+                "unit",
+                "serving_option",
+                "serving_label_snapshot",
+                "serving_grams_equivalent",
+                "serving_milliliters_equivalent",
+            }
+            if component_fields.intersection(attrs):
+                raise serializers.ValidationError(
+                    {
+                        "components": (
+                            "Composite meal components cannot be edited through the "
+                            "legacy meal endpoint."
+                        )
+                    }
+                )
         food = attrs.get("food") or getattr(self.instance, "food", None)
         serving_option = attrs.get("serving_option")
         if serving_option is not None and food is not None:
@@ -148,6 +209,36 @@ class MealLogSerializer(serializers.ModelSerializer):
                 )
         return attrs
 
+    def get_food_name(self, obj):
+        return obj.display_name or getattr(obj.food, "name", "")
+
+    def get_linked_habit_projection(self, obj):
+        if self.context.get("skip_linked_habit_projection", False):
+            return None
+        from core.models import UnhealthyHabitLog
+        from core.services.habits.habit_evaluation_service import HabitEvaluationService
+
+        log = (
+            UnhealthyHabitLog.objects.filter(linked_meal_log=obj)
+            .select_related("habit")
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if log is None:
+            return None
+        return {
+            "habit_log_id": log.id,
+            "habit_id": log.habit_id,
+            "habit_type": log.habit.habit_type,
+            "source_type": log.source_type,
+            "source_ref": log.source_ref,
+            "reward_owner_domain": log.reward_owner_domain,
+            "evaluation": HabitEvaluationService.evaluate_habit(
+                habit=log.habit,
+                target_date=log.log_date,
+            ),
+        }
+
     class Meta:
         model = MealLog
         fields = [
@@ -156,6 +247,9 @@ class MealLogSerializer(serializers.ModelSerializer):
             "food",
             "food_item",
             "food_name",
+            "display_name",
+            "is_composite",
+            "components",
             "meal_type",
             "quantity_grams",
             "quantity",
@@ -171,6 +265,17 @@ class MealLogSerializer(serializers.ModelSerializer):
             "consumed_at",
             "notes",
             "source",
+            "origin_domain",
+            "origin_record_id",
+            "correlation_id",
+            "source_type",
+            "source_ref",
+            "finalization_key",
+            "projection_version",
+            "reward_owner_domain",
+            "is_fast_food",
+            "quality_tags",
+            "linked_habit_projection",
             "date",
             "total_calories",
             "snapshot_calories_kcal",
@@ -210,6 +315,20 @@ class MealLogSerializer(serializers.ModelSerializer):
             "user",
             "date",
             "total_calories",
+            "origin_domain",
+            "origin_record_id",
+            "correlation_id",
+            "source_type",
+            "source_ref",
+            "projection_version",
+            "reward_owner_domain",
+            "source",
+            "quality_tags",
+            "display_name",
+            "is_composite",
+            "components",
+            "finalization_key",
+            "linked_habit_projection",
             "grams_consumed",
             "milliliters_consumed",
             "servings_consumed",

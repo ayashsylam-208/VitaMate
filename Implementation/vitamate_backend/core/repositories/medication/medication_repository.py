@@ -216,15 +216,6 @@ class MedicationRepository:
         )
 
     @staticmethod
-    def reminder_sync_medications(*, user):
-        return (
-            ConditionMedication.objects.filter(user=user, is_active=True, reminder_enabled=True)
-            .select_related("user_condition", "user_condition__condition_type")
-            .prefetch_related("schedules")
-            .order_by("display_name", "name", "id")
-        )
-
-    @staticmethod
     def today_dose_logs_queryset(*, user, target_date=None):
         target_date = target_date or timezone.localdate()
         return (

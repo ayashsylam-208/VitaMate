@@ -26,7 +26,6 @@ import 'package:vitamate/features/stats/data/stats_repository.dart';
 import 'package:vitamate/features/stats/models/day_stat.dart';
 import 'package:vitamate/features/stats/state/stats_controller.dart';
 import 'package:vitamate/features/steps/data/steps_repository.dart';
-import 'package:vitamate/features/steps/state/steps_controller.dart';
 import 'package:vitamate/shared/models/api_result.dart';
 import '../support/vitamate_test_harness.dart';
 
@@ -58,48 +57,47 @@ class _FakeHomeRepository extends HomeRepository {
 
 class _FakeActivityRepository extends ActivityRepository {
   @override
-  Future<ActivitySummarySnapshot> getSummary() async =>
-      ActivitySummarySnapshot(
-        burnTarget: 320,
-        burnCurrent: 210,
-        exerciseMinutes: 30,
-        pointsEstimate: 15,
-        todaySummary: const ActivityTodaySummary(
-          steps: 4200,
-          stepsTarget: 8000,
-          activeMinutes: 30,
-          caloriesBurned: 210,
-          burnTarget: 320,
-          goalProgressPercent: 66,
-          burnProgressPercent: 66,
-          stepsProgressPercent: 52,
-          message: 'Good progress today.',
-        ),
-        weeklySummary: const ActivityWeeklySummary(
-          weekStart: null,
-          weekEnd: null,
-          activeDays: 2,
-          weeklyMinutes: 80,
-          weeklyKcal: 480,
-          goalTargetMinutes: 150,
-          goalAchievementRate: 53,
-          remainingMinutes: 70,
-          bestActivity: 'Walk',
-        ),
-        activeSession: null,
-        suggestions: const <ActivitySuggestion>[
-          ActivitySuggestion(
-            exerciseId: 1,
-            exerciseName: 'Walk',
-            iconKey: 'directions_walk',
-            intensity: 'moderate',
-            recommendedDurationMinutes: 30,
-            estimatedCalories: 140,
-            reason: 'Good balance for today.',
-          ),
-        ],
-        meta: ApiMeta.empty(),
-      );
+  Future<ActivitySummarySnapshot> getSummary() async => ActivitySummarySnapshot(
+    burnTarget: 320,
+    burnCurrent: 210,
+    exerciseMinutes: 30,
+    pointsEstimate: 15,
+    todaySummary: const ActivityTodaySummary(
+      steps: 4200,
+      stepsTarget: 8000,
+      activeMinutes: 30,
+      caloriesBurned: 210,
+      burnTarget: 320,
+      goalProgressPercent: 66,
+      burnProgressPercent: 66,
+      stepsProgressPercent: 52,
+      message: 'Good progress today.',
+    ),
+    weeklySummary: const ActivityWeeklySummary(
+      weekStart: null,
+      weekEnd: null,
+      activeDays: 2,
+      weeklyMinutes: 80,
+      weeklyKcal: 480,
+      goalTargetMinutes: 150,
+      goalAchievementRate: 53,
+      remainingMinutes: 70,
+      bestActivity: 'Walk',
+    ),
+    activeSession: null,
+    suggestions: const <ActivitySuggestion>[
+      ActivitySuggestion(
+        exerciseId: 1,
+        exerciseName: 'Walk',
+        iconKey: 'directions_walk',
+        intensity: 'moderate',
+        recommendedDurationMinutes: 30,
+        estimatedCalories: 140,
+        reason: 'Good balance for today.',
+      ),
+    ],
+    meta: ApiMeta.empty(),
+  );
 
   @override
   Future<List<Exercise>> listExercises() async => <Exercise>[
@@ -228,12 +226,24 @@ class _FakeAuthRepository extends AuthRepository {
       activityLevel: 1.55,
       goal: 'maintain',
       dailyStepGoal: 8000,
+      dailyBurnGoal: 300,
       gender: 'male',
+      genderConfirmed: true,
       birthDate: DateTime.parse('2000-01-01'),
+      bmi: 26.1,
+      bmr: 1700,
+      dailyCalorieTarget: 2200,
+      dailyWaterTarget: 2.6,
+      emailVerified: true,
+      pendingEmail: '',
+      avatarUrl: '',
+      preferredLanguage: 'English',
+      region: 'Romania',
       recommendedSleepHours: 8,
       targetWakeTime: DateTime(2000, 1, 1, 7),
       targetBedTime: DateTime(2000, 1, 1, 23),
       enableSleepImprovement: true,
+      enableMotivationReminders: true,
       preferredActivityType: 'walking',
       enableActivityReminders: true,
       activityReminderIntervalHours: 2,
@@ -262,8 +272,19 @@ class _FakeAuthRepository extends AuthRepository {
         activityLevel: _user.profile.activityLevel,
         goal: _user.profile.goal,
         dailyStepGoal: _user.profile.dailyStepGoal,
+        dailyBurnGoal: _user.profile.dailyBurnGoal,
         gender: _user.profile.gender,
+        genderConfirmed: _user.profile.genderConfirmed,
         birthDate: _user.profile.birthDate,
+        bmi: _user.profile.bmi,
+        bmr: _user.profile.bmr,
+        dailyCalorieTarget: _user.profile.dailyCalorieTarget,
+        dailyWaterTarget: _user.profile.dailyWaterTarget,
+        emailVerified: _user.profile.emailVerified,
+        pendingEmail: _user.profile.pendingEmail,
+        avatarUrl: _user.profile.avatarUrl,
+        preferredLanguage: _user.profile.preferredLanguage,
+        region: _user.profile.region,
         recommendedSleepHours:
             (data['recommended_sleep_hours'] as num?)?.toDouble() ??
             _user.profile.recommendedSleepHours,
@@ -276,12 +297,14 @@ class _FakeAuthRepository extends AuthRepository {
         enableSleepImprovement:
             data['enable_sleep_improvement'] as bool? ??
             _user.profile.enableSleepImprovement,
+        enableMotivationReminders:
+            data['enable_motivation_reminders'] as bool? ??
+            _user.profile.enableMotivationReminders,
         preferredActivityType: _user.profile.preferredActivityType,
         enableActivityReminders: _user.profile.enableActivityReminders,
         activityReminderIntervalHours:
             _user.profile.activityReminderIntervalHours,
-        activityReminderTime:
-            data['activity_reminder_time'] != null
+        activityReminderTime: data['activity_reminder_time'] != null
             ? DateTime.parse('2000-01-01 ${data['activity_reminder_time']}')
             : _user.profile.activityReminderTime,
         activityReminderDays:
@@ -319,7 +342,50 @@ class _FakeStepsRepository extends StepsRepository {
   }
 
   @override
-  Future<void> logSteps({required int stepsCount, double distanceKm = 0}) async {}
+  Future<void> logSteps({
+    required int stepsCount,
+    double distanceKm = 0,
+    String? localDate,
+    String? timezoneName,
+    String? installationId,
+    DateTime? measuredAt,
+    int? sensorSteps,
+    int? manualAdjustmentSteps,
+    int? importedAdjustmentSteps,
+    int? syncVersion,
+  }) async {}
+}
+
+class _StaleAfterLogStepsRepository extends StepsRepository {
+  int loggedSteps = 0;
+
+  @override
+  Future<Map<String, dynamic>> getSummary({cancelToken}) async {
+    return <String, dynamic>{
+      'target_steps': 8000,
+      'steps_today': 8000,
+      'distance_km': 6.1,
+      'calories_burned': 320,
+      'burn_rate_kcal_per_km': 52.4,
+      'points': 50,
+    };
+  }
+
+  @override
+  Future<void> logSteps({
+    required int stepsCount,
+    double distanceKm = 0,
+    String? localDate,
+    String? timezoneName,
+    String? installationId,
+    DateTime? measuredAt,
+    int? sensorSteps,
+    int? manualAdjustmentSteps,
+    int? importedAdjustmentSteps,
+    int? syncVersion,
+  }) async {
+    loggedSteps = stepsCount;
+  }
 }
 
 void main() {
@@ -346,22 +412,25 @@ void main() {
     expect(controller.error, isNull);
   });
 
-  test('home controller falls back when overview snapshot is stale and empty', () async {
-    final staleHarness = VitamateTestHarness(staleEmptyHomeOverview: true);
-    await staleHarness.bootstrap();
-    final controller = HomeController(repository: HomeRepository());
+  test(
+    'home controller falls back when overview snapshot is stale and empty',
+    () async {
+      final staleHarness = VitamateTestHarness(staleEmptyHomeOverview: true);
+      await staleHarness.bootstrap();
+      final controller = HomeController(repository: HomeRepository());
 
-    await controller.load();
+      await controller.load();
 
-    expect(controller.error, isNull);
-    expect(controller.isStale, isTrue);
-    expect(controller.data.points, 130);
-    expect(controller.data.todaySteps, 5120);
-    expect(controller.data.waterMl, 1200);
-    expect(controller.data.sleepMinutes, 435);
-    expect(staleHarness.requestCount('GET', '/api/home/overview/'), 1);
-    expect(staleHarness.requestCount('GET', '/api/dashboard/'), 1);
-  });
+      expect(controller.error, isNull);
+      expect(controller.isStale, isTrue);
+      expect(controller.data.points, 130);
+      expect(controller.data.todaySteps, 5120);
+      expect(controller.data.waterMl, 1200);
+      expect(controller.data.sleepMinutes, 435);
+      expect(staleHarness.requestCount('GET', '/api/home/overview/'), 1);
+      expect(staleHarness.requestCount('GET', '/api/dashboard/'), 1);
+    },
+  );
 
   test('activity controller loads summary, logs, and guides safely', () async {
     final controller = ActivityController(
@@ -376,6 +445,26 @@ void main() {
     expect(controller.exercises.single.name, 'Walk');
     expect(controller.logs.single.durationMinutes, 30);
   });
+
+  test(
+    'activity controller keeps step count above goal after stale refresh',
+    () async {
+      final stepsRepository = _StaleAfterLogStepsRepository();
+      final controller = ActivityController(
+        repository: _FakeActivityRepository(),
+        stepsRepository: stepsRepository,
+        authRepository: _FakeAuthRepository(),
+      );
+
+      await controller.load(startStepSensor: false);
+      await controller.addManualSteps(250);
+
+      expect(stepsRepository.loggedSteps, 8250);
+      expect(controller.stepsToday, 8250);
+      expect(controller.extraStepsOverGoal, 250);
+      expect(controller.stepsProgress, 1.0);
+    },
+  );
 
   test('stats controller parses the progress snapshot', () async {
     final controller = StatsController(repository: _FakeStatsRepository());
@@ -401,30 +490,40 @@ void main() {
     expect(controller.sleepPointsToday, 10);
   });
 
-  test('sleep settings controller loads and updates profile settings', () async {
-    final controller = SleepSettingsController(_FakeAuthRepository());
+  test(
+    'sleep settings controller loads and updates profile settings',
+    () async {
+      final controller = SleepSettingsController(_FakeAuthRepository());
 
-    await controller.load();
-    await controller.update(
-      goalHours: 7.5,
-      wakeTime: DateTime(2000, 1, 1, 6, 30),
-      bedTime: DateTime(2000, 1, 1, 22, 30),
-    );
+      await controller.load();
+      await controller.update(
+        goalHours: 7.5,
+        wakeTime: DateTime(2000, 1, 1, 6, 30),
+        bedTime: DateTime(2000, 1, 1, 22, 30),
+      );
 
-    expect(controller.settings?.goalHours, 7.5);
-    expect(controller.settings?.wakeTime.hour, 6);
-    expect(controller.error, isNull);
-  });
+      expect(controller.settings?.goalHours, 7.5);
+      expect(controller.settings?.wakeTime.hour, 6);
+      expect(controller.error, isNull);
+    },
+  );
 
-  test('steps controller initializes from mocked permission and summary', () async {
-    final controller = StepsController(repository: _FakeStepsRepository());
+  test(
+    'activity controller owns steps summary after legacy steps removal',
+    () async {
+      final controller = ActivityController(
+        repository: _FakeActivityRepository(),
+        stepsRepository: _FakeStepsRepository(),
+        authRepository: _FakeAuthRepository(),
+      );
 
-    await controller.init();
+      await controller.load(startStepSensor: false);
 
-    expect(controller.permissionGranted, isTrue);
-    expect(controller.stepsToday, 4200);
-    expect(controller.pointsToday, 20);
-  });
+      expect(controller.stepsToday, 4200);
+      expect(controller.stepsPointsToday, 20);
+      expect(controller.stepSensorActive, isFalse);
+    },
+  );
 }
 
 ChronicCondition _sampleCompactCondition() {

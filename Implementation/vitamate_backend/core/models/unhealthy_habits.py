@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -36,6 +37,7 @@ class UnhealthyHabit(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
     start_date = models.DateField(default=timezone.localdate)
     target_date = models.DateField(null=True, blank=True)
+    setup_idempotency_key = models.CharField(max_length=120, blank=True, default="", db_index=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -43,6 +45,14 @@ class UnhealthyHabit(models.Model):
         ordering = ("habit_type", "id")
         indexes = [
             models.Index(fields=("user", "habit_type", "status"), name="unhealthy_habit_user_type_idx"),
+            models.Index(fields=("user", "setup_idempotency_key"), name="unhealthy_habit_setup_key_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "setup_idempotency_key"),
+                condition=~Q(setup_idempotency_key=""),
+                name="unique_unhealthy_habit_setup_key",
+            )
         ]
 
     def __str__(self):
@@ -95,10 +105,34 @@ class UnhealthyHabitLog(models.Model):
     SOURCE_MANUAL = "manual"
     SOURCE_NUTRITION = "nutrition"
     SOURCE_HYDRATION = "hydration"
+    SOURCE_HABIT_SYNC = "habit_sync"
+    SOURCE_IMPORTED = "imported"
     SOURCE_CHOICES = [
         (SOURCE_MANUAL, "Manual"),
         (SOURCE_NUTRITION, "Nutrition"),
         (SOURCE_HYDRATION, "Hydration"),
+        (SOURCE_HABIT_SYNC, "Habit sync"),
+        (SOURCE_IMPORTED, "Imported"),
+    ]
+
+    ORIGIN_HABITS = "habits"
+    ORIGIN_NUTRITION = "nutrition"
+    ORIGIN_HYDRATION = "hydration"
+    ORIGIN_CHOICES = [
+        (ORIGIN_HABITS, "Habits"),
+        (ORIGIN_NUTRITION, "Nutrition"),
+        (ORIGIN_HYDRATION, "Hydration"),
+    ]
+
+    SOURCE_TYPE_DIRECT = "direct_user_entry"
+    SOURCE_TYPE_HABIT_PROJECTION = "habit_projection"
+    SOURCE_TYPE_TRACKER_PROJECTION = "tracker_projection"
+    SOURCE_TYPE_IMPORTED = "imported"
+    SOURCE_TYPE_CHOICES = [
+        (SOURCE_TYPE_DIRECT, "Direct user entry"),
+        (SOURCE_TYPE_HABIT_PROJECTION, "Habit projection"),
+        (SOURCE_TYPE_TRACKER_PROJECTION, "Tracker projection"),
+        (SOURCE_TYPE_IMPORTED, "Imported"),
     ]
 
     habit = models.ForeignKey(
@@ -117,6 +151,15 @@ class UnhealthyHabitLog(models.Model):
     is_within_limit = models.BooleanField(default=True)
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_MANUAL)
     sync_to_tracker = models.BooleanField(default=False)
+    origin_domain = models.CharField(max_length=24, choices=ORIGIN_CHOICES, default=ORIGIN_HABITS, db_index=True)
+    origin_record_id = models.CharField(max_length=64, blank=True, default="")
+    correlation_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    source_type = models.CharField(max_length=32, choices=SOURCE_TYPE_CHOICES, default=SOURCE_TYPE_DIRECT, db_index=True)
+    source_ref = models.CharField(max_length=120, blank=True, default="", db_index=True)
+    projection_version = models.PositiveSmallIntegerField(default=1)
+    reward_owner_domain = models.CharField(max_length=24, blank=True, default="habits")
+    meal_type = models.CharField(max_length=20, blank=True, default="unknown")
+    is_abstinence_checkin = models.BooleanField(default=False, db_index=True)
     linked_meal_log = models.ForeignKey(
         "core.MealLog",
         on_delete=models.SET_NULL,
@@ -142,6 +185,15 @@ class UnhealthyHabitLog(models.Model):
         indexes = [
             models.Index(fields=("habit", "log_date"), name="unhealthy_log_habit_date_idx"),
             models.Index(fields=("habit", "is_relapse"), name="unhealthy_log_relapse_idx"),
+            models.Index(fields=("habit", "source_type", "source_ref"), name="unhealthy_log_source_ref_idx"),
+            models.Index(fields=("origin_domain", "origin_record_id"), name="unhealthy_log_origin_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("habit", "source_type", "source_ref"),
+                condition=~Q(source_ref=""),
+                name="unique_unhealthy_log_projection_ref",
+            )
         ]
 
     def save(self, *args, **kwargs):

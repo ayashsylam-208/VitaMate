@@ -7,7 +7,7 @@ import '../../../core/health/condition_limit_alert_service.dart';
 import '../../../core/health/diabetes_sugar_guard_service.dart';
 import '../../../core/network/network_error_mapper.dart';
 import '../../../core/network/request_manager.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../core/notification_hub/notification_hub.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../data/nutrition_api.dart';
 import '../data/nutrition_repository.dart';
@@ -41,22 +41,13 @@ class NutritionController extends ChangeNotifier {
            conditionLimitAlertEvaluator ?? const ConditionLimitAlertEvaluator(),
        _diabetesSugarAlertNotifier =
            diabetesSugarAlertNotifier ??
-           ((warning) => NotificationsService.showDiabetesSugarWarning(
+           ((warning) => InAppEventPresenter.showDiabetesSugarWarning(
              limitG: warning.limitG,
              currentG: warning.currentG,
              sourceLabel: warning.sourceLabel,
            )),
        _conditionLimitAlertNotifier =
-           conditionLimitAlertNotifier ??
-           ((warning) => NotificationsService.showConditionLimitWarning(
-             metricKey: warning.metricKey,
-             metricLabel: warning.metricLabel,
-             limitValue: warning.limitValue,
-             currentValue: warning.currentValue,
-             unit: warning.unit,
-             sourceLabel: warning.sourceLabel,
-             conditionLabel: warning.conditionLabel,
-           ));
+           conditionLimitAlertNotifier ?? ((warning) async {});
 
   final NutritionRepository _repository;
   final RequestManager _requestManager;
@@ -106,6 +97,7 @@ class NutritionController extends ChangeNotifier {
     String query = '',
     String? category,
     int limit = 12,
+    int offset = 0,
     bool includeMealSlot = true,
   }) async {
     final mealSlot = includeMealSlot ? _mealSlotForSearch(mealType) : null;
@@ -115,6 +107,7 @@ class NutritionController extends ChangeNotifier {
       category: category,
       mealSlot: mealSlot,
       limit: limit,
+      offset: offset,
     );
     final cached = _foodSearchCache[cacheKey];
     if (cached != null) {
@@ -129,6 +122,7 @@ class NutritionController extends ChangeNotifier {
         mealSlot: mealSlot,
         itemType: mealType == 'drink' ? 'beverage' : null,
         limit: limit,
+        offset: offset,
         cancelToken: lease.cancelToken,
       );
       if (!_requestManager.isCurrent(lease)) {
@@ -148,6 +142,16 @@ class NutritionController extends ChangeNotifier {
       _requestManager.complete(lease);
     }
   }
+
+  Future<List<FoodItem>> getFavoriteFoods() => _repository.getFavoriteFoods();
+
+  Future<List<FoodItem>> getRecentFoods({int limit = 24}) =>
+      _repository.getRecentFoods(limit: limit);
+
+  Future<bool> setFoodFavorite({
+    required int foodId,
+    required bool isFavorite,
+  }) => _repository.setFoodFavorite(foodId: foodId, isFavorite: isFavorite);
 
   Future<void> addFood(FoodItem item) async {
     foods.add(item);
@@ -189,12 +193,13 @@ class NutritionController extends ChangeNotifier {
     required String? category,
     required String? mealSlot,
     required int limit,
+    required int offset,
   }) {
     final scope = mealType == 'drink' ? 'drink' : 'food';
     final normalizedQuery = query.trim().toLowerCase();
     final normalizedCategory = (category ?? '').trim().toLowerCase();
     final normalizedMealSlot = (mealSlot ?? '').trim().toLowerCase();
-    return '$scope|$normalizedCategory|$normalizedMealSlot|$normalizedQuery|$limit';
+    return '$scope|$normalizedCategory|$normalizedMealSlot|$normalizedQuery|$offset|$limit';
   }
 
   String? _mealSlotForSearch(String mealType) {
@@ -219,7 +224,7 @@ class NutritionController extends ChangeNotifier {
     _foodSearchCache.remove(_foodSearchCache.keys.first);
   }
 
-  Future<void> logMeal({
+  Future<MealLog> logMeal({
     required int foodId,
     required String mealType,
     double? quantityGrams,
@@ -230,12 +235,13 @@ class NutritionController extends ChangeNotifier {
     double? servingGramsEquivalent,
     double? servingMillilitersEquivalent,
     DateTime? consumedAt,
+    bool isFastFood = false,
   }) async {
-    final before = mealPointsToday;
+    final before = summary.points;
     final beforeSugar = _currentDiabetesSugarTotal();
     final beforeLimitValues = _currentConditionLimitValues();
     final sourceLabel = _foodNameForId(foodId);
-    await _repository.addMeal(
+    final savedMeal = await _repository.addMeal(
       foodId: foodId,
       mealType: mealType,
       quantityGrams: quantityGrams,
@@ -246,9 +252,10 @@ class NutritionController extends ChangeNotifier {
       servingGramsEquivalent: servingGramsEquivalent,
       servingMillilitersEquivalent: servingMillilitersEquivalent,
       consumedAt: consumedAt,
+      isFastFood: isFastFood,
     );
     await _refreshCoreNutritionState(includeFoods: false);
-    mealPointsDelta = mealPointsToday - before;
+    mealPointsDelta = summary.points - before;
     notifyListeners();
     HealthSyncBus.instance.publish(const {
       HealthSyncScope.nutrition,
@@ -262,24 +269,46 @@ class NutritionController extends ChangeNotifier {
         beforeValues: beforeLimitValues,
       ),
     );
+    return savedMeal;
   }
 
-  int _computeMealPointsToday({
-    required List<MealLog> meals,
-    required int targetCalories,
-  }) {
-    final sortedMeals = [...meals]..sort((a, b) => a.id.compareTo(b.id));
-    double cumulativeCalories = 0;
-    int points = 0;
-    for (final m in sortedMeals) {
-      cumulativeCalories += m.caloriesKcal;
-      if (targetCalories > 0 && cumulativeCalories > targetCalories) {
-        points -= 5;
-      } else {
-        points += 5;
-      }
-    }
-    return points;
+  Future<List<MealLog>> getMealsForDate(DateTime date) {
+    return _repository.getMeals(date: date);
+  }
+
+  Future<MealLog> updateMeal({
+    required int mealId,
+    String? mealType,
+    double? quantityGrams,
+    DateTime? consumedAt,
+    String? notes,
+  }) async {
+    final updated = await _repository.updateMeal(
+      mealId: mealId,
+      mealType: mealType,
+      quantityGrams: quantityGrams,
+      consumedAt: consumedAt,
+      notes: notes,
+    );
+    await _refreshCoreNutritionState(includeFoods: false);
+    notifyListeners();
+    HealthSyncBus.instance.publish(const {
+      HealthSyncScope.nutrition,
+      HealthSyncScope.homeOverview,
+      HealthSyncScope.progressHistory,
+    });
+    return updated;
+  }
+
+  Future<void> deleteMeal(int mealId) async {
+    await _repository.deleteMeal(mealId);
+    await _refreshCoreNutritionState(includeFoods: false);
+    notifyListeners();
+    HealthSyncBus.instance.publish(const {
+      HealthSyncScope.nutrition,
+      HealthSyncScope.homeOverview,
+      HealthSyncScope.progressHistory,
+    });
   }
 
   NutritionDetailBreakdown _buildDetailBreakdown(List<MealLog> input) {
@@ -449,10 +478,7 @@ class NutritionController extends ChangeNotifier {
       micronutrients = results[2] as MicronutrientOverview;
     }
     detailBreakdown = _buildDetailBreakdown(meals);
-    mealPointsToday = _computeMealPointsToday(
-      meals: meals,
-      targetCalories: summary.targetCalories,
-    );
+    mealPointsToday = summary.points;
   }
 
   Future<void> _refreshAncillaryNutritionState({

@@ -14,9 +14,10 @@ from core.models import (
     Nutrient,
     UserNutrientTarget,
 )
+from core.services.constraints import EffectiveConstraintReader
 from core.services.medication_plan_service import MedicationPlanService
 from core.services.nutrition.nutrition_service import NutritionService
-from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
+from core.services.orchestration.health_state_orchestrator import HealthStateOrchestrator
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
 
 
@@ -93,9 +94,13 @@ class MicronutrientTrackingService:
         return [spec.code for spec in cls.SPECS]
 
     @classmethod
-    def overview(cls, *, user, on_date: date | None = None, request_id: str = "") -> dict:
-        tracking_date = on_date or date.today()
+    def ensure_catalog(cls) -> None:
         cls._ensure_supported_nutrients()
+
+    @classmethod
+    def overview(cls, *, user, on_date: date | None = None, request_id: str = "") -> dict:
+        tracking_date = on_date or timezone.localdate()
+        cls.ensure_catalog()
         totals = NutritionService.nutrition_totals_for_day(
             user=user,
             on_date=tracking_date,
@@ -109,29 +114,85 @@ class MicronutrientTrackingService:
             .select_related("nutrient", "linked_medication")
             .order_by("source", "nutrient__code")
         }
+        nutrients_by_code = {
+            nutrient.code: nutrient
+            for nutrient in Nutrient.objects.filter(code__in=cls.supported_codes())
+        }
+        resolved_rows_by_tracker_code: dict[tuple[str, str], list[dict]] = {}
+        for tracker_type in ("nutrition", "micronutrient"):
+            for row in EffectiveConstraintReader.get_effective_tracker_constraints(
+                user=user,
+                tracker_type=tracker_type,
+            ):
+                key = (tracker_type, str(row.get("metric_key") or ""))
+                resolved_rows_by_tracker_code.setdefault(key, []).append(row)
+        profile_gender = cls._profile_gender(user)
+        profile_age = cls._profile_age(user, today=tracking_date)
+        target_definitions = {}
+        for spec in cls.SPECS:
+            nutrient = nutrients_by_code.get(spec.code)
+            tracker_type = "micronutrient"
+            if nutrient is not None and (
+                nutrient.is_core
+                or nutrient.category
+                in {Nutrient.CATEGORY_MACRO, Nutrient.CATEGORY_STIMULANT}
+            ):
+                tracker_type = "nutrition"
+            target_definitions[spec.code] = {
+                "tracker_type": tracker_type,
+                "default": cls._default_target(
+                    user=user,
+                    code=spec.code,
+                    gender=profile_gender,
+                    age=profile_age,
+                ),
+            }
+        effective_constraints = EffectiveConstraintReader.get_effective_constraints(
+            user=user,
+            requests=[
+                {
+                    "tracker_type": target_definitions[spec.code]["tracker_type"],
+                    "constraint_key": spec.code,
+                    "default_value": target_definitions[spec.code]["default"][
+                        "target_value"
+                    ],
+                    "default_unit": spec.unit,
+                    "default_source": "profile_derived_default",
+                }
+                for spec in cls.SPECS
+            ],
+        )
         supplements = cls._supplement_totals(user=user, on_date=tracking_date)
         items = []
         for spec in cls.SPECS:
             custom = custom_targets.get(spec.code)
-            default_target = cls._default_target(
-                user=user,
-                code=spec.code,
-                gender=cls._profile_gender(user),
-                age=cls._profile_age(user, today=tracking_date),
-            )
+            target_definition = target_definitions[spec.code]
+            tracker_type = target_definition["tracker_type"]
+            default_target = target_definition["default"]
             lab_range = cls._lab_range_for(spec.code)
             food_consumed = cls._round(totals.get(spec.code, 0.0))
             supplement_consumed = cls._round(supplements.get(spec.code, 0.0))
             total_consumed = cls._round(food_consumed + supplement_consumed)
-            min_value = cls._round(custom.min_value) if custom and custom.min_value is not None else None
-            target_value = (
-                cls._round(custom.target_value)
-                if custom and custom.target_value is not None
-                else default_target["target_value"]
+            effective = effective_constraints[(tracker_type, spec.code)]
+            materialized_rows = resolved_rows_by_tracker_code.get(
+                (tracker_type, spec.code),
+                [],
             )
+            min_candidates = [
+                float(row["min_value"])
+                for row in materialized_rows
+                if row.get("min_value") is not None
+            ]
+            max_candidates = [
+                float(row["max_value"])
+                for row in materialized_rows
+                if row.get("max_value") is not None
+            ]
+            min_value = cls._round(max(min_candidates)) if min_candidates else None
+            target_value = cls._round(effective.value)
             max_value = (
-                cls._round(custom.max_value)
-                if custom and custom.max_value is not None
+                cls._round(min(max_candidates))
+                if max_candidates
                 else default_target.get("max_value")
             )
             progress_percent = 0.0
@@ -150,8 +211,11 @@ class MicronutrientTrackingService:
                     "target_value": target_value,
                     "max_value": max_value,
                     "progress_percent": progress_percent,
-                    "target_source": custom.source if custom else default_target["source"],
-                    "source_label": cls._source_label(custom=custom),
+                    "target_source": effective.source_type,
+                    "source_label": effective.reason,
+                    "constraint_id": effective.constraint_id,
+                    "constraint_priority": effective.priority,
+                    "constraint_expires_at": effective.effective_to,
                     "deficiency_tracked": bool(custom),
                     "status": cls._status(
                         total=total_consumed,
@@ -188,15 +252,34 @@ class MicronutrientTrackingService:
         }
 
     @classmethod
-    @transaction.atomic
     def upsert_target(cls, *, user, payload: dict, request_id: str = "") -> dict:
-        cls._ensure_supported_nutrients()
+        target, medication = cls._persist_target(user=user, payload=payload)
+        HealthStateOrchestrator().handle_event(
+            user=user,
+            trigger_type=HealthStateTriggers.USER_NUTRIENT_TARGET_CHANGED,
+            payload={
+                "trigger_reference": str(target.id),
+                "source_id": target.id,
+                "event_dates": [timezone.localdate()],
+                "nutrient_code": target.nutrient.code,
+                "linked_medication_id": (
+                    medication.id if medication else target.linked_medication_id
+                ),
+            },
+            synchronous=True,
+        )
+        return cls.overview(user=user, request_id=request_id)
+
+    @classmethod
+    @transaction.atomic
+    def _persist_target(cls, *, user, payload: dict):
+        cls.ensure_catalog()
         nutrient = payload["nutrient"]
         default_target = cls._default_target(
             user=user,
             code=nutrient.code,
             gender=cls._profile_gender(user),
-            age=cls._profile_age(user, today=date.today()),
+            age=cls._profile_age(user, today=timezone.localdate()),
         )
         lab_range = cls._lab_range_for(nutrient.code)
         normalized_payload = {
@@ -266,18 +349,7 @@ class MicronutrientTrackingService:
             )
             target.linked_medication = medication
             target.save(update_fields=["linked_medication"])
-        HealthStateEventPublisher.publish_on_commit(
-            user=user,
-            trigger_type=HealthStateTriggers.USER_NUTRIENT_TARGET_CHANGED,
-            payload={
-                "trigger_reference": str(target.id),
-                "source_id": target.id,
-                "event_dates": [date.today()],
-                "nutrient_code": nutrient.code,
-                "linked_medication_id": medication.id if medication else target.linked_medication_id,
-            },
-        )
-        return cls.overview(user=user, request_id=request_id)
+        return target, medication
 
     @classmethod
     def _create_or_update_supplement_medication(

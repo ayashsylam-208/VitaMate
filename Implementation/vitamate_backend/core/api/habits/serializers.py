@@ -13,6 +13,7 @@ class UnhealthyHabitCreateSerializer(serializers.Serializer):
     title = serializers.CharField(required=False, allow_blank=True, default="")
     start_date = serializers.DateField(required=False)
     target_date = serializers.DateField(required=False, allow_null=True)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class UnhealthyHabitBaselineSerializer(serializers.Serializer):
@@ -58,6 +59,12 @@ class UnhealthyHabitLogSerializer(serializers.Serializer):
     tracker_quantity = serializers.FloatField(required=False, min_value=0)
     tracker_unit = serializers.CharField(required=False, allow_blank=True, default="")
     healthy_replacement = serializers.BooleanField(required=False, default=False)
+    meal_type = serializers.ChoiceField(
+        choices=["breakfast", "lunch", "dinner", "snack", "drink", "unknown"],
+        required=False,
+        default="unknown",
+    )
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class UnhealthyHabitReminderSerializer(serializers.Serializer):
@@ -68,3 +75,17 @@ class UnhealthyHabitReminderSerializer(serializers.Serializer):
 
 class UnhealthyHabitRemindersSerializer(serializers.Serializer):
     reminders = UnhealthyHabitReminderSerializer(many=True, required=False, default=list)
+
+
+class UnhealthyHabitAtomicSetupSerializer(serializers.Serializer):
+    habit = UnhealthyHabitCreateSerializer()
+    baseline = UnhealthyHabitBaselineSerializer()
+    plan = UnhealthyHabitPlanSerializer(required=False, default=dict)
+    reminders = UnhealthyHabitReminderSerializer(many=True, required=False, default=list)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class UnhealthyHabitDailyCheckInSerializer(serializers.Serializer):
+    date = serializers.DateField(required=False)
+    used = serializers.BooleanField()
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="")

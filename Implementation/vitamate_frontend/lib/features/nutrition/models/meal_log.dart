@@ -1,7 +1,10 @@
 class MealLog {
   final int id;
-  final int foodId;
+  final int? foodId;
   final String foodName;
+  final bool isComposite;
+  final String source;
+  final List<MealLogComponent> components;
   final String mealType;
   final double quantityGrams;
   final double quantity;
@@ -43,11 +46,15 @@ class MealLog {
   final double monounsaturatedFatG;
   final double polyunsaturatedFatG;
   final double caffeineMg;
+  final String linkedHabitFeedbackMessage;
 
   MealLog({
     required this.id,
     required this.foodId,
     required this.foodName,
+    this.isComposite = false,
+    this.source = 'manual',
+    this.components = const <MealLogComponent>[],
     required this.mealType,
     required this.quantityGrams,
     required this.quantity,
@@ -89,6 +96,7 @@ class MealLog {
     this.monounsaturatedFatG = 0,
     this.polyunsaturatedFatG = 0,
     this.caffeineMg = 0,
+    this.linkedHabitFeedbackMessage = '',
   });
 
   bool get isDrink => mealType == 'drink';
@@ -128,8 +136,11 @@ class MealLog {
   factory MealLog.fromJson(Map<String, dynamic> json) {
     return MealLog(
       id: (json['id'] as num).toInt(),
-      foodId: _toInt(json['food'] ?? json['food_item']),
+      foodId: _nullableInt(json['food'] ?? json['food_item']),
       foodName: (json['food_name'] ?? '').toString(),
+      isComposite: json['is_composite'] == true,
+      source: (json['source'] ?? 'manual').toString(),
+      components: _mealComponents(json['components']),
       mealType: (json['meal_type'] ?? '').toString(),
       quantityGrams: _toDouble(json['quantity_grams']),
       quantity: _toDouble(json['quantity']),
@@ -173,8 +184,71 @@ class MealLog {
       monounsaturatedFatG: _toDouble(json['snapshot_monounsaturated_fat_g']),
       polyunsaturatedFatG: _toDouble(json['snapshot_polyunsaturated_fat_g']),
       caffeineMg: _toDouble(json['snapshot_caffeine_mg']),
+      linkedHabitFeedbackMessage: _linkedHabitFeedbackMessage(json),
     );
   }
+}
+
+class MealLogComponent {
+  const MealLogComponent({
+    required this.id,
+    required this.foodItemId,
+    required this.foodName,
+    required this.quantityValue,
+    required this.quantityUnit,
+    required this.resolvedGrams,
+    required this.resolvedMilliliters,
+    required this.nutritionSnapshot,
+  });
+
+  final int id;
+  final int foodItemId;
+  final String foodName;
+  final double quantityValue;
+  final String quantityUnit;
+  final double resolvedGrams;
+  final double resolvedMilliliters;
+  final Map<String, dynamic> nutritionSnapshot;
+
+  factory MealLogComponent.fromJson(Map<String, dynamic> json) =>
+      MealLogComponent(
+        id: _toInt(json['id']),
+        foodItemId: _toInt(json['food_item']),
+        foodName: (json['food_name'] ?? '').toString(),
+        quantityValue: _toDouble(json['quantity_value']),
+        quantityUnit: (json['quantity_unit'] ?? 'g').toString(),
+        resolvedGrams: _toDouble(json['resolved_grams']),
+        resolvedMilliliters: _toDouble(json['resolved_milliliters']),
+        nutritionSnapshot: json['nutrition_snapshot'] is Map
+            ? Map<String, dynamic>.from(json['nutrition_snapshot'] as Map)
+            : const <String, dynamic>{},
+      );
+}
+
+List<MealLogComponent> _mealComponents(dynamic value) {
+  if (value is! List) {
+    return const <MealLogComponent>[];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => MealLogComponent.fromJson(Map<String, dynamic>.from(item)))
+      .toList(growable: false);
+}
+
+String _linkedHabitFeedbackMessage(Map<String, dynamic> json) {
+  final projection = json['linked_habit_projection'];
+  if (projection is! Map) {
+    return '';
+  }
+  final evaluation = projection['evaluation'];
+  if (evaluation is! Map) {
+    return '';
+  }
+  final feedback = evaluation['feedback'];
+  if (feedback is! Map) {
+    return '';
+  }
+  return (feedback['message'] ?? '').toString().trim();
 }
 
 int _toInt(dynamic value) {

@@ -180,15 +180,32 @@ class ConstraintResolutionRun(models.Model):
         (TRIGGER_NIGHTLY_SAFETY, "Nightly safety recompute"),
     ]
 
+    STATUS_PENDING = "pending"
     STATUS_RUNNING = "running"
-    STATUS_COMPLETED = "completed"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_COMPLETED = STATUS_SUCCEEDED
+    STATUS_PARTIALLY_FAILED = "partially_failed"
     STATUS_FAILED = "failed"
     STATUS_SKIPPED = "skipped"
     RUN_STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
         (STATUS_RUNNING, "Running"),
-        (STATUS_COMPLETED, "Completed"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_PARTIALLY_FAILED, "Partially failed"),
         (STATUS_FAILED, "Failed"),
         (STATUS_SKIPPED, "Skipped"),
+    ]
+
+    SYNC_MODE_SYNCHRONOUS = "synchronous"
+    SYNC_MODE_QUEUED = "queued"
+    SYNC_MODE_RECOVERY = "recovery"
+    SYNC_MODE_MANUAL = "manual"
+    SYNC_MODE_ASYNC_PLACEHOLDER = SYNC_MODE_QUEUED
+    SYNC_MODE_CHOICES = [
+        (SYNC_MODE_SYNCHRONOUS, "Synchronous"),
+        (SYNC_MODE_QUEUED, "Queued"),
+        (SYNC_MODE_RECOVERY, "Recovery"),
+        (SYNC_MODE_MANUAL, "Manual"),
     ]
 
     user = models.ForeignKey(
@@ -200,10 +217,22 @@ class ConstraintResolutionRun(models.Model):
     trigger_reference = models.CharField(max_length=255, blank=True)
     input_signature = models.CharField(max_length=64, db_index=True)
     run_status = models.CharField(max_length=20, choices=RUN_STATUS_CHOICES, default=STATUS_RUNNING, db_index=True)
+    sync_mode = models.CharField(
+        max_length=20,
+        choices=SYNC_MODE_CHOICES,
+        default=SYNC_MODE_SYNCHRONOUS,
+    )
+    correlation_id = models.CharField(max_length=64, blank=True, db_index=True)
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    affected_trackers = models.JSONField(default=list, blank=True)
     total_constraints_generated = models.PositiveIntegerField(default=0)
     total_constraints_superseded = models.PositiveIntegerField(default=0)
+    retry_count = models.PositiveIntegerField(default=0)
     started_at = models.DateTimeField(default=timezone.now)
     completed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    error_code = models.CharField(max_length=80, blank=True)
     error_message = models.TextField(blank=True)
 
     class Meta:

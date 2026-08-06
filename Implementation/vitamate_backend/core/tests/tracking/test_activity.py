@@ -1,7 +1,12 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import ActivityLog
+from core.models import ActivityLog, ActivitySession
+from core.services.health_progress import DailyHealthProgressService
+from gamification.models import PointsTransaction
 from test_utils.helpers import auth_client_for_user, create_exercise, create_user_with_profile
 
 
@@ -75,6 +80,7 @@ class ActivityTests(APITestCase):
         self.assertEqual(finish.status_code, status.HTTP_200_OK)
         self.assertEqual(finish.data["status"], "completed")
         self.assertEqual(ActivityLog.objects.filter(user=self.user).count(), 1)
+        self.assertIsNotNone(finish.data["final_activity_log_id"])
 
         active_after = self.client_auth.get("/api/activity/sessions/active/")
         self.assertEqual(active_after.status_code, status.HTTP_200_OK)
@@ -120,3 +126,77 @@ class ActivityTests(APITestCase):
             format="json",
         )
         self.assertEqual(finish.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_live_session_completion_is_canonical_and_not_double_counted(self):
+        start = self.client_auth.post(
+            "/api/activity/sessions/",
+            {
+                "exercise": self.exercise.id,
+                "target_duration_seconds": 1200,
+                "intensity": "moderate",
+                "source": "live",
+            },
+            format="json",
+        )
+        session = ActivitySession.objects.get(id=start.data["id"])
+        session.started_at = timezone.now() - timedelta(minutes=20)
+        session.save(update_fields=["started_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            finish = self.client_auth.post(
+                f"/api/activity/sessions/{session.id}/finish/",
+                {"save_partial": False},
+                format="json",
+            )
+
+        self.assertEqual(finish.status_code, status.HTTP_200_OK)
+        self.assertEqual(ActivityLog.objects.filter(user=self.user).count(), 1)
+        log = ActivityLog.objects.get(user=self.user)
+        self.assertEqual(log.source_session_id, session.id)
+        self.assertEqual(log.duration_minutes, 20)
+
+        progress = DailyHealthProgressService.evaluate(user=self.user)
+        movement = next(domain for domain in progress["domains"] if domain["domain"] == "movement")
+        minutes = next(component for component in movement["components"] if component["key"] == "activity_minutes")
+        self.assertEqual(minutes["current"], 20)
+
+    def test_repeated_live_session_finish_returns_same_log_and_points_once(self):
+        start = self.client_auth.post(
+            "/api/activity/sessions/",
+            {
+                "exercise": self.exercise.id,
+                "target_duration_seconds": 60,
+                "intensity": "moderate",
+                "source": "live",
+            },
+            format="json",
+        )
+        session = ActivitySession.objects.get(id=start.data["id"])
+        session.started_at = timezone.now() - timedelta(minutes=2)
+        session.save(update_fields=["started_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self.client_auth.post(
+                f"/api/activity/sessions/{session.id}/finish/",
+                {"save_partial": False},
+                format="json",
+            )
+        with self.captureOnCommitCallbacks(execute=True):
+            second = self.client_auth.post(
+                f"/api/activity/sessions/{session.id}/finish/",
+                {"save_partial": False},
+                format="json",
+            )
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.data["final_activity_log_id"], second.data["final_activity_log_id"])
+        self.assertEqual(ActivityLog.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(
+            PointsTransaction.objects.filter(
+                user=self.user,
+                source_type=PointsTransaction.SOURCE_ACTIVITY,
+                rule_code="ACTIVITY_SESSION_COMPLETED",
+            ).count(),
+            1,
+        )

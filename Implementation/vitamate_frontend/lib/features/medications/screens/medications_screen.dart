@@ -7,13 +7,17 @@ import '../../../core/sync/health_sync_bus.dart';
 import '../../../core/testing/app_test_keys.dart';
 import '../../../core/theme/vitamate_theme.dart';
 import '../../../shared/widgets/vitamate_bottom_nav.dart';
+import '../models/medication_dose_log.dart';
 import '../models/medication_item.dart';
+import '../models/medication_today_plan.dart';
 import '../state/medications_controller.dart';
 import '../widgets/empty_medications_state.dart';
 import '../widgets/medication_adherence_card.dart';
 import '../widgets/medication_card.dart';
+import '../widgets/medication_ui.dart';
 import 'add_edit_medication_screen.dart';
 import 'medication_detail_screen.dart';
+import 'medication_history_screen.dart';
 import 'medication_today_plan_screen.dart';
 
 class MedicationsScreen extends StatefulWidget {
@@ -142,57 +146,60 @@ class _MedicationsScreenState extends State<MedicationsScreen> with RouteAware {
     );
   }
 
+  void _openHistory() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MedicationHistoryScreen(controller: controller),
+      ),
+    );
+  }
+
+  void _openAllMedications() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _AllMedicationsSheet(
+        medications: controller.state.medications,
+        onOpen: (medication) {
+          Navigator.of(sheetContext).pop();
+          _openMedication(medication);
+        },
+      ),
+    );
+  }
+
+  void _openInsights() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _InsightsSheet(controller: controller),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = controller.state;
-    final activeCount = state.medications.where((item) => item.isActive).length;
-    final prnCount = state.medications.where((item) => item.isPrn).length;
-    final overall = state.overallAdherence;
-    final takenToday = state.todayPlan
-        .where((item) {
-          final status = item.status.toLowerCase();
-          return status == 'taken' ||
-              status == 'taken_on_time' ||
-              status == 'taken_late';
-        })
-        .length;
-    final pendingToday = state.todayPlan
-        .where((item) {
-          final status = item.status.toLowerCase();
-          return status == 'pending' || status == 'snoozed';
-        })
-        .length;
-    final overdueToday = state.todayPlan
-        .where((item) => item.status.toLowerCase() == 'overdue')
-        .length;
+    final today = state.todayAdherence;
+    final plannedToday = today.expected == 0
+        ? state.todayPlan.length
+        : today.expected;
+    final canShowMotivation =
+        state.motivationStrip != null &&
+        today.missed == 0 &&
+        today.overdue == 0;
 
     return Scaffold(
-      backgroundColor: VitaMateTheme.background,
+      backgroundColor: MedicationUi.background,
       bottomNavigationBar: const VitaMateBottomNav(currentIndex: 2),
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: controller.refreshAll,
           child: ListView(
             key: const ValueKey(AppTestKeys.medicationsScreen),
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
             children: [
-              const Text(
-                'Medication',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  color: VitaMateTheme.primaryDeep,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Track active plans, today doses, and long-term adherence in one place.',
-                style: TextStyle(
-                  color: VitaMateTheme.textMuted,
-                  fontWeight: FontWeight.w700,
-                  height: 1.35,
-                ),
-              ),
+              const _MedicationHeader(),
               if (state.errorMessage != null) ...[
                 const SizedBox(height: 14),
                 _InlineMessage(
@@ -213,89 +220,30 @@ class _MedicationsScreenState extends State<MedicationsScreen> with RouteAware {
                   padding: EdgeInsets.only(top: 120),
                   child: Center(child: CircularProgressIndicator()),
                 )
-              else ...[
-                _MedicationHeroCard(
-                  activeCount: activeCount,
-                  prnCount: prnCount,
-                  plannedToday: state.todayPlan.length,
-                  takenToday: takenToday,
-                  pendingToday: pendingToday,
-                  overdueToday: overdueToday,
+              else if (state.medications.isEmpty) ...[
+                EmptyMedicationsState(onAdd: _openAdd),
+              ] else ...[
+                _TodayAdherenceCard(summary: today, plannedToday: plannedToday),
+                const SizedBox(height: 14),
+                _MedicationShortcutRow(
+                  onToday: _openToday,
+                  onAllMedications: _openAllMedications,
+                  onHistory: _openHistory,
+                  onInsights: _openInsights,
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: _PrimaryGradientButton(
-                        key: const ValueKey(
-                          AppTestKeys.medicationsTodayPlanButton,
-                        ),
-                        label: state.todayPlan.isEmpty
-                            ? 'Today plan'
-                            : 'Today plan (${state.todayPlan.length})',
-                        icon: Icons.schedule_rounded,
-                        onPressed: _openToday,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: const ValueKey(AppTestKeys.medicationsAddButton),
-                        onPressed: _openAdd,
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('Add'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size.fromHeight(56),
-                          backgroundColor: Colors.white,
-                          side: const BorderSide(
-                            color: VitaMateTheme.borderStrong,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                MedicationAdherenceCard(
-                  summary: overall,
-                  plannedToday: state.todayPlan.length,
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Active plans',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: VitaMateTheme.primaryDeep,
-                        ),
-                      ),
-                    ),
-                    _SectionBadge(
-                      label: activeCount == 0
-                          ? 'No active meds'
-                          : '$activeCount active',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (state.medications.isEmpty)
-                  EmptyMedicationsState(onAdd: _openAdd)
-                else
-                  for (var i = 0; i < state.medications.length; i++) ...[
-                    MedicationCard(
-                      medication: state.medications[i],
-                      onTap: () => _openMedication(state.medications[i]),
-                    ),
-                    if (i != state.medications.length - 1)
-                      const SizedBox(height: 12),
-                  ],
+                const SizedBox(height: 20),
+                const _SectionTitle('Upcoming next'),
+                const SizedBox(height: 10),
+                _UpcomingNextCard(dose: state.nextDose, onTap: _openToday),
+                if (canShowMotivation) ...[
+                  const SizedBox(height: 14),
+                  _MedicationMotivationStrip(
+                    data: state.motivationStrip!,
+                    streak: state.streak,
+                  ),
+                ],
+                const SizedBox(height: 26),
+                _AddMedicationCta(onPressed: _openAdd),
               ],
             ],
           ),
@@ -305,180 +253,154 @@ class _MedicationsScreenState extends State<MedicationsScreen> with RouteAware {
   }
 }
 
-class _MedicationHeroCard extends StatelessWidget {
-  const _MedicationHeroCard({
-    required this.activeCount,
-    required this.prnCount,
-    required this.plannedToday,
-    required this.takenToday,
-    required this.pendingToday,
-    required this.overdueToday,
-  });
-
-  final int activeCount;
-  final int prnCount;
-  final int plannedToday;
-  final int takenToday;
-  final int pendingToday;
-  final int overdueToday;
+class _MedicationHeader extends StatelessWidget {
+  const _MedicationHeader();
 
   @override
   Widget build(BuildContext context) {
-    final todayPercent = plannedToday <= 0
-        ? 0
-        : ((takenToday / plannedToday) * 100).clamp(0, 100).round();
-    final progress = plannedToday <= 0
-        ? 0.0
-        : (takenToday / plannedToday).clamp(0.0, 1.0);
-    final headline = activeCount == 0
-        ? 'No medication plans yet'
-        : '$todayPercent% today adherence';
-    final subtitle = overdueToday > 0
-        ? '$overdueToday overdue doses need attention.'
-        : pendingToday > 0
-        ? '$pendingToday doses are still pending today.'
-        : plannedToday > 0
-        ? 'Today plan is complete so far.'
-        : 'Add a plan to unlock dose tracking and reminders.';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: VitaMateTheme.border),
-        boxShadow: const [
-          BoxShadow(
-            color: VitaMateTheme.shadow,
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.medication_liquid_rounded,
-                          color: VitaMateTheme.primary,
-                          size: 18,
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          'Medication overview',
-                          style: TextStyle(
-                            color: VitaMateTheme.primaryDeep,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+              Text(
+                'Medication',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: VitaMateTheme.primaryDeep,
                 ),
               ),
-              SizedBox(
-                width: 84,
-                height: 84,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    SizedBox(
-                      width: 84,
-                      height: 84,
-                      child: CircularProgressIndicator(
-                        value: progress,
-                        strokeWidth: 8,
-                        color: VitaMateTheme.primary,
-                        backgroundColor: VitaMateTheme.softSurface,
-                      ),
-                    ),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          '$todayPercent%',
-                          style: const TextStyle(
-                            color: VitaMateTheme.primaryDeep,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                          ),
-                        ),
-                        const Text(
-                          'today',
-                          style: TextStyle(
-                            color: VitaMateTheme.textMuted,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+              SizedBox(height: 7),
+              Text(
+                'Track your meds, stay on track, feel better.',
+                style: TextStyle(
+                  color: VitaMateTheme.textMuted,
+                  fontWeight: FontWeight.w700,
+                  height: 1.35,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Text(
-            headline,
-            style: const TextStyle(
+        ),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.notifications_none_rounded),
               color: VitaMateTheme.primaryDeep,
-              fontWeight: FontWeight.w900,
-              fontSize: 26,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: VitaMateTheme.textMuted,
-              fontWeight: FontWeight.w700,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _HeroChip(
-                label: '$activeCount active',
-                color: VitaMateTheme.primary,
-              ),
-              _HeroChip(
-                label: '$plannedToday planned today',
-                color: VitaMateTheme.accent,
-              ),
-              _HeroChip(
-                label: '$pendingToday pending',
-                color: VitaMateTheme.warning,
-              ),
-              if (overdueToday > 0)
-                _HeroChip(
-                  label: '$overdueToday overdue',
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                width: 16,
+                height: 16,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
                   color: VitaMateTheme.danger,
+                  shape: BoxShape.circle,
                 ),
-              if (takenToday > 0)
-                _HeroChip(
-                  label: '$takenToday taken',
-                  color: VitaMateTheme.success,
+                child: const Text(
+                  '2',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              if (prnCount > 0)
-                _HeroChip(
-                  label: '$prnCount as needed',
-                  color: VitaMateTheme.success,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TodayAdherenceCard extends StatelessWidget {
+  const _TodayAdherenceCard({
+    required this.summary,
+    required this.plannedToday,
+  });
+
+  final MedicationTodaySummary summary;
+  final int plannedToday;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = summary.taken;
+    final expected = plannedToday <= 0 ? summary.expected : plannedToday;
+    final percent = summary.percent.clamp(0, 100).toDouble();
+    final progress = (percent / 100).clamp(0.0, 1.0);
+    return MedicationSurfaceCard(
+      padding: const EdgeInsets.all(18),
+      radius: 18,
+      color: MedicationUi.panelTint,
+      shadow: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Today adherence',
+                      style: TextStyle(
+                        color: VitaMateTheme.primaryDeep,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      '$completed of $expected doses',
+                      style: const TextStyle(
+                        color: VitaMateTheme.primaryDeep,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 22,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'completed today',
+                      style: TextStyle(
+                        color: VitaMateTheme.primaryDeep,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              _AdherenceRing(progress: progress, percent: percent),
+            ],
+          ),
+          const SizedBox(height: 22),
+          _StackedProgressBar(summary: summary, expected: expected),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _LegendPill(
+                color: VitaMateTheme.success,
+                label: '${summary.taken} Taken',
+              ),
+              const Spacer(),
+              _LegendPill(
+                color: MedicationUi.pending,
+                label: '${summary.pending} Pending',
+              ),
+              const Spacer(),
+              _LegendPill(
+                color: VitaMateTheme.danger,
+                label: '${summary.missed + summary.overdue} Missed',
+              ),
             ],
           ),
         ],
@@ -487,52 +409,537 @@ class _MedicationHeroCard extends StatelessWidget {
   }
 }
 
-class _HeroChip extends StatelessWidget {
-  const _HeroChip({required this.label, required this.color});
+class _AdherenceRing extends StatelessWidget {
+  const _AdherenceRing({required this.progress, required this.percent});
 
-  final String label;
-  final Color color;
+  final double progress;
+  final double percent;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(99),
+    return SizedBox(
+      width: 94,
+      height: 94,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 88,
+            height: 88,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 8,
+              strokeCap: StrokeCap.round,
+              color: VitaMateTheme.primary,
+              backgroundColor: Colors.white,
+            ),
+          ),
+          Text(
+            '${percent.toStringAsFixed(0)}%',
+            style: const TextStyle(
+              color: VitaMateTheme.primaryDeep,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
+    );
+  }
+}
+
+class _StackedProgressBar extends StatelessWidget {
+  const _StackedProgressBar({required this.summary, required this.expected});
+
+  final MedicationTodaySummary summary;
+  final int expected;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = expected <= 0 ? 1 : expected;
+    final taken = summary.taken.clamp(0, total).toInt();
+    final pending = summary.pending.clamp(0, total).toInt();
+    final missed = (summary.missed + summary.overdue).clamp(0, total).toInt();
+    final empty = (total - taken - pending - missed).clamp(0, total).toInt();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(99),
+      child: SizedBox(
+        height: 9,
+        child: Row(
+          children: [
+            if (taken > 0)
+              Expanded(
+                flex: taken,
+                child: Container(color: VitaMateTheme.success),
+              ),
+            if (pending > 0)
+              Expanded(
+                flex: pending,
+                child: Container(color: MedicationUi.pending),
+              ),
+            if (missed > 0)
+              Expanded(
+                flex: missed,
+                child: Container(color: VitaMateTheme.danger),
+              ),
+            if (empty > 0)
+              Expanded(
+                flex: empty,
+                child: Container(color: const Color(0xFFE8E5ED)),
+              ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _SectionBadge extends StatelessWidget {
-  const _SectionBadge({required this.label});
+class _LegendPill extends StatelessWidget {
+  const _LegendPill({required this.color, required this.label});
 
+  final Color color;
   final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: VitaMateTheme.border),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(
+            color: VitaMateTheme.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MedicationShortcutRow extends StatelessWidget {
+  const _MedicationShortcutRow({
+    required this.onToday,
+    required this.onAllMedications,
+    required this.onHistory,
+    required this.onInsights,
+  });
+
+  final VoidCallback onToday;
+  final VoidCallback onAllMedications;
+  final VoidCallback onHistory;
+  final VoidCallback onInsights;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ShortcutTile(
+            key: const ValueKey(AppTestKeys.medicationsTodayPlanButton),
+            title: 'Today plan',
+            icon: Icons.medication_liquid_rounded,
+            onTap: onToday,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ShortcutTile(
+            title: 'All medications',
+            icon: Icons.medical_services_outlined,
+            onTap: onAllMedications,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ShortcutTile(
+            title: 'History',
+            icon: Icons.history_rounded,
+            onTap: onHistory,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ShortcutTile(
+            title: 'Insights',
+            icon: Icons.insights_rounded,
+            onTap: onInsights,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShortcutTile extends StatelessWidget {
+  const _ShortcutTile({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String title;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(11),
+      child: MedicationSurfaceCard(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+        radius: 11,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: VitaMateTheme.primary, size: 28),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: VitaMateTheme.primaryDeep,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                height: 1.1,
+              ),
+            ),
+          ],
+        ),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: VitaMateTheme.textMuted,
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
+    );
+  }
+}
+
+class _UpcomingNextCard extends StatelessWidget {
+  const _UpcomingNextCard({required this.dose, required this.onTap});
+
+  final MedicationDoseLog? dose;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (dose == null) {
+      return const MedicationSurfaceCard(
+        padding: EdgeInsets.all(16),
+        radius: 14,
+        child: Text(
+          'No upcoming doses right now.',
+          style: TextStyle(
+            color: VitaMateTheme.textMuted,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      );
+    }
+    final value = dose!;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: MedicationSurfaceCard(
+        padding: const EdgeInsets.all(16),
+        radius: 14,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    value.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: VitaMateTheme.primaryDeep,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    value.doseLabel,
+                    style: const TextStyle(
+                      color: VitaMateTheme.primaryDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    MedicationUi.mealRelationLabel(value.mealRelation),
+                    style: const TextStyle(
+                      color: VitaMateTheme.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Row(
+              children: [
+                const Icon(
+                  Icons.alarm_rounded,
+                  color: MedicationUi.pending,
+                  size: 17,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  MedicationUi.timeLabel(value.scheduledFor),
+                  style: const TextStyle(
+                    color: MedicationUi.pending,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 10),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: VitaMateTheme.primaryDeep,
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MedicationMotivationStrip extends StatelessWidget {
+  const _MedicationMotivationStrip({required this.data, required this.streak});
+
+  final Map<String, dynamic> data;
+  final int streak;
+
+  @override
+  Widget build(BuildContext context) {
+    return MedicationSurfaceCard(
+      padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+      radius: 14,
+      color: MedicationUi.panelTint,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  (data['title'] ?? "You're doing great!").toString(),
+                  style: const TextStyle(
+                    color: VitaMateTheme.primaryDeep,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  (data['subtitle'] ?? 'Keep it up to maintain your streak.')
+                      .toString(),
+                  style: const TextStyle(
+                    color: VitaMateTheme.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (streak > 0) _StreakCircle(streak: streak),
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakCircle extends StatelessWidget {
+  const _StreakCircle({required this.streak});
+
+  final int streak;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 58,
+            height: 58,
+            child: CircularProgressIndicator(
+              value: 0.86,
+              strokeWidth: 5,
+              color: VitaMateTheme.success,
+              backgroundColor: Colors.white,
+              strokeCap: StrokeCap.round,
+            ),
+          ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '$streak',
+                style: const TextStyle(
+                  color: VitaMateTheme.primaryDeep,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const Text(
+                'day streak',
+                style: TextStyle(
+                  color: VitaMateTheme.textMuted,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddMedicationCta extends StatelessWidget {
+  const _AddMedicationCta({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SizedBox(
+        width: 240,
+        height: 54,
+        child: FilledButton.icon(
+          key: const ValueKey(AppTestKeys.medicationsAddButton),
+          onPressed: onPressed,
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add medication'),
+          style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: VitaMateTheme.primaryDeep,
+        fontSize: 14,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+}
+
+class _AllMedicationsSheet extends StatelessWidget {
+  const _AllMedicationsSheet({required this.medications, required this.onOpen});
+
+  final List<MedicationItem> medications;
+  final ValueChanged<MedicationItem> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.72,
+      minChildSize: 0.35,
+      maxChildSize: 0.92,
+      builder: (_, scrollController) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          decoration: const BoxDecoration(
+            color: MedicationUi.background,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: ListView(
+            controller: scrollController,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: VitaMateTheme.borderStrong,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'All medications',
+                style: TextStyle(
+                  color: VitaMateTheme.primaryDeep,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 14),
+              for (var i = 0; i < medications.length; i++) ...[
+                MedicationCard(
+                  medication: medications[i],
+                  onTap: () => onOpen(medications[i]),
+                ),
+                if (i != medications.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InsightsSheet extends StatelessWidget {
+  const _InsightsSheet({required this.controller});
+
+  final MedicationsController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+      decoration: const BoxDecoration(
+        color: MedicationUi.background,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: MedicationAdherenceCard(
+          summary: controller.state.overallAdherence,
+          plannedToday: controller.state.todayPlan.length,
         ),
       ),
     );
@@ -562,60 +969,6 @@ class _InlineMessage extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(color: color, fontWeight: FontWeight.w800),
-      ),
-    );
-  }
-}
-
-class _PrimaryGradientButton extends StatelessWidget {
-  const _PrimaryGradientButton({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF7F21F5), Color(0xFF9E2CFF)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: const [
-          BoxShadow(
-            color: VitaMateTheme.shadow,
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          minimumSize: const Size.fromHeight(56),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-          ),
-        ),
-        icon: Icon(icon, color: Colors.white),
-        label: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-          ),
-        ),
       ),
     );
   }

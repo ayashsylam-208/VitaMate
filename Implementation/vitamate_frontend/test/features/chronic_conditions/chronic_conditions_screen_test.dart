@@ -44,7 +44,6 @@ void main() {
         conditions: const [],
         catalog: _sampleCatalog(),
       ),
-      reminderSync: (_) async {},
     );
 
     await tester.pumpWidget(
@@ -76,7 +75,6 @@ void main() {
           compactConditions: [_sampleCompactCondition()],
           catalog: _sampleCatalog(),
         ),
-        reminderSync: (_) async {},
       );
 
       await tester.pumpWidget(

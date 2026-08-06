@@ -11,6 +11,7 @@ from core.repositories.medication_repository import MedicationRepository
 from core.services.condition_points_evaluator import ConditionPointsEvaluator
 from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
+from gamification.models import PointsTransaction
 from gamification.services.points_service import PointsService
 
 
@@ -55,10 +56,18 @@ class MedicationDoseWorkflowService:
                 user_condition=condition,
             )
             return
-        if points_diff > 0:
-            PointsService.add_points(log.medication.user, points_diff)
-        elif points_diff < 0:
-            PointsService.deduct_points(log.medication.user, abs(points_diff))
+        PointsService.apply_delta(
+            log.medication.user,
+            points=points_diff,
+            rule_code=f"MEDICATION_STATUS_{str(log.status).upper()}",
+            source_type=PointsTransaction.SOURCE_MEDICATION,
+            source_id=f"log:{log.id}",
+            event_date=log.scheduled_date,
+            idempotency_key=(
+                f"medication:{log.medication.user_id}:{log.id}:"
+                f"{log.status}:{points_diff}"
+            ),
+        )
         log.points_applied = desired_points
         MedicationRepository.save_dose_log(
             log,
@@ -191,6 +200,46 @@ class MedicationDoseWorkflowService:
 
     @classmethod
     @transaction.atomic
+    def log_prn_taken(
+        cls,
+        *,
+        user,
+        medication_id: int,
+        taken_at: datetime | None = None,
+        dose_taken_amount=None,
+        notes: str = "",
+    ) -> ConditionMedicationLog:
+        medication = MedicationRepository.get_by_id_for_user(
+            user=user,
+            medication_id=medication_id,
+        )
+        if medication is None:
+            raise ValidationError({"detail": "Medication not found."})
+        if not medication.is_active:
+            raise ValidationError({"detail": "This medication is inactive."})
+        if not medication.is_prn:
+            raise ValidationError({"detail": "Only as-needed medications can use PRN logging."})
+
+        taken_at = cls._aware(taken_at)
+        scheduled_date = timezone.localtime(taken_at).date()
+        log = ConditionMedicationLog.objects.create(
+            medication=medication,
+            schedule=None,
+            scheduled_date=scheduled_date,
+            scheduled_for=taken_at,
+            status=ConditionMedicationLog.STATUS_PENDING,
+            action_source=ConditionMedicationLog.ACTION_USER,
+            notes=notes or "",
+        )
+        return cls.mark_taken(
+            user=user,
+            log_id=log.id,
+            taken_at=taken_at,
+            dose_taken_amount=dose_taken_amount,
+        )
+
+    @classmethod
+    @transaction.atomic
     def mark_overdue_pending_doses(cls, *, now: datetime | None = None) -> int:
         now = cls._aware(now)
         changed = 0
@@ -209,6 +258,12 @@ class MedicationDoseWorkflowService:
 
     @staticmethod
     def _publish_adherence_event(log: ConditionMedicationLog) -> None:
+        from gamification.services.motivation_service import MotivationService
+
+        MotivationService.refresh_daily(
+            user=log.medication.user,
+            target_date=log.scheduled_date,
+        )
         HealthStateEventPublisher.publish_on_commit(
             user=log.medication.user,
             trigger_type=HealthStateTriggers.MEDICATION_ADHERENCE_CHANGED,

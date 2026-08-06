@@ -2,26 +2,19 @@
 param(
     [string]$Bind = "0.0.0.0",
     [int]$Port = 8000,
-    [switch]$NoReload
+    [switch]$NoReload,
+    [switch]$SkipAIService
 )
 
 $ErrorActionPreference = "Stop"
 
-$backendRoot = Split-Path -Parent $PSScriptRoot
-$python = Join-Path $backendRoot ".venv\Scripts\python.exe"
-
-if (-not (Test-Path $python)) {
-    throw "Python virtual environment interpreter was not found at $python"
+$runDevServer = Join-Path $PSScriptRoot "run_dev_server.ps1"
+if (-not (Test-Path $runDevServer)) {
+    throw "Integrated development server script was not found at $runDevServer"
 }
 
-$runArgs = @(
-    "manage.py",
-    "runserver",
-    "${Bind}:${Port}"
-)
-
-if ($NoReload) {
-    $runArgs += "--noreload"
-}
-
-& $python @runArgs
+& $runDevServer `
+    -HostAddress $Bind `
+    -Port $Port `
+    -NoReload:$NoReload `
+    -SkipAIService:$SkipAIService

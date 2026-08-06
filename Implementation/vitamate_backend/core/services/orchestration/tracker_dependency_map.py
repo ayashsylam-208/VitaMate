@@ -30,6 +30,7 @@ class HealthStateTriggers:
     MEDICATION_ADHERENCE_CHANGED = "medication_adherence_changed"
     USER_NUTRIENT_TARGET_CHANGED = "user_nutrient_target_changed"
     UNHEALTHY_HABIT_CHANGED = "unhealthy_habit_changed"
+    HEALTH_STATE_BOOTSTRAP = "health_state_bootstrap"
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class HealthStateImpactPlan:
     recompute_constraints: bool = False
     constraint_trigger_type: str | None = None
     constraint_tracker_type: str | None = None
+    constraint_tracker_types: tuple[str, ...] = ()
 
 
 class TrackerDependencyMap:
@@ -55,6 +57,7 @@ class TrackerDependencyMap:
         HealthStateTriggers.USER_NUTRIENT_TARGET_CHANGED,
         HealthStateTriggers.UNHEALTHY_HABIT_CHANGED,
         HealthStateTriggers.READ_MODEL_REFRESH_REQUESTED,
+        HealthStateTriggers.HEALTH_STATE_BOOTSTRAP,
     }
 
     TRIGGER_RULES = {
@@ -157,7 +160,17 @@ class TrackerDependencyMap:
             "reason": "Condition reading changed chronic state and safety bands.",
         },
         HealthStateTriggers.USER_CONDITION_UPDATED: {
-            "trackers": ("monitoring", "nutrition", "hydration", "activity", "medication"),
+            "trackers": (
+                "monitoring",
+                "nutrition",
+                "hydration",
+                "activity",
+                "steps",
+                "sleep",
+                "medication",
+                "habit",
+                "micronutrient",
+            ),
             "sync_active_conditions": True,
             "recompute_constraints": True,
             "constraint_trigger_type": ConstraintResolutionRun.TRIGGER_USER_CONDITION,
@@ -187,12 +200,12 @@ class TrackerDependencyMap:
             "reason": "Medication adherence changed.",
         },
         HealthStateTriggers.USER_NUTRIENT_TARGET_CHANGED: {
-            "trackers": ("nutrition",),
+            "trackers": ("nutrition", "micronutrient"),
             "sync_active_conditions": False,
             "recompute_constraints": True,
             "constraint_trigger_type": ConstraintResolutionRun.TRIGGER_USER_NUTRIENT_TARGET,
-            "constraint_tracker_type": "nutrition",
-            "reason": "User nutrient targets changed nutrition constraints.",
+            "constraint_tracker_types": ("nutrition", "micronutrient"),
+            "reason": "User nutrient targets changed nutrition and micronutrient constraints.",
         },
         HealthStateTriggers.UNHEALTHY_HABIT_CHANGED: {
             "trackers": ("habit", "nutrition", "hydration", "sleep", "monitoring"),
@@ -201,10 +214,17 @@ class TrackerDependencyMap:
             "reason": "Unhealthy habit plan or log changed.",
         },
         HealthStateTriggers.READ_MODEL_REFRESH_REQUESTED: {
-            "trackers": ("nutrition", "hydration", "activity", "steps", "sleep", "medication", "habit", "monitoring"),
+            "trackers": ("nutrition", "micronutrient", "hydration", "activity", "steps", "sleep", "medication", "habit", "monitoring"),
             "sync_active_conditions": True,
             "recompute_constraints": False,
             "reason": "Read model refresh requested.",
+        },
+        HealthStateTriggers.HEALTH_STATE_BOOTSTRAP: {
+            "trackers": ("nutrition", "micronutrient", "hydration", "activity", "steps", "sleep", "medication", "habit", "monitoring"),
+            "sync_active_conditions": True,
+            "recompute_constraints": True,
+            "constraint_trigger_type": ConstraintResolutionRun.TRIGGER_MANUAL,
+            "reason": "Persisted health state initialized explicitly.",
         },
     }
 
@@ -217,13 +237,19 @@ class TrackerDependencyMap:
         today: date,
     ) -> HealthStateImpactPlan:
         payload = dict(payload or {})
-        config = cls.TRIGGER_RULES.get(trigger_type, {})
+        if trigger_type not in cls.TRIGGER_RULES:
+            raise ValueError(f"Unknown health-state trigger: {trigger_type}")
+        config = cls.TRIGGER_RULES[trigger_type]
         event_dates = cls._event_dates(payload=payload, today=today)
         recompute_current = today in event_dates or trigger_type in cls.ALWAYS_CURRENT_TRIGGERS
+        trackers = tuple(dict.fromkeys(config.get("trackers") or ()))
+        constraint_tracker_types = tuple(
+            dict.fromkeys(config.get("constraint_tracker_types") or ())
+        )
         return HealthStateImpactPlan(
             trigger_type=trigger_type,
             reason=str(config.get("reason") or trigger_type.replace("_", " ").title()),
-            affected_trackers=tuple(config.get("trackers") or ()),
+            affected_trackers=trackers,
             event_dates=event_dates,
             recompute_current=recompute_current,
             recompute_daily=bool(event_dates),
@@ -231,7 +257,32 @@ class TrackerDependencyMap:
             recompute_constraints=bool(config.get("recompute_constraints")),
             constraint_trigger_type=config.get("constraint_trigger_type"),
             constraint_tracker_type=config.get("constraint_tracker_type"),
+            constraint_tracker_types=constraint_tracker_types,
         )
+
+    @classmethod
+    def validate(cls) -> list[str]:
+        valid_trackers = {
+            "nutrition",
+            "micronutrient",
+            "hydration",
+            "activity",
+            "steps",
+            "sleep",
+            "medication",
+            "monitoring",
+            "habit",
+        }
+        errors = []
+        for trigger_type, config in cls.TRIGGER_RULES.items():
+            trackers = tuple(config.get("trackers") or ())
+            constraint_trackers = tuple(config.get("constraint_tracker_types") or ())
+            unknown = sorted((set(trackers) | set(constraint_trackers)) - valid_trackers)
+            if unknown:
+                errors.append(f"{trigger_type}: unknown trackers {', '.join(unknown)}")
+            if len(trackers) != len(set(trackers)):
+                errors.append(f"{trigger_type}: duplicate trackers")
+        return errors
 
     @staticmethod
     def _event_dates(*, payload: dict, today: date) -> tuple[date, ...]:

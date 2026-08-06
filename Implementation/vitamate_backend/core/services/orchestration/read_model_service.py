@@ -2,20 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Iterable
-
+from django.db.models import Sum
 from django.utils import timezone
 
-from core.models import HealthStateComputationRun, UnifiedHealthState
+from core.models import HealthStateComputationRun, StepLog, UnifiedHealthState
+from core.repositories.hydration.water_log_repository import HydrationRepository
 from core.services.chronic.chronic_condition_service import ChronicConditionService
 from core.services.chronic.condition_read_service import ConditionReadService
+from core.services.constraints import EffectiveConstraintReader
+from core.services.health_progress import DailyHealthProgressService, MovementEvaluator
 from core.services.medication.medication_dose_workflow_service import MedicationDoseWorkflowService
 from core.services.medication.medication_read_service import MedicationReadService
 from core.services.medication_adherence_service import MedicationAdherenceService
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
 from core.services.tracking.activity_session_service import ActivitySessionService
-from core.tasks import dispatch_read_model_refresh
-from gamification.models import UserScore
+from gamification.models import PointsTransaction, UserScore
+from gamification.services.motivation_service import MotivationService
 
 
 def _as_int(value) -> int:
@@ -51,7 +53,7 @@ def _as_str_list(values) -> list[str]:
 
 
 def _system_local_date() -> date:
-    return date.today()
+    return timezone.localdate()
 
 
 @dataclass(frozen=True)
@@ -75,34 +77,36 @@ class ReadModelService:
 
     @classmethod
     def home_overview(cls, *, user, request_id: str) -> dict:
-        cls._repair_recent_medication_points(user=user)
-        state = cls._current_state(user=user)
-        is_stale = cls._is_state_stale(user=user, state=state)
-        if state is None or is_stale:
-            cls._enqueue_refresh(user=user, event_dates=[_system_local_date()])
-
-        dashboard = cls._dashboard_payload(state)
-        projection_summary = cls._current_projection_progress_summary(
+        state, is_stale = cls._synchronize_current_state(
             user=user,
-            source="home_overview_read_fallback",
+            source="home_overview",
         )
-        if projection_summary is not None:
-            dashboard = cls._progress_summary_payload(projection_summary)
+        dashboard = cls._dashboard_payload(state)
+        projection_summary = dict(state.progress_summary or {}) if state else None
         dashboard = cls._with_live_score(dashboard, user=user)
         compact_conditions = cls._home_conditions(user=user)
         summary = dict(dashboard.get("summary") or {})
+        hydration = dict(dashboard.get("hydration") or {})
+        sleep = dict(dashboard.get("sleep") or {})
         activity = dict(dashboard.get("activity") or {})
         history_entry = dict(
             (projection_summary or {}).get("history_entry")
             or (state.progress_summary.get("history_entry") if state else {})
             or {}
         )
-        daily_points = _as_int(history_entry.get("points_estimate"))
+        motivation = cls._motivation_overview_data(user=user)
+        daily_points = _as_int(motivation.get("daily_points")) or _as_int(
+            history_entry.get("points_estimate")
+        )
         if "medication_points" not in history_entry:
             daily_points += MedicationAdherenceService.points_for_day(
                 user=user,
                 target_date=_system_local_date(),
             )
+        daily_health = DailyHealthProgressService.evaluate(
+            user=user,
+            target_date=_system_local_date(),
+        )
         data = {
             "points": _as_int(dashboard.get("gamification", {}).get("points")),
             "level": _as_int(dashboard.get("gamification", {}).get("level")) or 1,
@@ -113,14 +117,41 @@ class ReadModelService:
             "activity_minutes": _as_int(history_entry.get("exercise_minutes")),
             "burn_target_kcal": _as_int(summary.get("burn_target")),
             "water_ml": round(
-                _as_float(dashboard.get("hydration", {}).get("current")) * 1000
+                _as_float(hydration.get("current")) * 1000
             ),
+            "water_base_target_ml": round(_as_float(hydration.get("base_target")) * 1000),
+            "water_adjusted_target_ml": round(
+                _as_float(hydration.get("adjusted_target")) * 1000
+            ),
+            "water_active_target_ml": round(_as_float(hydration.get("target")) * 1000),
             "sleep_minutes": round(
-                _as_float(dashboard.get("sleep", {}).get("logged_hours_today")) * 60
+                _as_float(sleep.get("logged_hours_today")) * 60
+            ),
+            "sleep_target_minutes": round(
+                _as_float(sleep.get("recommended_sleep_hours")) * 60
             ),
             "calories": _as_int(summary.get("calories_consumed")),
+            "calorie_target": _as_int(summary.get("calories_target")),
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
+            "missions_completed": _as_int(motivation.get("missions_completed")),
+            "missions_total": _as_int(motivation.get("missions_total")),
+            "current_streak": _as_int(motivation.get("current_streak")),
+            "level_name": str(motivation.get("level_name") or "Beginner"),
             "chronic_conditions": dashboard.get("chronic_conditions", cls._empty_chronic_dashboard_summary()),
             "conditions_center": compact_conditions,
+            "daily_health": daily_health["daily_health"],
+            "domains": daily_health["domains"],
+            "focus": daily_health["focus"],
+            "xp": {
+                "total_points": _as_int(dashboard.get("gamification", {}).get("points")),
+                "daily_points": daily_points,
+                "level": _as_int(dashboard.get("gamification", {}).get("level")) or 1,
+                "level_name": str(motivation.get("level_name") or "Beginner"),
+            },
+            "streaks": {
+                "current_streak": _as_int(motivation.get("current_streak")),
+            },
         }
         try:
             from core.services.habits import UnhealthyHabitService
@@ -137,27 +168,19 @@ class ReadModelService:
         return cls._envelope(
             data=data,
             state=state,
-            is_stale=is_stale or state is None,
+            is_stale=is_stale,
             request_id=request_id,
         )
 
     @classmethod
     def progress_overview(cls, *, user, request_id: str) -> dict:
-        cls._repair_recent_medication_points(user=user)
-        state = cls._current_state(user=user)
-        is_stale = cls._is_state_stale(user=user, state=state)
-        if state is None or is_stale:
-            cls._enqueue_refresh(user=user, event_dates=[_system_local_date()])
-        data = cls._dashboard_payload(state)
-        should_mark_fallback = (
-            state is None or is_stale or cls._is_empty_progress_overview(data)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="progress_overview",
         )
-        used_fallback = False
-        fallback = cls._current_projection_payload(user=user)
-        if fallback is not None:
-            data = fallback
-            used_fallback = should_mark_fallback
+        data = cls._dashboard_payload(state)
         data = cls._with_live_score(data, user=user)
+        data["motivation"] = cls._motivation_overview_data(user=user)
         try:
             from core.services.habits import UnhealthyHabitService
 
@@ -177,8 +200,6 @@ class ReadModelService:
             state=state,
             is_stale=(
                 is_stale
-                or state is None
-                or used_fallback
                 or bool(dict(history_payload.get("meta") or {}).get("is_stale"))
             ),
             request_id=request_id,
@@ -198,6 +219,8 @@ class ReadModelService:
             tracker = "hydration"
         if tracker == "meds":
             tracker = "medications"
+        if tracker == "steps":
+            tracker = "activity"
         allowed = {
             "nutrition",
             "hydration",
@@ -207,14 +230,17 @@ class ReadModelService:
             "medications",
             "chronic",
             "habits",
+            "motivation",
         }
         if tracker not in allowed:
             tracker = "nutrition"
 
         range_days = max(7, min(int(range_days or 7), 30))
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
-        overview = cls._current_projection_payload(user=user) or cls._dashboard_payload(state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="progress_detail",
+        )
+        overview = cls._dashboard_payload(state)
         history_payload = cls.progress_history(
             user=user,
             request_id=request_id,
@@ -227,6 +253,7 @@ class ReadModelService:
             overview=overview,
             history_items=history_items,
             range_days=range_days,
+            request_id=request_id,
         )
         return cls._envelope(
             data=data,
@@ -263,15 +290,13 @@ class ReadModelService:
         is_stale = bool(missing_dates)
         if latest_state is not None:
             is_stale = is_stale or cls._is_state_stale(user=user, state=latest_state)
-        if is_stale:
-            cls._enqueue_refresh(user=user, event_dates=[today, *missing_dates])
         if missing_dates:
             fallback_history = cls._history_projection_payload(
                 user=user,
                 today=today,
                 days=days,
             )
-            if fallback_history:
+            if fallback_history and len(fallback_history) == days:
                 items = fallback_history
         items = cls._with_medication_points_in_history(user=user, items=items)
 
@@ -310,6 +335,7 @@ class ReadModelService:
         medications = dict(data.get("medications") or {})
         chronic = dict(data.get("chronic_conditions") or {})
         habits = dict(data.get("unhealthy_habits") or {})
+        motivation = dict(data.get("motivation") or {})
 
         calories_target = _as_float(summary.get("calories_target"))
         calories_consumed = _as_float(summary.get("calories_consumed"))
@@ -319,6 +345,13 @@ class ReadModelService:
         burn_current = _as_float(summary.get("calories_burned"))
         steps_target = _as_float(activity.get("steps_target"))
         steps = _as_float(activity.get("steps"))
+        movement = dict(activity.get("movement") or {})
+        movement_percent = _as_int(movement.get("score"))
+        if movement_percent <= 0:
+            movement_percent = max(
+                cls._bounded_percent(burn_current, burn_target),
+                cls._bounded_percent(steps, steps_target),
+            )
         sleep_goal = _as_float(sleep.get("recommended_sleep_hours"))
         sleep_logged = _as_float(sleep.get("logged_hours_today"))
         medication_active = _as_int(medications.get("active_medications")) > 0 or _as_int(
@@ -354,27 +387,15 @@ class ReadModelService:
             ),
             cls._tracker_card(
                 code="activity",
-                title="Activity / Burn",
+                title="Activity / Movement",
                 icon="activity",
-                percent=cls._bounded_percent(burn_current, burn_target),
+                percent=movement_percent,
                 current=round(burn_current),
                 target=round(burn_target),
                 unit="kcal",
-                active=burn_target > 0,
-                summary="Calories burned and active minutes",
+                active=burn_target > 0 or steps_target > 0,
+                summary="Workout burn, active minutes, and automatic steps",
                 detail_endpoint="/api/progress/details/activity/",
-            ),
-            cls._tracker_card(
-                code="steps",
-                title="Steps",
-                icon="steps",
-                percent=cls._bounded_percent(steps, steps_target),
-                current=round(steps),
-                target=round(steps_target),
-                unit="steps",
-                active=steps_target > 0,
-                summary="Daily walking progress",
-                detail_endpoint="/api/progress/details/steps/",
             ),
             cls._tracker_card(
                 code="sleep",
@@ -425,6 +446,22 @@ class ReadModelService:
                 summary="Smoking, caffeine, and fast food reduction",
                 detail_endpoint="/api/progress/details/habits/",
             ),
+            cls._tracker_card(
+                code="motivation",
+                title="Motivation",
+                icon="motivation",
+                percent=cls._motivation_percent(motivation),
+                current=_as_int(motivation.get("missions_completed")),
+                target=_as_int(motivation.get("missions_total")),
+                unit="missions",
+                active=(_as_int(motivation.get("missions_total")) > 0)
+                or (_as_int(motivation.get("daily_points")) > 0),
+                summary=str(
+                    motivation.get("insight")
+                    or "Daily missions, streaks, badges, and points history."
+                ),
+                detail_endpoint="/api/progress/details/motivation/",
+            ),
         ]
         return cards
 
@@ -437,6 +474,7 @@ class ReadModelService:
         overview: dict,
         history_items: list[dict],
         range_days: int,
+        request_id: str,
     ) -> dict:
         cards = cls._progress_tracker_cards(data=overview)
         card_lookup = {card["code"]: card for card in cards}
@@ -470,6 +508,7 @@ class ReadModelService:
         activity = dict(overview.get("activity") or {})
         medications = dict(overview.get("medications") or {})
         chronic = dict(overview.get("chronic_conditions") or {})
+        motivation = dict(overview.get("motivation") or {})
 
         if tracker == "nutrition":
             from core.models import MealLog
@@ -535,27 +574,16 @@ class ReadModelService:
                 summary_cards=[
                     cls._summary_card("Active minutes", cls._sum_history(history_items, "exercise_minutes"), None, "min"),
                     cls._summary_card("Calories burned", summary.get("calories_burned"), summary.get("burn_target"), "kcal"),
-                    cls._summary_card("Workouts", cls._active_days(history_items, "exercise_minutes"), range_days, "days"),
+                    cls._summary_card("Steps", activity.get("steps"), activity.get("steps_target"), "steps"),
                 ],
                 metrics=[
                     cls._metric("Burn", summary.get("calories_burned"), summary.get("burn_target"), "kcal"),
+                    cls._metric("Steps", activity.get("steps"), activity.get("steps_target"), "steps"),
+                    cls._metric("Step burn", activity.get("steps_burned"), None, "kcal"),
+                    cls._metric("Step distance", activity.get("distance_km"), None, "km"),
                     cls._metric("Active days", cls._active_days(history_items, "exercise_minutes"), range_days, "days"),
                 ],
-                insight="Short walks and logged workouts both count toward your activity score.",
-            )
-        elif tracker == "steps":
-            data.update(
-                summary_cards=[
-                    cls._summary_card("Steps", activity.get("steps"), activity.get("steps_target"), "steps"),
-                    cls._summary_card("Distance", activity.get("distance_km"), None, "km"),
-                    cls._summary_card("Step streak", cls._streak_from_history(history_items, "steps"), None, "days"),
-                ],
-                metrics=[
-                    cls._metric("Steps", activity.get("steps"), activity.get("steps_target"), "steps"),
-                    cls._metric("Distance", activity.get("distance_km"), None, "km"),
-                    cls._metric("Steps burn", activity.get("steps_burned"), None, "kcal"),
-                ],
-                insight="Daily steps are tracked separately but also support activity progress.",
+                insight="Automatic steps and logged workouts are combined into one activity score.",
             )
         elif tracker == "sleep":
             data.update(
@@ -627,6 +655,34 @@ class ReadModelService:
                 ],
                 sections=[{"title": "Habit cards", "items": habits}],
                 insight=habits_data.get("support_message") or "Progress is measured by consistency, not perfection.",
+            )
+        elif tracker == "motivation":
+            missions_payload = MotivationService.missions(
+                user=user,
+                request_id=request_id,
+                target_date=_system_local_date(),
+            )
+            missions = list(dict(missions_payload.get("data") or {}).get("missions") or [])
+            data.update(
+                summary_cards=[
+                    cls._summary_card("Daily points", motivation.get("daily_points"), None, "pts"),
+                    cls._summary_card("Missions", motivation.get("missions_completed"), motivation.get("missions_total"), "today"),
+                    cls._summary_card("Current streak", motivation.get("current_streak"), None, "days"),
+                ],
+                metrics=[
+                    cls._metric(
+                        str(item.get("title") or item.get("mission_type")),
+                        item.get("current_value"),
+                        item.get("target_value"),
+                        "",
+                    )
+                    for item in missions
+                ],
+                sections=[{"title": "Daily missions", "items": missions}],
+                insight=str(
+                    motivation.get("insight")
+                    or "Complete a few daily missions to build streaks and unlock badges."
+                ),
             )
         return data
 
@@ -700,10 +756,21 @@ class ReadModelService:
         active_count = _as_int(habits.get("active_count"))
         if active_count <= 0:
             return 0
-        relapses = _as_int(habits.get("relapses_today"))
-        logs_today = _as_int(habits.get("logs_today"))
-        base = 75 if logs_today > 0 else 55
-        return max(0, min(100, base - (relapses * 20)))
+        return max(0, min(100, _as_int(habits.get("score"))))
+
+    @staticmethod
+    def _motivation_percent(motivation: dict) -> int:
+        missions_total = _as_int(motivation.get("missions_total"))
+        missions_completed = _as_int(motivation.get("missions_completed"))
+        if missions_total > 0:
+            return max(
+                0,
+                min(round((missions_completed / missions_total) * 100), 100),
+            )
+        daily_points = _as_int(motivation.get("daily_points"))
+        if daily_points <= 0:
+            return 0
+        return max(0, min(round((daily_points / 60) * 100), 100))
 
     @staticmethod
     def _weighted_overall_score(cards: list[dict]) -> int:
@@ -711,11 +778,11 @@ class ReadModelService:
             "nutrition": 20,
             "hydration": 15,
             "activity": 15,
-            "steps": 10,
             "sleep": 15,
             "medications": 10,
             "chronic": 10,
             "habits": 5,
+            "motivation": 0,
         }
         active_cards = [card for card in cards if card.get("active")]
         total_weight = sum(weights.get(card["code"], 0) for card in active_cards)
@@ -787,7 +854,11 @@ class ReadModelService:
     @staticmethod
     def _progress_insight(*, overall_score: int, cards: list[dict]) -> dict:
         weakest = next(
-            (card for card in sorted(cards, key=lambda item: item.get("percent", 0)) if card.get("active")),
+            (
+                card
+                for card in sorted(cards, key=lambda item: item.get("percent", 0))
+                if card.get("active") and card.get("code") != "motivation"
+            ),
             None,
         )
         if weakest:
@@ -812,6 +883,7 @@ class ReadModelService:
             "medications": ("medication_adherence_percent", None),
             "chronic": ("condition_adherence_percent", None),
             "habits": ("points_estimate", None),
+            "motivation": ("points_estimate", None),
         }
         current_key, target_key = key_map.get(tracker, ("points_estimate", None))
         trend = []
@@ -849,23 +921,123 @@ class ReadModelService:
 
     @classmethod
     def nutrition_summary(cls, *, user, request_id: str) -> dict:
-        cls._repair_recent_medication_points(user=user)
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="nutrition_summary",
+        )
         summary = dict((state.progress_summary.get("summary") if state else {}) or {})
+
+        # Nutrition writes are immediately visible to the user. The unified
+        # health snapshot can legitimately lag behind the command-side meal
+        # rows, so use today's immutable meal snapshots for consumed nutrients.
+        from core.services.nutrition.nutrition_service import NutritionLoggingService
+
+        live_totals = NutritionLoggingService.nutrition_totals_for_day(
+            user=user,
+            on_date=_system_local_date(),
+        )
+        summary.update(live_totals)
+        summary["calories_consumed"] = live_totals["calories_kcal"]
+
         gamification = cls._live_score(user=user)
+        calorie_constraint = EffectiveConstraintReader.get_effective_constraint(
+            user=user,
+            tracker_type="nutrition",
+            constraint_key="calories_kcal",
+            default_value=cls._profile_daily_calorie_target(user=user),
+            default_unit="kcal",
+            default_source="profile_fallback",
+        )
         target_calories = _as_int(summary.get("calories_target"))
         if target_calories <= 0:
-            target_calories = cls._profile_daily_calorie_target(user=user)
+            target_calories = _as_int(calorie_constraint.value)
         consumed_calories = _as_int(summary.get("calories_consumed"))
+        progress_percent = round(
+            (consumed_calories / target_calories) * 100,
+            1,
+        ) if target_calories > 0 else 0.0
+        calorie_status = "not_configured"
+        calorie_reason = "Set a daily calorie target to evaluate progress."
+        if target_calories > 0:
+            if consumed_calories > target_calories:
+                calorie_status = "over_target"
+                calorie_reason = "Daily energy intake is above the active target."
+            elif progress_percent >= 85:
+                calorie_status = "good"
+                calorie_reason = "Daily energy intake is within the target range."
+            else:
+                calorie_status = "low"
+                calorie_reason = "Daily energy intake is still below the target range."
+
+        metric_specs = (
+            ("protein", "Protein", "protein_g", "protein_g", 100.0, "g", "minimum"),
+            ("carbs", "Carbohydrates", "carbs_g", "carbohydrates_g", 250.0, "g", "range"),
+            ("fat", "Fat", "fat_g", "fat_g", 70.0, "g", "range"),
+            ("fiber", "Fiber", "fiber_g", "fiber_g", 30.0, "g", "minimum"),
+            ("sugar", "Sugar", "sugars_g", "sugars_g", 50.0, "g", "maximum"),
+            ("sodium", "Sodium", "sodium_mg", "sodium_mg", 2300.0, "mg", "maximum"),
+            (
+                "saturated_fat",
+                "Saturated fat",
+                "saturated_fat_g",
+                "saturated_fat_g",
+                20.0,
+                "g",
+                "maximum",
+            ),
+            (
+                "cholesterol",
+                "Cholesterol",
+                "cholesterol_mg",
+                "cholesterol_mg",
+                300.0,
+                "mg",
+                "maximum",
+            ),
+        )
+        effective_metrics = EffectiveConstraintReader.get_effective_constraints(
+            user=user,
+            requests=[
+                {
+                    "tracker_type": "nutrition",
+                    "constraint_key": constraint_key,
+                    "default_value": default_target,
+                    "default_unit": unit,
+                    "default_source": "documented_nutrition_reference_default",
+                }
+                for _, _, _, constraint_key, default_target, unit, _ in metric_specs
+            ],
+        )
+        metrics = []
+        for code, label, value_key, constraint_key, default_target, unit, target_kind in metric_specs:
+            effective = effective_metrics[("nutrition", constraint_key)]
+            metric = cls._nutrition_metric(
+                code=code,
+                label=label,
+                value=_as_float(summary.get(value_key)),
+                target=_as_float(effective.value),
+                unit=unit,
+                target_kind=target_kind,
+            )
+            metric["target_source"] = effective.source_type
+            metric["constraint_reason"] = effective.reason
+            metric["constraint_id"] = effective.constraint_id
+            metrics.append(metric)
         data = {
             "target_calories": target_calories,
+            "active_target_calories": target_calories,
+            "constraint_source": calorie_constraint.source_type,
+            "constraint_reason": calorie_constraint.reason,
             "consumed_calories": consumed_calories,
             "burned_calories": _as_int(summary.get("calories_burned")),
             "remaining_calories": max(target_calories - consumed_calories, 0)
             if target_calories > 0
             else _as_int(summary.get("calories_remaining")),
             "points": _as_int(gamification.get("points")),
+            "progress_percent": progress_percent,
+            "status": calorie_status,
+            "status_reason": calorie_reason,
+            "metrics": metrics,
             "protein_g": _as_float(summary.get("protein_g")),
             "carbs_g": _as_float(summary.get("carbs_g")),
             "fat_g": _as_float(summary.get("fat_g")),
@@ -873,6 +1045,8 @@ class ReadModelService:
             "added_sugars_g": _as_float(summary.get("added_sugars_g")),
             "fiber_g": _as_float(summary.get("fiber_g")),
             "sodium_mg": _as_float(summary.get("sodium_mg")),
+            "saturated_fat_g": _as_float(summary.get("saturated_fat_g")),
+            "cholesterol_mg": _as_float(summary.get("cholesterol_mg")),
             "potassium_mg": _as_float(summary.get("potassium_mg")),
             "calcium_mg": _as_float(summary.get("calcium_mg")),
             "iron_mg": _as_float(summary.get("iron_mg")),
@@ -891,8 +1065,50 @@ class ReadModelService:
             "vitamin_b12_mcg": _as_float(summary.get("vitamin_b12_mcg")),
             "folate_mcg": _as_float(summary.get("folate_mcg")),
             "caffeine_mg": _as_float(summary.get("caffeine_mg")),
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
+
+    @staticmethod
+    def _nutrition_metric(*, code, label, value, target, unit, target_kind):
+        progress_percent = round((value / target) * 100, 1) if target > 0 else 0.0
+        if target_kind == "maximum":
+            status = "high" if value > target else "good"
+            reason = (
+                f"Above the daily limit of {target:g} {unit}."
+                if status == "high"
+                else f"Within the daily limit of {target:g} {unit}."
+            )
+        elif target_kind == "minimum":
+            status = "good" if value >= target else "low"
+            reason = (
+                f"Daily target of {target:g} {unit} reached."
+                if status == "good"
+                else f"Below the daily target of {target:g} {unit}."
+            )
+        else:
+            status = "high" if value > target else ("good" if value >= target * 0.75 else "low")
+            reason = (
+                f"Above the reference target of {target:g} {unit}."
+                if status == "high"
+                else (
+                    f"Within the reference range for a {target:g} {unit} target."
+                    if status == "good"
+                    else f"Below the reference range for a {target:g} {unit} target."
+                )
+            )
+        return {
+            "code": code,
+            "label": label,
+            "value": round(value, 2),
+            "target": target,
+            "unit": unit,
+            "progress_percent": progress_percent,
+            "status": status,
+            "reason": reason,
+            "target_kind": target_kind,
+        }
 
     @staticmethod
     def _profile_daily_calorie_target(*, user) -> int:
@@ -902,136 +1118,350 @@ class ReadModelService:
         return _as_int(getattr(profile, "daily_calorie_target", 0))
 
     @classmethod
-    def hydration_summary(cls, *, user, request_id: str) -> dict:
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+    def hydration_summary(cls, *, user, request_id: str, target_date: date | None = None) -> dict:
+        target_date = target_date or timezone.localdate()
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="hydration_summary",
+        )
         hydration = dict((state.progress_summary.get("hydration") if state else {}) or {})
-        current_ml = round(_as_float(hydration.get("current")) * 1000)
+        start, end = HydrationRepository.day_bounds(target_date)
+        breakdown = HydrationRepository.contribution_breakdown_for_period(
+            user=user,
+            start=start,
+            end=end,
+        )
+        consumed_volume_ml = round(_as_float(breakdown.get("consumed_volume_liters")) * 1000)
+        current_ml = round(_as_float(breakdown.get("hydration_contribution_liters")) * 1000)
+        water_contribution_ml = round(_as_float(breakdown.get("water_contribution_liters")) * 1000)
+        other_drinks_contribution_ml = round(
+            _as_float(breakdown.get("other_drinks_contribution_liters")) * 1000
+        )
+        base_target_ml = round(_as_float(hydration.get("base_target")) * 1000)
+        constraint_target_ml = round(_as_float(hydration.get("constraint_target")) * 1000)
+        adjusted_target_ml = round(_as_float(hydration.get("adjusted_target")) * 1000)
         target_ml = round(_as_float(hydration.get("target")) * 1000)
+        profile = getattr(user, "userprofile", None)
+        profile_target = _as_float(getattr(profile, "daily_water_target", 0))
+        hydration_constraint = EffectiveConstraintReader.get_effective_constraint(
+            user=user,
+            tracker_type="hydration",
+            constraint_key="daily_water_liters",
+            default_value=profile_target,
+            default_unit="liters",
+            default_source="profile_fallback",
+        )
+        if base_target_ml <= 0:
+            base_target_ml = round(_as_float(hydration_constraint.value) * 1000)
+        if constraint_target_ml <= 0:
+            constraint_target_ml = target_ml or base_target_ml
+        active_target_ml = adjusted_target_ml if adjusted_target_ml > 0 else constraint_target_ml
+        adjustment_reasons = []
+        if constraint_target_ml and base_target_ml and abs(constraint_target_ml - base_target_ml) > 1:
+            adjustment_reasons.append("chronic_condition")
+        if adjusted_target_ml and constraint_target_ml and adjusted_target_ml > constraint_target_ml + 1:
+            adjustment_reasons.append("activity")
+        last_log = HydrationRepository.list_for_user_on_date(user, target_date).first()
+        points_earned_today = (
+            PointsTransaction.objects.filter(
+                user=user,
+                source_type=PointsTransaction.SOURCE_HYDRATION,
+                event_date=target_date,
+            )
+            .aggregate(total=Sum("points"))
+            .get("total")
+            or 0
+        )
+        progress_percent = (
+            0
+            if active_target_ml <= 0
+            else round(min(current_ml / active_target_ml, 1.0) * 100)
+        )
         data = {
-            "target_ml": target_ml,
+            "date": target_date.isoformat(),
+            "consumed_volume_ml": consumed_volume_ml,
+            "hydration_contribution_ml": current_ml,
+            "water_contribution_ml": water_contribution_ml,
+            "other_drinks_contribution_ml": other_drinks_contribution_ml,
+            "base_target_ml": base_target_ml,
+            "adjusted_target_ml": adjusted_target_ml,
+            "active_target_ml": active_target_ml,
+            "target_ml": active_target_ml,
             "consumed_ml": current_ml,
-            "remaining_ml": max(target_ml - current_ml, 0),
-            "progress_percent": 0 if target_ml <= 0 else round(min(current_ml / target_ml, 1.0) * 100),
+            "remaining_ml": max(active_target_ml - current_ml, 0),
+            "progress_percent": progress_percent,
+            "goal_completed": active_target_ml > 0 and current_ml >= active_target_ml,
+            "last_drink_at": last_log.consumed_at.isoformat() if last_log else None,
+            "points_earned_today": int(points_earned_today),
+            "adjustment_reasons": adjustment_reasons,
+            "constraint_source": hydration_constraint.source_type,
+            "constraint_reason": hydration_constraint.reason,
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
 
     @classmethod
     def sleep_summary(cls, *, user, request_id: str) -> dict:
-        cls._repair_recent_medication_points(user=user)
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="sleep_summary",
+        )
         sleep = dict((state.progress_summary.get("sleep") if state else {}) or {})
+        profile = getattr(user, "userprofile", None)
+        sleep_constraint = EffectiveConstraintReader.get_effective_constraint(
+            user=user,
+            tracker_type="sleep",
+            constraint_key="sleep_hours",
+            default_value=_as_float(getattr(profile, "recommended_sleep_hours", 0)),
+            default_unit="hours",
+            default_source="profile_fallback",
+        )
         gamification = cls._live_score(user=user)
         data = {
+            "base_target_hours": _as_float(getattr(profile, "recommended_sleep_hours", 0)),
+            "active_target_hours": _as_float(sleep.get("recommended_sleep_hours")),
             "goal_hours": _as_float(sleep.get("recommended_sleep_hours")),
             "logged_hours_today": _as_float(sleep.get("logged_hours_today")),
             "progress_percent": _as_int(sleep.get("progress_percent")),
             "sleep_points": _as_int(gamification.get("points")),
+            "constraint_source": sleep_constraint.source_type,
+            "constraint_reason": sleep_constraint.reason,
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
 
     @classmethod
     def steps_summary(cls, *, user, request_id: str) -> dict:
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="steps_summary",
+        )
         activity = dict((state.progress_summary.get("activity") if state else {}) or {})
         steps = _as_int(activity.get("steps"))
         target = _as_int(activity.get("steps_target"))
-        if target <= 0 or (steps <= 0 and is_stale):
-            fallback = cls._current_projection_progress_summary(
-                user=user,
-                source="steps_summary_read_fallback",
-            )
-            fallback_activity = dict((fallback.get("activity") if fallback else {}) or {})
-            if target <= 0:
-                target = _as_int(fallback_activity.get("steps_target"))
-            if steps <= 0:
-                steps = _as_int(fallback_activity.get("steps"))
-            activity = {
-                **fallback_activity,
-                **{
-                    key: value
-                    for key, value in activity.items()
-                    if value not in (None, "", 0, 0.0)
-                },
-            }
+        profile = getattr(user, "userprofile", None)
+        steps_constraint = EffectiveConstraintReader.get_effective_constraint(
+            user=user,
+            tracker_type="steps",
+            constraint_key="steps_count",
+            default_value=_as_int(getattr(profile, "daily_step_goal", 0)),
+            default_unit="steps",
+            default_source="profile_fallback",
+        )
+        today = _system_local_date()
+        direct_log = StepLog.objects.filter(user=user, date=today).first()
+        if direct_log is not None:
+            direct_steps = _as_int(direct_log.steps_count)
+            if direct_steps >= steps:
+                steps = direct_steps
+                activity["steps"] = direct_steps
+                activity["distance_km"] = _as_float(direct_log.distance_km)
+                activity["steps_burned"] = _as_int(direct_log.calories_burned)
+                if direct_log.distance_km:
+                    activity["steps_burn_rate"] = round(
+                        _as_int(direct_log.calories_burned)
+                        / _as_float(direct_log.distance_km),
+                        1,
+                    )
+                else:
+                    activity["steps_burn_rate"] = 0
+        extra_steps = max(steps - target, 0) if target > 0 else 0
+        progress_percent = round((steps / target) * 100) if target > 0 else 0
         data = {
+            "date": today.isoformat(),
             "target_steps": target,
             "steps_today": steps,
             "remaining_steps": max(target - steps, 0),
+            "extra_steps": extra_steps,
+            "steps_progress_percent": progress_percent,
             "distance_km": _as_float(activity.get("distance_km")),
             "calories_burned": _as_int(activity.get("steps_burned")),
             "burn_rate_kcal_per_km": _as_float(activity.get("steps_burn_rate")),
-            "points": max(0, (steps // 1000) * 5),
+            "sensor_steps": _as_int(getattr(direct_log, "sensor_steps", 0)) if direct_log else 0,
+            "manual_adjustment_steps": _as_int(getattr(direct_log, "manual_adjustment_steps", 0)) if direct_log else 0,
+            "imported_adjustment_steps": _as_int(getattr(direct_log, "imported_adjustment_steps", 0)) if direct_log else 0,
+            "sync_version": _as_int(getattr(direct_log, "sync_version", 0)) if direct_log else 0,
+            "points": sum(
+                int(item.points or 0)
+                for item in PointsTransaction.objects.filter(
+                    user=user,
+                    source_type=PointsTransaction.SOURCE_STEPS,
+                    event_date=today,
+                ).only("points")
+            ),
+            "base_target_steps": _as_int(getattr(profile, "daily_step_goal", 0)),
+            "active_target_steps": target,
+            "constraint_source": steps_constraint.source_type,
+            "constraint_reason": steps_constraint.reason,
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
 
     @classmethod
     def activity_summary(cls, *, user, request_id: str) -> dict:
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="activity_summary",
+        )
         summary = dict((state.progress_summary.get("summary") if state else {}) or {})
         history_entry = dict((state.progress_summary.get("history_entry") if state else {}) or {})
         burn_target = _as_int(summary.get("burn_target"))
         burn_current = _as_int(summary.get("calories_burned"))
         exercise_minutes = _as_int(history_entry.get("exercise_minutes"))
         points_estimate = _as_int(history_entry.get("points_estimate"))
-        if burn_target <= 0 or (is_stale and (burn_current <= 0 or exercise_minutes <= 0)):
-            fallback = cls._current_projection_progress_summary(
-                user=user,
-                source="activity_summary_read_fallback",
-            )
-            fallback_summary = dict((fallback.get("summary") if fallback else {}) or {})
-            fallback_history = dict((fallback.get("history_entry") if fallback else {}) or {})
-            if burn_target <= 0:
-                burn_target = _as_int(fallback_summary.get("burn_target"))
-            if burn_current <= 0:
-                burn_current = _as_int(fallback_summary.get("calories_burned"))
-            if exercise_minutes <= 0:
-                exercise_minutes = _as_int(fallback_history.get("exercise_minutes"))
-            if points_estimate <= 0:
-                points_estimate = _as_int(fallback_history.get("points_estimate"))
+        profile = getattr(user, "userprofile", None)
+        burn_constraint = EffectiveConstraintReader.get_effective_constraint(
+            user=user,
+            tracker_type="activity",
+            constraint_key="calories_burned",
+            default_value=_as_int(getattr(profile, "daily_burn_goal", 0)),
+            default_unit="kcal",
+            default_source="profile_fallback",
+        )
+        today = _system_local_date()
+        movement = MovementEvaluator.evaluate(user=user, target_date=today)
+        active_calories = dict(movement.get("active_calories") or {})
+        steps_component = dict((movement.get("components") or {}).get("steps") or {})
+        exercise_component = dict((movement.get("components") or {}).get("exercise") or {})
+        active_time = dict(movement.get("active_time") or {})
+        weekly_active_time = dict(movement.get("weekly_active_time") or {})
         data = {
+            "date": today.isoformat(),
             "burn_target": burn_target,
-            "burn_current": burn_current,
-            "exercise_minutes": exercise_minutes,
+            "burn_current": _as_int(active_calories.get("value")) or burn_current,
+            "exercise_minutes": _as_int(exercise_component.get("current")) or exercise_minutes,
             "points_estimate": points_estimate,
+            "active_calories": active_calories,
+            "steps_card": {
+                "steps": _as_int(steps_component.get("current")),
+                "target": _as_int(steps_component.get("target")),
+                "percent": _as_int(steps_component.get("progress_percent")),
+                "remaining": max(
+                    _as_int(steps_component.get("target")) - _as_int(steps_component.get("current")),
+                    0,
+                ),
+                "calories": _as_int(steps_component.get("calories")),
+                "distance_km": _as_float(steps_component.get("distance_km")),
+                "status": steps_component.get("status"),
+            },
+            "active_time_card": {
+                "today_minutes": _as_int(active_time.get("today_minutes")),
+                "target_minutes": _as_int(active_time.get("daily_target_minutes")),
+                "percent": _as_int(active_time.get("percent")),
+                "remaining_minutes": _as_int(active_time.get("remaining_minutes")),
+                "weekly_minutes": _as_int(weekly_active_time.get("weekly_minutes")),
+                "weekly_target_minutes": _as_int(weekly_active_time.get("weekly_target_minutes")),
+                "active_day_count": _as_int(weekly_active_time.get("active_day_count")),
+                "breakdown": active_time.get("breakdown") or {},
+                "coverage_status": active_time.get("coverage_status"),
+            },
+            "workouts_card": {
+                "count": _as_int(exercise_component.get("workout_count")),
+                "minutes": _as_int(exercise_component.get("current")),
+                "target_minutes": _as_int(exercise_component.get("target")),
+                "percent": _as_int(exercise_component.get("progress_percent")),
+                "calories": _as_int(exercise_component.get("calories")),
+                "status": exercise_component.get("status"),
+            },
+            "sync": {
+                "state": "stale" if is_stale else "synced",
+                "last_synced_at": state.last_computed_at.isoformat() if state and state.last_computed_at else None,
+            },
             "today_summary": ActivitySessionService.build_today_summary(user=user),
             "weekly_summary": ActivitySessionService.build_weekly_summary(user=user),
             "active_session": ActivitySessionService.active_session_payload(user=user),
             "suggestions": ActivitySessionService.build_suggestions(user=user),
+            "base_target_kcal": _as_int(getattr(profile, "daily_burn_goal", 0)),
+            "active_target_kcal": burn_target,
+            "constraint_source": burn_constraint.source_type,
+            "constraint_reason": burn_constraint.reason,
+            "state_version": state.version if state else None,
+            "generated_at": state.last_computed_at.isoformat() if state else None,
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
 
     @classmethod
     def medications_overview(cls, *, user, request_id: str) -> dict:
-        cls._repair_recent_medication_points(user=user)
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
-        medications = MedicationReadService.get_medication_plans(user=user).filter(is_active=True)
-        today_plan = MedicationReadService.get_today_dose_logs(user=user)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="medications_overview",
+        )
+        medications = list(MedicationReadService.get_medication_plans(user=user).filter(is_active=True))
+        today_plan = list(MedicationReadService.get_today_dose_logs(user=user))
+        today = timezone.localdate()
         summary = MedicationAdherenceService.get_user_adherence(
             user=user,
-            start_date=timezone.localdate() - timedelta(days=29),
-            end_date=timezone.localdate(),
+            start_date=today - timedelta(days=29),
+            end_date=today,
         )
         from core.api.medication.serializers import serialize_adherence, serialize_dose_log, serialize_medication
-        from core.services.orchestration.notification_dispatcher import NotificationDispatcher
+
+        today_counts = MedicationAdherenceService.counts_for_day(user=user, target_date=today)
+        expected_today = _as_int(today_counts.get("today_total_doses"))
+        taken_today = _as_int(today_counts.get("taken_today"))
+        missed_today = _as_int(today_counts.get("missed_today")) + _as_int(today_counts.get("overdue_today"))
+        pending_today = _as_int(today_counts.get("pending_today"))
+        percent_today = round((taken_today / expected_today) * 100, 2) if expected_today else 0.0
+        next_due = MedicationAdherenceService.next_due(user=user)
+        has_missed_or_overdue = missed_today > 0
+        if expected_today == 0:
+            motivation_strip = None
+        elif has_missed_or_overdue:
+            motivation_strip = {
+                "tone": "attention",
+                "title": "Review missed medication",
+                "subtitle": "Log or resolve overdue doses to keep adherence accurate.",
+            }
+        elif taken_today >= expected_today:
+            motivation_strip = {
+                "tone": "positive",
+                "title": "Medication plan complete",
+                "subtitle": "All scheduled doses are recorded for today.",
+            }
+        elif pending_today > 0:
+            motivation_strip = {
+                "tone": "focus",
+                "title": "Keep today's plan moving",
+                "subtitle": f"{pending_today} dose{'s' if pending_today != 1 else ''} still pending.",
+            }
+        else:
+            motivation_strip = None
 
         data = {
             "medications": [serialize_medication(item) for item in medications],
             "today_plan": [serialize_dose_log(item) for item in today_plan],
             "overall_adherence": serialize_adherence(summary),
-            "reminder_sync": NotificationDispatcher.build_reminder_sync_payload(user=user),
+            "today_adherence": {
+                "completed": taken_today,
+                "expected": expected_today,
+                "percent": percent_today,
+                "taken": taken_today,
+                "pending": pending_today,
+                "missed": missed_today,
+                "skipped": _as_int(today_counts.get("skipped_today")),
+            },
+            "next_dose": serialize_dose_log(next_due) if next_due else None,
+            "streak": summary.streak_days,
+            "shortcut_counts": {
+                "today_plan": len(today_plan),
+                "all_medications": len(medications),
+                "history": summary.expected_doses,
+                "insights": round(summary.adherence_percent, 2),
+            },
+            "motivation_strip": motivation_strip,
             "snapshot_summary": dict((state.progress_summary.get("medications") if state else {}) or {}),
         }
         return cls._envelope(data=data, state=state, is_stale=is_stale, request_id=request_id)
 
     @classmethod
     def chronic_overview(cls, *, user, request_id: str, view: str = "") -> dict:
-        state = cls._current_state(user=user)
-        is_stale = cls._ensure_current(user=user, state=state)
+        state, is_stale = cls._synchronize_current_state(
+            user=user,
+            source="chronic_overview",
+        )
         if view == "guidance":
             data = {
                 "conditions": cls._guidance_conditions(user=user),
@@ -1145,19 +1575,10 @@ class ReadModelService:
 
     @classmethod
     def _current_projection_progress_summary(cls, *, user, source: str) -> dict | None:
-        from core.services.orchestration.health_state_projection_service import (
-            HealthStateProjectionService,
-        )
-
-        projection = HealthStateProjectionService().build_projection(
-            user=user,
-            state_date=_system_local_date(),
-            window_kind=UnifiedHealthState.WINDOW_CURRENT,
-            trigger_metadata={"source": source},
-        )
-        if projection is None:
+        state, _is_stale = cls._synchronize_current_state(user=user, source=source)
+        if state is None:
             return None
-        return dict(projection.get("progress_summary") or {})
+        return dict(state.progress_summary or {})
 
     @classmethod
     def _history_projection_payload(cls, *, user, today: date, days: int) -> list[dict] | None:
@@ -1172,11 +1593,50 @@ class ReadModelService:
         )
 
     @classmethod
-    def _ensure_current(cls, *, user, state) -> bool:
-        is_stale = cls._is_state_stale(user=user, state=state)
-        if state is None or is_stale:
-            cls._enqueue_refresh(user=user, event_dates=[_system_local_date()])
-        return is_stale or state is None
+    def _synchronize_current_state(cls, *, user, source: str):
+        from core.services.orchestration.health_state_bootstrap_service import (
+            HealthStateBootstrapService,
+        )
+        from core.services.orchestration.health_state_orchestrator import (
+            HealthStateOrchestrator,
+        )
+
+        today = _system_local_date()
+        state = cls._current_state(user=user)
+        if state is None:
+            state = HealthStateBootstrapService.ensure_initialized(
+                user=user,
+                state_date=today,
+            )
+        elif cls._is_state_stale(user=user, state=state):
+            latest_running = (
+                HealthStateComputationRun.objects.filter(
+                    user=user,
+                    run_status=HealthStateComputationRun.STATUS_RUNNING,
+                    started_at__gt=state.last_computed_at,
+                )
+                .order_by("-started_at", "-id")
+                .first()
+            )
+            refresh_identity = latest_running.id if latest_running else state.version
+            HealthStateOrchestrator().handle_event(
+                user=user,
+                trigger_type=cls.STALE_REFRESH_TRIGGER,
+                payload={
+                    "trigger_reference": (
+                        f"read-model-refresh:{user.id}:{today}:{refresh_identity}"
+                    ),
+                    "idempotency_key": (
+                        f"health-state-read-refresh:{user.id}:{today}:{refresh_identity}"
+                    ),
+                    "event_dates": [today],
+                    "today": today,
+                    "source": source,
+                },
+                synchronous=True,
+            )
+            state = cls._current_state(user=user)
+        return state, cls._is_state_stale(user=user, state=state)
 
     @classmethod
     def _current_state(cls, *, user):
@@ -1213,6 +1673,25 @@ class ReadModelService:
         gamification.update(cls._live_score(user=user))
         next_payload["gamification"] = gamification
         return next_payload
+
+    @staticmethod
+    def _motivation_overview_data(*, user) -> dict:
+        try:
+            payload = MotivationService.overview(
+                user=user,
+                request_id="read-model",
+                target_date=_system_local_date(),
+            )
+            return dict(payload.get("data") or {})
+        except Exception:
+            return {
+                "daily_points": 0,
+                "missions_completed": 0,
+                "missions_total": 0,
+                "current_streak": 0,
+                "level_name": "Beginner",
+                "insight": "",
+            }
 
     @classmethod
     def _with_medication_points_in_history(cls, *, user, items: list[dict]) -> list[dict]:
@@ -1251,15 +1730,6 @@ class ReadModelService:
             run_status=HealthStateComputationRun.STATUS_RUNNING,
             started_at__gt=state.last_computed_at,
         ).exists()
-
-    @classmethod
-    def _enqueue_refresh(cls, *, user, event_dates: Iterable[date]):
-        normalized = sorted({str(item) for item in event_dates})
-        dispatch_read_model_refresh(
-            user_id=user.id,
-            trigger_type=cls.STALE_REFRESH_TRIGGER,
-            event_dates=normalized,
-        )
 
     @classmethod
     def _envelope(cls, *, data: dict, state, is_stale: bool, request_id: str) -> dict:

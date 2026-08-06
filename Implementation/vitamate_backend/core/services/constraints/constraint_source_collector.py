@@ -18,6 +18,7 @@ from core.models import (
     UserNutrientTarget,
 )
 from users.models import UserProfile
+from core.services.chronic.lipid_panel_values import LipidPanelValues
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,17 @@ class ConstraintSourceCollector:
         "steps": ResolvedTrackerConstraint.TRACKER_STEPS,
         "habit": ResolvedTrackerConstraint.TRACKER_HABIT,
         "micronutrient": ResolvedTrackerConstraint.TRACKER_MICRONUTRIENT,
+    }
+
+    UNIT_EQUIVALENTS = {
+        "liters": {"l", "liter", "liters", "l/day", "liter/day", "liters/day"},
+        "mg": {"mg", "mg/day"},
+        "mmHg": {"mmhg", "mm hg"},
+        "minutes": {"min", "minute", "minutes", "minutes/day"},
+        "mg/dL": {"mg/dl"},
+        "kcal": {"kcal", "kcal/day"},
+        "steps": {"step", "steps", "steps/day"},
+        "hours": {"h", "hr", "hour", "hours", "hours/day"},
     }
 
     @classmethod
@@ -474,23 +486,24 @@ class ConstraintSourceCollector:
                 seen.add(record.indicator_type)
                 latest_records.append(record)
             for record in latest_records:
-                metric_key, value = cls._indicator_metric(record)
-                if not metric_key or value is None:
-                    continue
                 if record.classification not in {"high", "low", "critical"} and record.risk_level not in {
                     "medium",
                     "high",
                     "critical",
                 }:
                     continue
-                candidates.append(
-                    cls._candidate(
+                for metric_key, value, source_field in cls._indicator_metrics(record):
+                    canonical_unit = cls._canonical_unit(
+                        unit=record.unit,
+                        canonical=(cls.METRIC_ALIASES.get(metric_key) or (None, None, record.unit))[2],
+                    )
+                    candidates.append(cls._candidate(
                         tracker_type=ResolvedTrackerConstraint.TRACKER_MONITORING,
                         category="monitoring",
                         metric_key=metric_key,
                         rule_type=ResolvedTrackerConstraint.RULE_WARN,
                         evaluation_mode="latest_indicator",
-                        unit=record.unit,
+                        unit=canonical_unit,
                         warning_value=float(value),
                         source_type=source_type,
                         priority=cls.PRIORITY[source_type],
@@ -501,9 +514,12 @@ class ConstraintSourceCollector:
                         ),
                         source_model="HealthIndicatorRecord",
                         source_object_id=record.id,
+                        explanation_payload={
+                            "source_field": source_field,
+                            "recorded_at": record.recorded_at.isoformat() if record.recorded_at else None,
+                        },
                         confidence_score=0.7,
-                    )
-                )
+                    ))
         return candidates
 
     @classmethod
@@ -557,9 +573,33 @@ class ConstraintSourceCollector:
     @classmethod
     def _candidate(cls, **kwargs) -> ConstraintCandidate:
         payload = dict(kwargs.pop("explanation_payload", {}) or {})
+        source_condition = kwargs.get("source_condition")
+        source_restriction = kwargs.get("source_restriction")
+        source_nutrient_rule = kwargs.get("source_nutrient_rule")
         payload.setdefault("source_model", kwargs.get("source_model") or "")
         payload.setdefault("source_object_id", str(kwargs.get("source_object_id") or ""))
         payload.setdefault("source_type", kwargs.get("source_type"))
+        payload.setdefault("condition_id", getattr(source_condition, "id", None))
+        payload.setdefault("severity_code", getattr(source_condition, "severity_code", None))
+        payload.setdefault(
+            "rule_id",
+            getattr(source_restriction, "id", None)
+            or getattr(source_nutrient_rule, "id", None),
+        )
+        payload.setdefault("rule_version", getattr(source_restriction, "source_version", None))
+        payload.setdefault(
+            "clinical_source",
+            getattr(source_restriction, "evidence_source", None)
+            or getattr(source_restriction, "source_label", None),
+        )
+        payload.setdefault(
+            "rule_effective_date",
+            (
+                source_restriction.effective_date.isoformat()
+                if source_restriction is not None and source_restriction.effective_date
+                else None
+            ),
+        )
         return ConstraintCandidate(
             source_object_id=str(kwargs.pop("source_object_id", "") or ""),
             explanation_payload=payload,
@@ -578,9 +618,23 @@ class ConstraintSourceCollector:
         alias = cls.METRIC_ALIASES.get(normalized_key)
         if alias:
             tracker, metric, default_unit = alias
-            return tracker, metric, unit or default_unit
+            return tracker, metric, cls._canonical_unit(
+                unit=unit,
+                canonical=default_unit,
+            )
         tracker = cls.CATEGORY_TRACKERS.get(category, category or ResolvedTrackerConstraint.TRACKER_MONITORING)
         return tracker, normalized_key, unit or ""
+
+    @classmethod
+    def _canonical_unit(cls, *, unit: str, canonical: str) -> str:
+        supplied = str(unit or "").strip()
+        if not supplied:
+            return canonical
+        normalized = supplied.lower().replace("\u00a0", " ").strip()
+        equivalents = cls.UNIT_EQUIVALENTS.get(canonical, {canonical.lower()})
+        if normalized in equivalents:
+            return canonical
+        return supplied
 
     @staticmethod
     def _rule_type_from_values(
@@ -630,21 +684,29 @@ class ConstraintSourceCollector:
         return str(nutrient.code or "").strip()
 
     @staticmethod
-    def _indicator_metric(record: HealthIndicatorRecord) -> tuple[str | None, float | None]:
+    def _indicator_metrics(record: HealthIndicatorRecord) -> tuple[tuple[str, float, str], ...]:
         indicator_type = str(record.indicator_type or "").strip()
         if indicator_type == "blood_pressure":
-            return "systolic_bp", record.value_1 if record.value_1 is not None else record.value
+            value = record.value_1 if record.value_1 is not None else record.value
+            return (("systolic_bp", value, "value_1"),) if value is not None else ()
         if indicator_type == "glucose":
             if record.reading_context in {"fasting", "before_meal"}:
-                return "fasting_glucose", record.value
-            return "postprandial_glucose", record.value
+                return (("fasting_glucose", record.value, "value"),)
+            return (("postprandial_glucose", record.value, "value"),)
         if indicator_type == "lipid_panel":
-            if record.value_2 is not None:
-                return "triglycerides", record.value_2
-            return "ldl", record.value
+            return LipidPanelValues.from_measurement(record).monitoring_metrics()
         if indicator_type:
-            return indicator_type, record.value
-        return None, None
+            return ((indicator_type, record.value, "value"),)
+        return ()
+
+    @staticmethod
+    def _indicator_metric(record: HealthIndicatorRecord) -> tuple[str | None, float | None]:
+        """Compatibility shim for callers outside the collector."""
+        metrics = ConstraintSourceCollector._indicator_metrics(record)
+        if not metrics:
+            return None, None
+        metric_key, value, _source_field = metrics[0]
+        return metric_key, value
 
     @staticmethod
     def _float_or_none(value) -> float | None:

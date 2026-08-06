@@ -63,6 +63,11 @@ def postgres_database_config():
             "PASSWORD": os.getenv("POSTGRES_PASSWORD", "vitamate"),
             "HOST": os.getenv("POSTGRES_HOST", "localhost"),
             "PORT": os.getenv("POSTGRES_PORT", "5432"),
+            "OPTIONS": {"client_encoding": "UTF8"},
+            "TEST": {
+                "CHARSET": "UTF8",
+                "TEMPLATE": "template0",
+            },
         }
     }
 
@@ -81,6 +86,9 @@ INSTALLED_APPS = [
     "users.apps.UsersConfig",
     "core",
     "gamification",
+    "notification_hub.apps.NotificationHubConfig",
+    "manager.apps.ManagerConfig",
+    "ai_meals.apps.AiMealsConfig",
 ]
 
 MIDDLEWARE = [
@@ -128,6 +136,15 @@ PERFORMANCE_INSTRUMENTATION_ENABLED = env_bool(
     default=True,
 )
 
+AI_MEALS_BASE_URL = os.getenv("AI_MEALS_BASE_URL", "http://127.0.0.1:8010").rstrip("/")
+AI_MEALS_TIMEOUT_SECONDS = int(os.getenv("AI_MEALS_TIMEOUT_SECONDS", "180"))
+AI_MEALS_SERVICE_TOKEN = os.getenv("AI_MEALS_SERVICE_TOKEN", "")
+AI_MEALS_MAX_IMAGE_BYTES = int(os.getenv("AI_MEALS_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+AI_MEALS_SESSION_TTL_MINUTES = int(os.getenv("AI_MEALS_SESSION_TTL_MINUTES", "30"))
+AI_MEALS_MIN_IMAGE_DIMENSION = int(os.getenv("AI_MEALS_MIN_IMAGE_DIMENSION", "128"))
+AI_MEALS_MAX_IMAGE_DIMENSION = int(os.getenv("AI_MEALS_MAX_IMAGE_DIMENSION", "8192"))
+AI_MEALS_MAX_IMAGE_PIXELS = int(os.getenv("AI_MEALS_MAX_IMAGE_PIXELS", "40000000"))
+
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_USE_BROKER = env_bool("CELERY_USE_BROKER", default=False)
@@ -161,5 +178,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

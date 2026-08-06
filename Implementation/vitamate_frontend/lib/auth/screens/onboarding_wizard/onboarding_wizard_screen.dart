@@ -5,6 +5,7 @@ import '../../../core/config/api_endpoints.dart';
 import '../../../core/network/http_client.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/testing/app_test_keys.dart';
+import '../../../core/theme/vitamate_theme.dart';
 import 'onboarding_state.dart';
 import 'steps/step_01_basic_info.dart';
 import 'steps/step_02_activity_level.dart';
@@ -196,7 +197,7 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const ValueKey(AppTestKeys.onboardingScreen),
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: VitaMateTheme.background,
       resizeToAvoidBottomInset: true,
       body: Container(
         decoration: const BoxDecoration(gradient: wizardPageBackground),

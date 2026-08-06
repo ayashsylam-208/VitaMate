@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from django.utils import timezone
 
 from core.services.orchestration.health_state_projection_service import (
     HealthStateProjectionService,
+)
+from core.services.orchestration.health_state_bootstrap_service import (
+    HealthStateBootstrapService,
 )
 from core.services.orchestration.health_state_read_service import HealthStateReadService
 
@@ -12,9 +16,8 @@ class HealthTrackerCoordinator:
     """
     Read-side facade for dashboard/history payloads.
 
-    Materialized unified health state is the primary source. When a snapshot is
-    missing, the coordinator falls back to a read-only projection without
-    triggering sync, constraint recompute, or notification side effects.
+    Materialized unified health state is the only normal dashboard source.
+    Missing current state uses an explicit persisted bootstrap path.
     """
 
     def __init__(
@@ -32,7 +35,7 @@ class HealthTrackerCoordinator:
         return tuple(self._latest_snapshots)
 
     def build_dashboard(self, *, user, today: date | None = None) -> dict | None:
-        today = today or date.today()
+        today = today or timezone.localdate()
         state = self._state_reader.get_current_state(user=user, state_date=today)
         if state is not None:
             self._latest_snapshots = list(state.tracker_snapshots or [])
@@ -45,27 +48,19 @@ class HealthTrackerCoordinator:
                 impacted_trackers=state.affected_trackers,
             )
 
-        fallback = self._projection_service.build_projection(
-            user=user,
-            state_date=today,
-            window_kind="current",
-            trigger_metadata={"source": "dashboard_read_fallback"},
-        )
-        if fallback is None:
-            return None
-
-        self._latest_snapshots = list(fallback.get("tracker_snapshots") or [])
+        state = HealthStateBootstrapService.ensure_initialized(user=user, state_date=today)
+        self._latest_snapshots = list(state.tracker_snapshots or [])
         return self._dashboard_payload(
-            progress_summary=fallback.get("progress_summary"),
-            active_constraints=fallback.get("active_constraints"),
-            warnings=fallback.get("warnings"),
-            state_version=None,
-            last_computed_at=None,
-            impacted_trackers=fallback.get("affected_trackers"),
+            progress_summary=state.progress_summary,
+            active_constraints=state.active_constraints,
+            warnings=state.warnings,
+            state_version=state.version,
+            last_computed_at=state.last_computed_at,
+            impacted_trackers=state.affected_trackers,
         )
 
     def build_history(self, *, user, today: date | None = None, days: int = 7) -> list[dict] | None:
-        today = today or date.today()
+        today = today or timezone.localdate()
         start = today - timedelta(days=max(days - 1, 0))
         state_by_date = {
             item.state_date: item
@@ -75,10 +70,6 @@ class HealthTrackerCoordinator:
                 end_date=today,
             )
         }
-        prepared_context = self._projection_service.prepare_context(user=user)
-        if prepared_context is None:
-            return None
-
         history = []
         for offset in range(days):
             state_date = start + timedelta(days=offset)
@@ -89,14 +80,8 @@ class HealthTrackerCoordinator:
                     history.append(entry)
                     continue
 
-            fallback = self._projection_service.build_history_entry(
-                user=user,
-                state_date=state_date,
-                prepared_context=prepared_context,
-            )
-            if fallback is None:
-                return None
-            history.append(dict(fallback))
+            # History reads never mutate state or fabricate temporary projections.
+            continue
 
         return history
 

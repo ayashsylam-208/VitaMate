@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/network_error_mapper.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../core/notification_hub/notification_hub.dart';
 import '../../../core/sync/health_sync_bus.dart';
 import '../data/sleep_coach_repository.dart';
 import '../models/sleep_coach.dart';
@@ -56,7 +56,9 @@ class SleepCoachController extends ChangeNotifier {
         flexibilityMinutes: flexibilityMinutes,
         questionnaire: questionnaire,
       );
-      await _schedulePlanWake(newPlan);
+      await NotificationHubController.instance.syncNow(
+        reason: 'sleep-coach-create',
+      );
       overview = SleepCoachOverview(
         plan: newPlan,
         feedbackPrompt: false,
@@ -83,7 +85,9 @@ class SleepCoachController extends ChangeNotifier {
     notifyListeners();
     try {
       await _repository.cancelPlan();
-      await NotificationsService.cancelSleepCoachWake();
+      await NotificationHubController.instance.syncNow(
+        reason: 'sleep-coach-cancel',
+      );
       await load(silent: true);
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
@@ -118,7 +122,9 @@ class SleepCoachController extends ChangeNotifier {
         actualSleepStart: actualSleepStart,
         actualWakeTime: actualWakeTime,
       );
-      await NotificationsService.cancelSleepCoachWake();
+      await NotificationHubController.instance.syncNow(
+        reason: 'sleep-coach-feedback',
+      );
       await load(silent: true);
       HealthSyncBus.instance.publish(const {
         HealthSyncScope.sleep,
@@ -136,14 +142,5 @@ class SleepCoachController extends ChangeNotifier {
       saving = false;
       notifyListeners();
     }
-  }
-
-  Future<void> _schedulePlanWake(SleepPlan plan) async {
-    final wakeTime = plan.selectedWakeTime ?? plan.recommendedOption?.wakeTime;
-    if (wakeTime == null) {
-      return;
-    }
-    await NotificationsService.cancelSleepCoachWake();
-    await NotificationsService.scheduleSleepCoachWake(wakeTime: wakeTime);
   }
 }

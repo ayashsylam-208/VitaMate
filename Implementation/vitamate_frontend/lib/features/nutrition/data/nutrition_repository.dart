@@ -71,6 +71,7 @@ class NutritionRepository {
     bool? containsCaffeine,
     bool? isHydrationTrackable,
     int limit = 12,
+    int offset = 0,
     CancelToken? cancelToken,
   }) {
     return _api.autocompleteFoods(
@@ -81,11 +82,40 @@ class NutritionRepository {
       containsCaffeine: containsCaffeine,
       isHydrationTrackable: isHydrationTrackable,
       limit: limit,
+      offset: offset,
       cancelToken: cancelToken,
     );
   }
 
   Future<List<MealLog>> getMealsToday() => _api.getMealsToday();
+
+  Future<List<FoodItem>> getFavoriteFoods() => _api.getFavoriteFoods();
+
+  Future<List<FoodItem>> getRecentFoods({int limit = 24}) =>
+      _api.getRecentFoods(limit: limit);
+
+  Future<bool> setFoodFavorite({
+    required int foodId,
+    required bool isFavorite,
+  }) => _api.setFoodFavorite(foodId: foodId, isFavorite: isFavorite);
+
+  Future<List<MealLog>> getMeals({DateTime? date}) => _api.getMeals(date: date);
+
+  Future<MealLog> updateMeal({
+    required int mealId,
+    String? mealType,
+    double? quantityGrams,
+    DateTime? consumedAt,
+    String? notes,
+  }) => _api.updateMeal(
+    mealId: mealId,
+    mealType: mealType,
+    quantityGrams: quantityGrams,
+    consumedAt: consumedAt,
+    notes: notes,
+  );
+
+  Future<void> deleteMeal(int mealId) => _api.deleteMeal(mealId);
 
   Future<void> addFood({
     required String name,
@@ -107,7 +137,7 @@ class NutritionRepository {
     );
   }
 
-  Future<void> addMeal({
+  Future<MealLog> addMeal({
     required int foodId,
     required String mealType,
     double? quantityGrams,
@@ -118,6 +148,7 @@ class NutritionRepository {
     double? servingGramsEquivalent,
     double? servingMillilitersEquivalent,
     DateTime? consumedAt,
+    bool isFastFood = false,
   }) {
     return _api.addMeal(
       foodId: foodId,
@@ -130,6 +161,7 @@ class NutritionRepository {
       servingGramsEquivalent: servingGramsEquivalent,
       servingMillilitersEquivalent: servingMillilitersEquivalent,
       consumedAt: consumedAt,
+      isFastFood: isFastFood,
     );
   }
 }

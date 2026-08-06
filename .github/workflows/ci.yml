@@ -110,7 +110,7 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt coverage
 
       - name: Check pending migrations
         run: python manage.py makemigrations --check --dry-run
@@ -118,8 +118,23 @@ jobs:
       - name: Apply migrations on CI database
         run: python manage.py migrate --noinput
 
-      - name: Run backend tests
-        run: python manage.py test users core gamification
+      - name: Run backend tests with coverage
+        run: |
+          mkdir -p coverage
+          python -m coverage run --source=users,core,gamification,manager,notification_hub,ai_meals manage.py test users core gamification manager notification_hub ai_meals 2>&1 | tee coverage/backend-tests.log
+          python -m coverage xml -o coverage/backend-coverage.xml
+          python -m coverage report --skip-empty --show-missing | tee coverage/backend-coverage.txt
+
+      - name: Upload backend coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-artifacts
+          path: |
+            Implementation/vitamate_backend/.coverage
+            Implementation/vitamate_backend/coverage/backend-tests.log
+            Implementation/vitamate_backend/coverage/backend-coverage.xml
+            Implementation/vitamate_backend/coverage/backend-coverage.txt
 
   flutter-analyze:
     name: Flutter Analyze
@@ -168,8 +183,19 @@ jobs:
       - name: Install frontend dependencies
         run: flutter pub get
 
-      - name: Run frontend tests
-        run: flutter test
+      - name: Run frontend tests with coverage
+        run: |
+          mkdir -p coverage
+          flutter test --coverage 2>&1 | tee coverage/flutter-test.log
+
+      - name: Upload frontend coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-artifacts
+          path: |
+            Implementation/vitamate_frontend/coverage/lcov.info
+            Implementation/vitamate_frontend/coverage/flutter-test.log
 
   flutter-integration-test:
     name: Flutter Integration Test

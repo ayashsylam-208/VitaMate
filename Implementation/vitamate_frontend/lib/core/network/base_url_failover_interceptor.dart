@@ -56,7 +56,7 @@ class BaseUrlFailoverInterceptor extends Interceptor {
   }
 
   bool _shouldRetry(DioException err) {
-    if (ApiEndpoints.hasConfiguredBaseUrl) {
+    if (ApiEndpoints.baseUrlFailoverLocked) {
       return false;
     }
 

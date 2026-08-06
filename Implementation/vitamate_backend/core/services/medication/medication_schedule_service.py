@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
 from django.utils import timezone
@@ -12,7 +12,17 @@ from core.repositories.medication_repository import MedicationRepository
 
 
 class MedicationScheduleService:
-    DEFAULT_GENERATION_HOURS = 48
+    DEFAULT_GENERATION_HOURS = 72
+    LEGACY_TIMEZONE_FALLBACKS = {
+        "+03": "Asia/Damascus",
+        "+03:00": "Asia/Damascus",
+        "UTC+3": "Asia/Damascus",
+        "UTC+03:00": "Asia/Damascus",
+        "GMT+3": "Asia/Damascus",
+        "GMT+03:00": "Asia/Damascus",
+        "EEST": "Asia/Damascus",
+        "Syria Standard Time": "Asia/Damascus",
+    }
 
     @staticmethod
     def _as_time(value) -> time:
@@ -154,12 +164,24 @@ class MedicationScheduleService:
         target_date: date,
         time_of_day: time,
     ) -> datetime:
-        try:
-            tzinfo = ZoneInfo(medication.timezone or "UTC")
-        except Exception:
-            tzinfo = timezone.get_current_timezone()
+        tzinfo = cls._timezone_for_medication(medication)
         local = datetime.combine(target_date, time_of_day).replace(tzinfo=tzinfo)
         return local.astimezone(timezone.get_current_timezone())
+
+    @classmethod
+    def _timezone_for_medication(cls, medication: ConditionMedication):
+        timezone_name = str(medication.timezone or "UTC").strip() or "UTC"
+        try:
+            return ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            fallback = cls.LEGACY_TIMEZONE_FALLBACKS.get(timezone_name, "UTC")
+            if fallback != timezone_name:
+                medication.timezone = fallback
+                MedicationRepository.save_medication(
+                    medication,
+                    update_fields=["timezone", "updated_at"],
+                )
+            return ZoneInfo(fallback)
 
     @staticmethod
     def _schedule_active_on_date(

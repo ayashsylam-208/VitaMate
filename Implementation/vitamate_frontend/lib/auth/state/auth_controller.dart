@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../core/config/api_endpoints.dart';
+import '../../core/notification_hub/notification_hub.dart';
 import '../../features/chronic_conditions/data/chronic_conditions_api.dart';
+import '../../features/motivation/state/motivation_experience_controller.dart';
 import '../../core/network/network_error_mapper.dart';
 import '../data/auth_api.dart';
 import '../data/auth_repository.dart';
@@ -39,6 +41,7 @@ class AuthController extends ChangeNotifier {
       if (kDebugMode) {
         debugPrint('AuthController.login: profile loaded');
       }
+      _syncNotificationHubAfterAuth();
       return true;
     } on TimeoutException {
       error = 'Sign in took too long. ${ApiEndpoints.connectionHint()}';
@@ -94,8 +97,10 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    MotivationExperienceController.instance.resetPresentation();
     await _repo.logout();
     ChronicConditionsApi.invalidateOverviewCache();
+    await NotificationHubBootstrapCoordinator.instance.onLogout();
     me = null;
     notifyListeners();
   }
@@ -125,6 +130,7 @@ class AuthController extends ChangeNotifier {
 
     try {
       me = await _repo.getMe();
+      _syncNotificationHubAfterAuth();
     } catch (e) {
       error = NetworkErrorMapper.toMessage(
         e,
@@ -134,5 +140,21 @@ class AuthController extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  void _syncNotificationHubAfterAuth() {
+    final hub = NotificationHubController.instance;
+    if (!hub.isStarted) {
+      return;
+    }
+    unawaited(
+      NotificationHubBootstrapCoordinator.instance.onAuthenticated().catchError(
+        (Object e) {
+          if (kDebugMode) {
+            debugPrint('AuthController: notification hub sync skipped: $e');
+          }
+        },
+      ),
+    );
   }
 }

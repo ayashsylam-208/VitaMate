@@ -1,6 +1,5 @@
-from datetime import date
-
 from core.models import MealLog
+from django.utils import timezone
 
 
 class NutritionLogRepository:
@@ -17,10 +16,11 @@ class NutritionLogRepository:
     @staticmethod
     def get_for_user_on_date(user, log_date=None):
         if log_date is None:
-            log_date = date.today()
+            log_date = timezone.localdate()
         return (
             MealLog.objects.filter(user=user, date=log_date)
             .select_related("food", "serving_option")
+            .prefetch_related("components__food_item")
             .order_by("consumed_at", "id")
         )
 
@@ -29,6 +29,7 @@ class NutritionLogRepository:
         return (
             MealLog.objects.filter(user=user)
             .select_related("food", "serving_option")
+            .prefetch_related("components__food_item")
             .order_by("-date", "-id")
         )
 

@@ -9,7 +9,6 @@ from core.models import (
     Habit,
     MealLog,
     Medicine,
-    NotificationDispatchRecord,
     ResolvedTrackerConstraint,
     SleepLog,
     StepLog,
@@ -20,6 +19,7 @@ from core.models import (
     HealthStateComputationRun,
     HealthStateDelta,
 )
+from core.services.reference_data_bootstrap import ensure_reference_data
 from gamification.models import UserScore
 from users.services.user_profile_service import UserProfileService
 
@@ -34,6 +34,7 @@ class Command(BaseCommand):
         parser.add_argument("--password", default="Pass123!")
 
     def handle(self, *args, **options):
+        ensure_reference_data()
         scenario = options["scenario"]
         if scenario != "chronic_flow":
             raise CommandError(
@@ -102,4 +103,3 @@ class Command(BaseCommand):
         UnifiedHealthState.objects.filter(user=user).delete()
         HealthStateComputationRun.objects.filter(user=user).delete()
         HealthStateDelta.objects.filter(user=user).delete()
-        NotificationDispatchRecord.objects.filter(user=user).delete()

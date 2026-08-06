@@ -353,7 +353,6 @@ List<ProgressTrackerCard> _cardsFromLegacy(Map<String, dynamic> json) {
   final summary = _map(json['summary']);
   final hydration = _map(json['hydration']);
   final sleep = _map(json['sleep']);
-  final activity = _map(json['activity']);
   final chronic = _map(json['chronic_conditions']);
   return <ProgressTrackerCard>[
     _legacyCard(
@@ -374,19 +373,11 @@ List<ProgressTrackerCard> _cardsFromLegacy(Map<String, dynamic> json) {
     ),
     _legacyCard(
       'activity',
-      'Activity / Burn',
+      'Activity / Movement',
       _toDouble(summary['calories_burned']),
       _toDouble(summary['burn_target']),
       'kcal',
-      'Calories burned and active minutes',
-    ),
-    _legacyCard(
-      'steps',
-      'Steps',
-      _toDouble(activity['steps']),
-      _toDouble(activity['steps_target']),
-      'steps',
-      'Daily walking progress',
+      'Calories burned, active minutes, and steps',
     ),
     _legacyCard(
       'sleep',

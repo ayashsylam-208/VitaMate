@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.utils import timezone
 
 from core.services.condition_catalog_service import ConditionCatalogService
+from core.services.chronic.lipid_panel_values import LipidPanelValues
 
 
 class ConditionIndicatorService:
@@ -67,30 +68,13 @@ class ConditionIndicatorService:
                 "recorded_at": recorded_at,
             }
 
-        hdl = cls._required_float(payload.get("hdl"), field_name="hdl")
-        triglycerides = cls._required_float(payload.get("triglycerides"), field_name="triglycerides")
-        ldl = cls._required_float(payload.get("ldl"), field_name="ldl")
-        total_cholesterol = cls._required_float(
-            payload.get("total_cholesterol"),
-            field_name="total_cholesterol",
+        for field_name in ("hdl", "triglycerides", "ldl", "total_cholesterol"):
+            cls._required_float(payload.get(field_name), field_name=field_name)
+        values = LipidPanelValues.from_input(payload)
+        return values.record_fields(
+            recorded_at=recorded_at,
+            reading_context=str(payload.get("reading_context") or "followup").strip(),
         )
-        return {
-            "indicator_name": "lipid_panel",
-            "indicator_type": "lipid_panel",
-            "value": ldl,
-            "value_1": ldl,
-            "value_2": hdl,
-            "value_3": triglycerides,
-            "unit": "mg/dL",
-            "reading_context": str(payload.get("reading_context") or "followup").strip(),
-            "payload": {
-                "hdl": hdl,
-                "triglycerides": triglycerides,
-                "ldl": ldl,
-                "total_cholesterol": total_cholesterol,
-            },
-            "recorded_at": recorded_at,
-        }
 
     @classmethod
     def build_legacy_record_payload(cls, *, user_condition, payload: dict) -> dict:
@@ -125,18 +109,21 @@ class ConditionIndicatorService:
                 "recorded_at": recorded_at,
             }
         if indicator_name in {"ldl_cholesterol", "hdl_cholesterol", "triglycerides"}:
-            return {
-                "indicator_name": indicator_name,
-                "indicator_type": "lipid_panel",
-                "value": value,
-                "value_1": value if indicator_name == "ldl_cholesterol" else None,
-                "value_2": value if indicator_name == "hdl_cholesterol" else None,
-                "value_3": value if indicator_name == "triglycerides" else None,
-                "unit": str(payload.get("unit") or "mg/dL"),
-                "reading_context": "followup",
-                "payload": {indicator_name: value},
-                "recorded_at": recorded_at,
-            }
+            values = LipidPanelValues.from_legacy_metric(
+                metric_name=indicator_name,
+                value=value,
+            )
+            record_payload = values.record_fields(
+                recorded_at=recorded_at,
+                reading_context="followup",
+            )
+            record_payload.update(
+                indicator_name=indicator_name,
+                value=value,
+                unit=str(payload.get("unit") or "mg/dL"),
+                payload={indicator_name: value},
+            )
+            return record_payload
         return {
             "indicator_name": indicator_name,
             "indicator_type": indicator_name,
@@ -198,14 +185,8 @@ class ConditionIndicatorService:
             return cls._optional_float(record.value_1 or payload.get("systolic") or payload.get(metric_key))
         if metric_key == "blood_pressure_diastolic" and record.indicator_type == "blood_pressure":
             return cls._optional_float(record.value_2 or payload.get("diastolic") or payload.get(metric_key))
-        if metric_key in {"ldl_cholesterol", "ldl"} and record.indicator_type == "lipid_panel":
-            return cls._optional_float(payload.get("ldl") or record.value_1 or payload.get(metric_key))
-        if metric_key in {"hdl_cholesterol", "hdl"} and record.indicator_type == "lipid_panel":
-            return cls._optional_float(payload.get("hdl") or record.value_2 or payload.get(metric_key))
-        if metric_key == "triglycerides" and record.indicator_type == "lipid_panel":
-            return cls._optional_float(payload.get("triglycerides") or record.value_3 or payload.get(metric_key))
-        if metric_key == "total_cholesterol" and record.indicator_type == "lipid_panel":
-            return cls._optional_float(payload.get("total_cholesterol"))
+        if record.indicator_type == "lipid_panel":
+            return LipidPanelValues.from_measurement(record).metric_value(metric_key)
         if record.indicator_name == metric_key:
             return cls._optional_float(record.value_1 or record.value)
         return None

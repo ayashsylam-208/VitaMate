@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -76,6 +77,13 @@ class MedicationPlanWriteSerializer(serializers.Serializer):
             raise serializers.ValidationError({"end_date": "End date must be after start date."})
         if attrs.get("source_type") == ConditionMedication.SOURCE_CONDITION and not attrs.get("user_condition_id"):
             raise serializers.ValidationError({"user_condition_id": "Condition source requires user_condition_id."})
+        timezone_name = str(attrs.get("timezone") or getattr(self.instance, "timezone", "") or "UTC").strip()
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise serializers.ValidationError(
+                {"timezone": "Use a valid IANA timezone, for example Asia/Damascus."}
+            ) from exc
         return attrs
 
 
@@ -90,6 +98,22 @@ class DoseSkippedActionSerializer(serializers.Serializer):
 
 class DoseSnoozeActionSerializer(serializers.Serializer):
     snoozed_until = serializers.DateTimeField()
+
+
+class PrnDoseActionSerializer(serializers.Serializer):
+    taken_at = serializers.DateTimeField(required=False)
+    dose_taken_amount = serializers.DecimalField(max_digits=8, decimal_places=2, required=False, allow_null=True)
+    notes = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+
+class MedicationHistoryQuerySerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=["all", "taken", "missed", "skipped", "snoozed", "pending", "overdue"],
+        required=False,
+        default="all",
+    )
+    page = serializers.IntegerField(required=False, min_value=1, default=1)
+    page_size = serializers.IntegerField(required=False, min_value=1, max_value=100, default=30)
 
 
 class MedicationAdherenceSummarySerializer(serializers.Serializer):
@@ -170,8 +194,20 @@ def serialize_dose_log(log: ConditionMedicationLog) -> dict:
         "dose_amount": medication.dosage_amount if medication else "",
         "dose_unit": medication.dosage_unit if medication else "",
         "form": medication.form if medication else "",
+        "meal_relation": (
+            log.schedule.meal_relation
+            if getattr(log, "schedule", None)
+            else ConditionMedicationSchedule.MEAL_NONE
+        ),
         "notes": log.notes or log.skip_reason,
         "points_applied": log.points_applied,
+        "scheduled_date": log.scheduled_date.isoformat() if log.scheduled_date else None,
+        "is_prn": bool(medication.is_prn) if medication else False,
+        "audit": {
+            "action_source": log.action_source,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "updated_at": log.updated_at.isoformat() if log.updated_at else None,
+        },
     }
 
 

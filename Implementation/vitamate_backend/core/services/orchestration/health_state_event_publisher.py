@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import uuid
 
 from django.db import transaction
 
@@ -18,6 +19,12 @@ class HealthStateEventPublisher:
     ) -> None:
         user_id = getattr(user, "id", user)
         payload_copy = deepcopy(payload or {})
+        correlation_id = str(payload_copy.get("correlation_id") or uuid.uuid4().hex)
+        payload_copy["correlation_id"] = correlation_id
+        payload_copy.setdefault(
+            "idempotency_key",
+            f"health-state:{user_id}:{trigger_type}:{correlation_id}",
+        )
 
         def _callback():
             dispatch_health_state_event(

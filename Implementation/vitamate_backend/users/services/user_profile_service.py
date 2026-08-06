@@ -12,6 +12,7 @@ class UserProfileService:
         "gender": "M",
         "height": 170,
         "weight": 70,
+        "gender_confirmed": False,
     }
 
     @staticmethod
@@ -50,11 +51,20 @@ class UserProfileService:
         # Update profile fields from any supported PATCH payload.
         fields_to_update = [
             "birth_date",
+            "gender",
+            "gender_confirmed",
+            "pending_email",
+            "email_verified",
+            "avatar_url",
+            "preferred_language",
+            "region",
             "weight",
             "height",
             "activity_level",
             "goal",
             "daily_step_goal",
+            "daily_water_target",
+            "manual_daily_water_target",
             "recommended_sleep_hours",
             "target_wake_time",
             "target_bed_time",
@@ -68,10 +78,13 @@ class UserProfileService:
             "inactive_reminder_hours",
             "enable_water_reminders",
             "water_reminder_interval_minutes",
+            "enable_motivation_reminders",
         ]
         for field_name in fields_to_update:
             if field_name in profile_data:
                 setattr(profile, field_name, profile_data[field_name])
+        if "gender" in profile_data:
+            profile.gender_confirmed = True
 
         # Recalculate derived metrics and persist.
         UserProfileService.recalculate_profile(profile)

@@ -7,7 +7,6 @@ from core.models.constraints import (
 from core.models.health_state import (
     HealthStateComputationRun,
     HealthStateDelta,
-    NotificationDispatchRecord,
     UnifiedHealthState,
 )
 from core.models.chronic import (
@@ -29,15 +28,18 @@ from core.models.chronic import (
 from core.models.legacy import Habit, HabitLog, Medicine, MedicineLog
 from core.models.nutrition import (
     FoodCategory,
+    FavoriteFood,
     FoodItem,
     FoodItemAlias,
     ItemNutrientValue,
     MealLog,
+    MealLogComponent,
     Nutrient,
     NutritionFacts,
     NutritionServingOption,
     WaterLog,
 )
+from core.models.integration_outbox import IntegrationOutboxEvent
 from core.models.tracking import (
     ActivityLog,
     ActivitySession,
@@ -59,6 +61,7 @@ from core.models.unhealthy_habits import (
 __all__ = [
     "normalize_food_search_text",
     "FoodCategory",
+    "FavoriteFood",
     "FoodItem",
     "FoodItemAlias",
     "NutritionFacts",
@@ -66,7 +69,9 @@ __all__ = [
     "ItemNutrientValue",
     "NutritionServingOption",
     "MealLog",
+    "MealLogComponent",
     "WaterLog",
+    "IntegrationOutboxEvent",
     "Exercise",
     "ActivityLog",
     "ActivitySession",
@@ -98,7 +103,6 @@ __all__ = [
     "UnifiedHealthState",
     "HealthStateDelta",
     "HealthStateComputationRun",
-    "NotificationDispatchRecord",
     "UnhealthyHabit",
     "UnhealthyHabitBaseline",
     "UnhealthyHabitPlan",

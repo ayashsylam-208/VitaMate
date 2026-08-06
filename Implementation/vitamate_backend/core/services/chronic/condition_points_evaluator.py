@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from django.utils import timezone
+
 from core.models import (
     ConditionDailyEvaluation,
     HealthIndicatorRecord,
@@ -9,6 +11,7 @@ from core.models import (
     ConditionPointsAudit,
     UserCondition,
 )
+from gamification.models import PointsTransaction
 from gamification.services.points_service import PointsService
 
 
@@ -31,11 +34,29 @@ class ConditionPointsEvaluator:
     READING_CRITICAL_REWARD = 1
 
     @staticmethod
-    def _apply_points(*, user, points_delta: int) -> None:
-        if points_delta > 0:
-            PointsService.add_points(user, points_delta)
-        elif points_delta < 0:
-            PointsService.deduct_points(user, abs(points_delta))
+    def _apply_points(
+        *,
+        user,
+        points_delta: int,
+        source_id: str,
+        rule_code: str,
+        event_date: date | None = None,
+    ) -> None:
+        if points_delta == 0:
+            return
+        safe_date = event_date or timezone.localdate()
+        PointsService.apply_delta(
+            user,
+            points=points_delta,
+            rule_code=rule_code,
+            source_type=PointsTransaction.SOURCE_CHRONIC,
+            source_id=source_id,
+            event_date=safe_date,
+            idempotency_key=(
+                f"chronic:{user.id}:{rule_code}:{source_id}:"
+                f"{safe_date.isoformat()}:{points_delta}"
+            ),
+        )
 
     @staticmethod
     def _audit(
@@ -85,7 +106,13 @@ class ConditionPointsEvaluator:
         if points_diff == 0:
             return 0
 
-        cls._apply_points(user=user_condition.user, points_delta=points_diff)
+        cls._apply_points(
+            user=user_condition.user,
+            points_delta=points_diff,
+            source_id=f"log:{log.id}",
+            rule_code=f"CHRONIC_MEDICATION_{str(log.status).upper()}",
+            event_date=log.scheduled_date,
+        )
         log.points_applied = desired_points
         log.save(update_fields=["points_applied"])
 
@@ -129,7 +156,13 @@ class ConditionPointsEvaluator:
         )
         points_diff = desired_points_delta - evaluation.points_delta
         if points_diff:
-            cls._apply_points(user=user_condition.user, points_delta=points_diff)
+            cls._apply_points(
+                user=user_condition.user,
+                points_delta=points_diff,
+                source_id=f"evaluation:{evaluation.id}",
+                rule_code=f"CHRONIC_RESTRICTION_{desired_points_delta}",
+                event_date=evaluation.evaluation_date,
+            )
             cls._audit(
                 user_condition=user_condition,
                 event_type=ConditionPointsAudit.EVENT_RESTRICTION,
@@ -209,7 +242,13 @@ class ConditionPointsEvaluator:
             ).exists()
             if already_awarded:
                 continue
-            cls._apply_points(user=user_condition.user, points_delta=reward)
+            cls._apply_points(
+                user=user_condition.user,
+                points_delta=reward,
+                source_id=f"streak:{milestone_key}:{on_date.isoformat()}",
+                rule_code=f"CHRONIC_STREAK_{milestone_key.upper()}",
+                event_date=on_date,
+            )
             cls._audit(
                 user_condition=user_condition,
                 event_type=ConditionPointsAudit.EVENT_STREAK,
@@ -239,7 +278,13 @@ class ConditionPointsEvaluator:
     ) -> int:
         risk_level = str(evaluation.get("risk_level") or "").strip().lower()
         desired_points = cls.READING_CRITICAL_REWARD if risk_level == "critical" else cls.READING_REWARD
-        cls._apply_points(user=user_condition.user, points_delta=desired_points)
+        cls._apply_points(
+            user=user_condition.user,
+            points_delta=desired_points,
+            source_id=f"reading:{record.id}",
+            rule_code="CHRONIC_READING_LOGGED",
+            event_date=record.recorded_at.date(),
+        )
         cls._audit(
             user_condition=user_condition,
             event_type=ConditionPointsAudit.EVENT_SYSTEM,

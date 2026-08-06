@@ -25,7 +25,7 @@ class _FakeWaterApi extends WaterApi {
   int _nextId = 10;
 
   @override
-  Future<List<WaterLog>> getTodayLogs() async {
+  Future<List<WaterLog>> getTodayLogs({CancelToken? cancelToken}) async {
     if (failReads) {
       throw Exception('read failed');
     }
@@ -33,7 +33,10 @@ class _FakeWaterApi extends WaterApi {
   }
 
   @override
-  Future<HydrationSummary> getSummary({CancelToken? cancelToken}) async {
+  Future<HydrationSummary> getSummary({
+    DateTime? date,
+    CancelToken? cancelToken,
+  }) async {
     if (failReads) {
       throw Exception('read failed');
     }
@@ -45,10 +48,20 @@ class _FakeWaterApi extends WaterApi {
               sum + (item.hydrationMl > 0 ? item.hydrationMl : item.amountMl),
         );
     return HydrationSummary(
-      targetMl: 2400,
-      consumedMl: consumedMl,
+      date: DateTime(2026, 4, 16),
+      consumedVolumeMl: consumedMl,
+      hydrationContributionMl: consumedMl,
+      waterContributionMl: consumedMl,
+      otherDrinksContributionMl: 0,
+      baseTargetMl: 2400,
+      adjustedTargetMl: 2400,
+      activeTargetMl: 2400,
       remainingMl: (2400 - consumedMl).clamp(0, 2400),
       progressPercent: ((consumedMl / 2400) * 100).round(),
+      goalCompleted: consumedMl >= 2400,
+      lastDrinkAt: logs.isEmpty ? null : logs.first.consumedAt,
+      pointsEarnedToday: logs.length * 3,
+      adjustmentReasons: const <String>[],
     );
   }
 
@@ -73,35 +86,36 @@ class _FakeWaterApi extends WaterApi {
   }
 
   @override
-  Future<void> addCatalogBeverage({
+  Future<WaterLog> addCatalogBeverage({
     required int foodItemId,
     required int amountMl,
+    DateTime? consumedAt,
   }) async {
     final item = catalog.firstWhere((entry) => entry.id == foodItemId);
     final factor = amountMl / 100.0;
-    logs = [
-      WaterLog(
-        id: _nextId++,
-        amountLiter: amountMl / 1000.0,
-        hydrationMl: amountMl,
-        beverageType: 'coffee',
-        beverageName: item.name,
-        foodItemId: item.id,
-        foodItemName: item.name,
-        linkedMealLogId: 99,
-        nutritionPreview: WaterNutritionPreview(
-          calories: item.calories100g * factor,
-          carbs: item.carbs100g * factor,
-          sugars: item.sugars100g * factor,
-          caffeine: item.caffeineMg * factor,
-        ),
-        date: DateTime(2026, 4, 16),
+    final log = WaterLog(
+      id: _nextId++,
+      amountLiter: amountMl / 1000.0,
+      hydrationMl: amountMl,
+      beverageType: 'coffee',
+      beverageName: item.name,
+      foodItemId: item.id,
+      foodItemName: item.name,
+      linkedMealLogId: 99,
+      nutritionPreview: WaterNutritionPreview(
+        calories: item.calories100g * factor,
+        carbs: item.carbs100g * factor,
+        sugars: item.sugars100g * factor,
+        caffeine: item.caffeineMg * factor,
       ),
-      ...logs,
-    ];
+      date: DateTime(2026, 4, 16),
+      consumedAt: consumedAt ?? DateTime(2026, 4, 16, 12),
+    );
+    logs = [log, ...logs];
     if (failReadsAfterWrite) {
       failReads = true;
     }
+    return log;
   }
 }
 
@@ -169,6 +183,7 @@ void main() {
             beverageType: 'water',
             beverageName: 'Water',
             date: DateTime(2026, 4, 16),
+            consumedAt: DateTime(2026, 4, 16, 9),
           ),
         ],
         catalog: [coffee],
@@ -178,12 +193,12 @@ void main() {
         diabetesSugarGuardService: const _NullDiabetesSugarGuardService(),
       );
 
-      await controller.load(targetMlFromBackend: 2400);
+      await controller.load();
       await Future<void>.delayed(Duration.zero);
       await controller.searchBeverages('coffee');
 
       expect(controller.consumedMl, 250);
-      expect(controller.waterPointsToday, 5);
+      expect(controller.waterPointsToday, 3);
       expect(controller.beverageCatalog, hasLength(1));
 
       final saved = await controller.addCatalogBeverage(
@@ -194,6 +209,7 @@ void main() {
       expect(saved, isTrue);
       expect(controller.logs, hasLength(2));
       expect(controller.consumedMl, 450);
+      expect(controller.waterPointsToday, 6);
       expect(controller.logs.first.foodItemName, 'Cold Brew');
       expect(controller.logs.first.nutritionPreview?.caffeine, 56);
     },
@@ -222,6 +238,7 @@ void main() {
           beverageType: 'water',
           beverageName: 'Water',
           date: DateTime(2026, 4, 16),
+          consumedAt: DateTime(2026, 4, 16, 9),
         ),
       ],
       catalog: [tea],
@@ -232,7 +249,7 @@ void main() {
       diabetesSugarGuardService: const _NullDiabetesSugarGuardService(),
     );
 
-    await controller.load(targetMlFromBackend: 2400);
+    await controller.load();
     await Future<void>.delayed(Duration.zero);
     final saved = await controller.addCatalogBeverage(
       foodItemId: tea.id,
@@ -245,7 +262,7 @@ void main() {
   });
 
   test(
-    'water controller uses water logs when hydration summary snapshot is stale',
+    'water controller uses backend summary instead of local log fallback',
     () async {
       final api = _FakeWaterApi(
         logs: [
@@ -256,6 +273,7 @@ void main() {
             beverageType: 'water',
             beverageName: 'Water',
             date: DateTime(2026, 5, 5),
+            consumedAt: DateTime(2026, 5, 5, 9),
           ),
         ],
         catalog: const [],
@@ -266,13 +284,13 @@ void main() {
         diabetesSugarGuardService: const _NullDiabetesSugarGuardService(),
       );
 
-      await controller.load(targetMlFromBackend: 2300);
+      await controller.load();
       await Future<void>.delayed(Duration.zero);
 
       expect(controller.logs, hasLength(1));
-      expect(controller.consumedMl, 500);
-      expect(controller.remainingMl, 1800);
-      expect(controller.progress, closeTo(500 / 2300, 0.001));
+      expect(controller.consumedMl, 0);
+      expect(controller.remainingMl, 2400);
+      expect(controller.progress, 0);
     },
   );
 
@@ -323,7 +341,7 @@ void main() {
         },
       );
 
-      await controller.load(targetMlFromBackend: 2400);
+      await controller.load();
       await Future<void>.delayed(Duration.zero);
       await controller.searchBeverages('orange');
       final saved = await controller.addCatalogBeverage(

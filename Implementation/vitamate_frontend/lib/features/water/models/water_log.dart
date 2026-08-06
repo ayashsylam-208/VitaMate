@@ -38,7 +38,9 @@ class WaterLog {
     this.foodItemName = '',
     this.linkedMealLogId,
     this.nutritionPreview,
+    this.linkedHabitFeedbackMessage = '',
     required this.date,
+    required this.consumedAt,
   });
 
   final int id;
@@ -50,7 +52,9 @@ class WaterLog {
   final String foodItemName;
   final int? linkedMealLogId;
   final WaterNutritionPreview? nutritionPreview;
+  final String linkedHabitFeedbackMessage;
   final DateTime date;
+  final DateTime consumedAt;
 
   int get amountMl => (amountLiter * 1000).round();
 
@@ -94,9 +98,38 @@ class WaterLog {
               Map<String, dynamic>.from(json['nutrition_preview'] as Map),
             )
           : null,
+      linkedHabitFeedbackMessage: _linkedHabitFeedbackMessage(json),
       date: DateTime.parse(json['date'] as String),
+      consumedAt: _parseConsumedAt(json),
     );
   }
+}
+
+DateTime _parseConsumedAt(Map<String, dynamic> json) {
+  final raw = json['consumed_at']?.toString();
+  if (raw != null && raw.isNotEmpty) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      return parsed.toLocal();
+    }
+  }
+  return DateTime.parse(json['date'] as String);
+}
+
+String _linkedHabitFeedbackMessage(Map<String, dynamic> json) {
+  final projection = json['linked_habit_projection'];
+  if (projection is! Map) {
+    return '';
+  }
+  final evaluation = projection['evaluation'];
+  if (evaluation is! Map) {
+    return '';
+  }
+  final feedback = evaluation['feedback'];
+  if (feedback is! Map) {
+    return '';
+  }
+  return (feedback['message'] ?? '').toString().trim();
 }
 
 int? _toNullableInt(dynamic value) {

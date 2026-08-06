@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from django.db.models import Q
+from django.utils import timezone
+
 from core.models import ResolvedTrackerConstraint
 
 
@@ -21,10 +24,15 @@ class ConstraintReadService:
         user,
         tracker_type: str | None = None,
         metric_keys: list[str] | tuple[str, ...] | None = None,
+        at_time=None,
     ):
+        at_time = at_time or timezone.now()
         query = ResolvedTrackerConstraint.objects.filter(
             user=user,
             status=ResolvedTrackerConstraint.STATUS_ACTIVE,
+            effective_from__lte=at_time,
+        ).filter(
+            Q(effective_to__isnull=True) | Q(effective_to__gt=at_time),
         ).select_related(
             "source_condition",
             "source_condition__condition_type",
@@ -81,12 +89,14 @@ class ConstraintReadService:
         tracker_type: str,
         metric_key: str,
         fallback: float | int | None = None,
+        at_time=None,
     ) -> float | int | None:
         constraints = list(
             cls.active_for_user(
                 user=user,
                 tracker_type=tracker_type,
                 metric_keys=[metric_key],
+                at_time=at_time,
             )
         )
         return cls.effective_numeric_value_from_constraints(

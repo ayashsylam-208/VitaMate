@@ -23,6 +23,7 @@ class FoodSearchReadRepository:
         limit=None,
         include_inactive: bool = False,
         own_only: bool = False,
+        offset=None,
     ):
         queryset = NutritionCatalogRepository.accessible_to_user(
             user=user,
@@ -56,8 +57,11 @@ class FoodSearchReadRepository:
             )
 
         parsed_limit = cls._parse_limit(limit)
+        parsed_offset = cls._parse_offset(offset)
         if parsed_limit is not None:
-            queryset = queryset[:parsed_limit]
+            queryset = queryset[parsed_offset : parsed_offset + parsed_limit]
+        elif parsed_offset:
+            queryset = queryset[parsed_offset:]
         return queryset
 
     @classmethod
@@ -212,3 +216,13 @@ class FoodSearchReadRepository:
         if parsed <= 0:
             return None
         return min(parsed, cls.MAX_LIMIT)
+
+    @staticmethod
+    def _parse_offset(value):
+        if value in (None, ""):
+            return 0
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(parsed, 0)

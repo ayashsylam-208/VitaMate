@@ -8,8 +8,6 @@ from django.utils import timezone
 
 from rest_framework.exceptions import ValidationError
 
-from users.models import UserProfile
-
 from core.models import (
     FoodItem,
     MealLog,
@@ -23,7 +21,6 @@ from core.repositories.meal_log_repository import MealLogRepository
 from core.services.food_search_service import FoodSearchService
 from core.services.orchestration.health_state_event_publisher import HealthStateEventPublisher
 from core.services.orchestration.tracker_dependency_map import HealthStateTriggers
-from users.repositories.user_profile_repository import UserProfileRepository
 from gamification.services.points_service import PointsService
 
 
@@ -183,86 +180,52 @@ class NutritionLoggingService:
         source=MealLog.SOURCE_MANUAL,
         sync_hydration=True,
         publish_event=True,
+        origin_domain=MealLog.ORIGIN_NUTRITION,
+        origin_record_id="",
+        correlation_id="",
+        source_type=MealLog.SOURCE_TYPE_DIRECT,
+        source_ref="",
+        reward_owner_domain="nutrition",
+        is_fast_food=False,
+        quality_tags=None,
+        finalization_key="",
     ):
-        consumed_at_provided = consumed_at is not None
-        amount = NutritionLoggingService._resolve_consumption_amount(
-            food=food,
-            quantity_grams=quantity_grams,
-            quantity=quantity,
-            unit=unit,
-            serving_option=serving_option,
-            custom_serving_grams=custom_serving_grams,
-            custom_serving_milliliters=custom_serving_milliliters,
+        from core.services.nutrition.meal_finalization_service import (
+            MealFinalizationService,
         )
-        snapshot = NutritionLoggingService._calculate_snapshot(food=food, amount=amount)
-        consumed_at = consumed_at or timezone.now()
-        effective_serving_label = ""
-        if amount.unit == "serving":
-            effective_serving_label = (
-                str(serving_label_snapshot or "").strip()
-                or getattr(serving_option, "name", "").strip()
-                or str(food.serving_label or "").strip()
-                or "Serving"
-            )
 
-        log = MealLogRepository.create_for_user(
+        return MealFinalizationService.finalize(
             user=user,
-            food=food,
             meal_type=meal_type,
-            quantity_grams=amount.grams if amount.grams is not None else quantity_grams or 0,
-            quantity=amount.quantity,
-            unit=amount.unit,
-            grams_consumed=amount.grams,
-            milliliters_consumed=amount.milliliters,
-            servings_consumed=amount.servings,
-            serving_option=serving_option,
-            serving_label_snapshot=effective_serving_label,
+            components=[
+                {
+                    "food": food,
+                    "quantity_grams": quantity_grams,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "serving_option": serving_option,
+                    "serving_label": serving_label_snapshot,
+                    "custom_serving_grams": custom_serving_grams,
+                    "custom_serving_milliliters": custom_serving_milliliters,
+                    "is_user_confirmed": True,
+                }
+            ],
+            display_name=food.name,
             consumed_at=consumed_at,
-            notes=notes or "",
-            source=source or MealLog.SOURCE_MANUAL,
-            **snapshot,
+            notes=notes,
+            source=source,
+            sync_hydration=sync_hydration,
+            publish_event=publish_event,
+            origin_domain=origin_domain,
+            origin_record_id=origin_record_id,
+            correlation_id=correlation_id,
+            source_type=source_type,
+            source_ref=source_ref,
+            reward_owner_domain=reward_owner_domain,
+            is_fast_food=is_fast_food,
+            quality_tags=quality_tags,
+            finalization_key=finalization_key,
         )
-        if consumed_at:
-            log.date = consumed_at.date() if consumed_at_provided else date.today()
-            MealLogRepository.save(log, update_fields=["date"])
-
-        if sync_hydration:
-            NutritionLoggingService._sync_hydration_log_for_meal(log)
-
-        meals = MealLogRepository.get_for_user_on_date(user, log.date)
-        calories_in = sum(m.total_calories for m in meals)
-
-        try:
-            profile = UserProfileRepository.get_for_user(user)
-        except UserProfile.DoesNotExist:
-            profile = None
-
-        if profile is not None:
-            target = getattr(profile, "daily_calorie_target", None)
-            if target:
-                from core.services.constraints import ConstraintReadService
-
-                target = ConstraintReadService.effective_numeric_value(
-                    user=user,
-                    tracker_type="nutrition",
-                    metric_key="calories_kcal",
-                    fallback=target,
-                )
-            if target:
-                PointsService.apply_meal_points(user, calories_in, target)
-
-        if publish_event:
-            HealthStateEventPublisher.publish_on_commit(
-                user=user,
-                trigger_type=HealthStateTriggers.MEAL_LOGGED,
-                payload={
-                    "trigger_reference": str(log.id),
-                    "source_id": log.id,
-                    "event_dates": [log.date],
-                },
-            )
-
-        return log
 
     @staticmethod
     def summarize_meal_logs(meals) -> dict[str, float]:
@@ -352,52 +315,111 @@ class NutritionLoggingService:
         source=None,
         sync_hydration=True,
         publish_event=True,
+        origin_domain=None,
+        origin_record_id=None,
+        correlation_id=None,
+        source_type=None,
+        source_ref=None,
+        reward_owner_domain=None,
+        is_fast_food=None,
+        quality_tags=None,
     ):
         previous_date = meal_log.date
-        consumed_at_provided = consumed_at is not None
-        amount = NutritionLoggingService._resolve_consumption_amount(
-            food=food,
-            quantity_grams=quantity_grams,
-            quantity=quantity,
-            unit=unit,
-            serving_option=serving_option,
-            custom_serving_grams=custom_serving_grams,
-            custom_serving_milliliters=custom_serving_milliliters,
-        )
-        snapshot = NutritionLoggingService._calculate_snapshot(food=food, amount=amount)
+        amount = None
+        snapshot = None
+        if not meal_log.is_composite:
+            amount = NutritionLoggingService._resolve_consumption_amount(
+                food=food,
+                quantity_grams=quantity_grams,
+                quantity=quantity,
+                unit=unit,
+                serving_option=serving_option,
+                custom_serving_grams=custom_serving_grams,
+                custom_serving_milliliters=custom_serving_milliliters,
+            )
+            snapshot = NutritionLoggingService._calculate_snapshot(food=food, amount=amount)
         consumed_at = consumed_at or meal_log.consumed_at or timezone.now()
 
-        meal_log.food = food
         meal_log.meal_type = meal_type or meal_log.meal_type
-        meal_log.quantity_grams = amount.grams if amount.grams is not None else quantity_grams or 0
-        meal_log.quantity = amount.quantity
-        meal_log.unit = amount.unit
-        meal_log.grams_consumed = amount.grams
-        meal_log.milliliters_consumed = amount.milliliters
-        meal_log.servings_consumed = amount.servings
-        meal_log.serving_option = serving_option
-        meal_log.serving_label_snapshot = (
-            str(serving_label_snapshot or "").strip()
-            if amount.unit == "serving"
-            else ""
-        ) or (
-            getattr(serving_option, "name", "").strip()
-            if amount.unit == "serving"
-            else ""
-        ) or (
-            str(food.serving_label or "").strip()
-            if amount.unit == "serving"
-            else ""
-        )
+        if amount is not None:
+            meal_log.food = food
+            meal_log.display_name = food.name
+            meal_log.quantity_grams = (
+                amount.grams if amount.grams is not None else quantity_grams or 0
+            )
+            meal_log.quantity = amount.quantity
+            meal_log.unit = amount.unit
+            meal_log.grams_consumed = amount.grams
+            meal_log.milliliters_consumed = amount.milliliters
+            meal_log.servings_consumed = amount.servings
+            meal_log.serving_option = serving_option
+            meal_log.serving_label_snapshot = (
+                str(serving_label_snapshot or "").strip()
+                if amount.unit == "serving"
+                else ""
+            ) or (
+                getattr(serving_option, "name", "").strip()
+                if amount.unit == "serving"
+                else ""
+            ) or (
+                str(food.serving_label or "").strip()
+                if amount.unit == "serving"
+                else ""
+            )
         meal_log.consumed_at = consumed_at
         meal_log.notes = notes if notes is not None else meal_log.notes
         meal_log.source = source or meal_log.source or MealLog.SOURCE_MANUAL
-        meal_log.date = consumed_at.date() if consumed_at_provided else previous_date
-        for field, value in snapshot.items():
-            setattr(meal_log, field, value)
+        if origin_domain is not None:
+            meal_log.origin_domain = origin_domain
+        if origin_record_id is not None:
+            meal_log.origin_record_id = str(origin_record_id or "")
+        if correlation_id is not None:
+            meal_log.correlation_id = str(correlation_id or "")
+        if source_type is not None:
+            meal_log.source_type = source_type
+        if source_ref is not None:
+            meal_log.source_ref = str(source_ref or "")
+        if reward_owner_domain is not None:
+            meal_log.reward_owner_domain = reward_owner_domain
+        if is_fast_food is not None:
+            meal_log.is_fast_food = bool(is_fast_food)
+        if quality_tags is not None:
+            meal_log.quality_tags = list(quality_tags or [])
+        meal_log.date = timezone.localdate(consumed_at) if consumed_at is not None else previous_date
+        if snapshot is not None:
+            for field, value in snapshot.items():
+                setattr(meal_log, field, value)
         meal_log = MealLogRepository.save(meal_log)
+        if amount is not None and snapshot is not None:
+            from core.services.nutrition.meal_finalization_service import (
+                MealFinalizationService,
+            )
+
+            MealFinalizationService.sync_single_component(
+                meal_log=meal_log,
+                food=food,
+                amount=amount,
+                snapshot=snapshot,
+            )
         if sync_hydration:
             NutritionLoggingService._sync_hydration_log_for_meal(meal_log)
+
+        from core.services.habits.habit_projection_service import TrackerToHabitProjectionService
+
+        TrackerToHabitProjectionService.sync_from_meal(meal_log=meal_log)
+
+        from gamification.services.motivation_service import MotivationService
+
+        for affected_date in sorted({previous_date, meal_log.date}):
+            if meal_log.reward_owner_domain == "nutrition":
+                PointsService.sync_nutrition_day_points(
+                    meal_log.user,
+                    event_date=affected_date,
+                )
+            MotivationService.refresh_daily(
+                user=meal_log.user,
+                target_date=affected_date,
+            )
         if publish_event:
             HealthStateEventPublisher.publish_on_commit(
                 user=meal_log.user,
@@ -411,14 +433,36 @@ class NutritionLoggingService:
         return meal_log
 
     @staticmethod
+    @transaction.atomic
     def delete_meal_log(meal_log, *, publish_event=True):
         user = meal_log.user
         meal_id = meal_log.id
         event_date = meal_log.date
         linked_water_log = HydrationRepository.get_for_linked_meal_log(meal_log)
+        from core.services.habits.habit_projection_service import TrackerToHabitProjectionService
+
+        TrackerToHabitProjectionService.delete_for_meal(meal_log=meal_log)
         if linked_water_log is not None:
+            PointsService.reverse_points_for_source(
+                user=user,
+                source_type="hydration",
+                source_id=linked_water_log.id,
+                reason="Reversed hydration points after deleting linked drink log.",
+                event_date=linked_water_log.date,
+            )
             HydrationRepository.delete(linked_water_log)
         MealLogRepository.delete(meal_log)
+        PointsService.sync_nutrition_day_points(
+            user,
+            event_date=event_date,
+        )
+
+        from gamification.services.motivation_service import MotivationService
+
+        MotivationService.refresh_daily(
+            user=user,
+            target_date=event_date,
+        )
         if publish_event:
             HealthStateEventPublisher.publish_on_commit(
                 user=user,
@@ -560,17 +604,52 @@ class NutritionLoggingService:
         linked_water_log = HydrationRepository.get_for_linked_meal_log(meal_log)
         if not NutritionLoggingService._should_sync_meal_to_hydration(meal_log):
             if linked_water_log is not None:
+                PointsService.reverse_points_for_source(
+                    user=meal_log.user,
+                    source_type="hydration",
+                    source_id=linked_water_log.id,
+                    reason="Reversed hydration points after drink log stopped syncing to hydration.",
+                    event_date=linked_water_log.date,
+                )
                 HydrationRepository.delete(linked_water_log)
             return None
 
         beverage_volume_liters = NutritionLoggingService._meal_volume_liters(meal_log)
         if beverage_volume_liters <= 0:
             if linked_water_log is not None:
+                PointsService.reverse_points_for_source(
+                    user=meal_log.user,
+                    source_type="hydration",
+                    source_id=linked_water_log.id,
+                    reason="Reversed hydration points after drink volume became zero.",
+                    event_date=linked_water_log.date,
+                )
                 HydrationRepository.delete(linked_water_log)
             return None
 
         beverage_type = NutritionLoggingService._beverage_choice_for_food(meal_log.food)
         beverage_name = meal_log.food.name.strip() or "Water"
+        source_ref = (
+            meal_log.source_ref
+            if meal_log.source_type == MealLog.SOURCE_TYPE_HABIT_PROJECTION and meal_log.source_ref
+            else f"meal_log:{meal_log.id}"
+        )
+        source_type = (
+            WaterLog.SOURCE_TYPE_HABIT_PROJECTION
+            if meal_log.source_type == MealLog.SOURCE_TYPE_HABIT_PROJECTION
+            else WaterLog.SOURCE_TYPE_TRACKER_PROJECTION
+        )
+        origin_domain = meal_log.origin_domain or MealLog.ORIGIN_NUTRITION
+        origin_record_id = meal_log.origin_record_id or str(meal_log.id)
+        correlation_id = meal_log.correlation_id or f"meal-log:{meal_log.id}"
+        if meal_log.source_type == MealLog.SOURCE_TYPE_HABIT_PROJECTION:
+            reward_owner_domain = meal_log.reward_owner_domain or "habits"
+        else:
+            reward_owner_domain = "hydration"
+        caffeine_mg = float(meal_log.snapshot_caffeine_mg or 0)
+        consumed_at = meal_log.consumed_at or timezone.now()
+        if timezone.is_naive(consumed_at):
+            consumed_at = timezone.make_aware(consumed_at, timezone.get_current_timezone())
         if linked_water_log is None:
             linked_water_log = HydrationRepository.create_for_user(
                 user=meal_log.user,
@@ -580,10 +659,24 @@ class NutritionLoggingService:
                 food_item=meal_log.food,
                 drink_item=meal_log.food,
                 linked_meal_log=meal_log,
+                caffeine_mg=caffeine_mg,
+                consumed_at=consumed_at,
+                origin_domain=origin_domain,
+                origin_record_id=origin_record_id,
+                correlation_id=correlation_id,
+                source_type=source_type,
+                source_ref=source_ref,
+                reward_owner_domain=reward_owner_domain,
             )
             if linked_water_log.date != meal_log.date:
                 linked_water_log.date = meal_log.date
                 HydrationRepository.save(linked_water_log, update_fields=["date"])
+            if linked_water_log.reward_owner_domain == "hydration":
+                PointsService.award_water_points(
+                    meal_log.user,
+                    source_id=linked_water_log.id,
+                    event_date=linked_water_log.date,
+                )
             return linked_water_log
 
         linked_water_log.amount_liter = beverage_volume_liters
@@ -592,6 +685,14 @@ class NutritionLoggingService:
         linked_water_log.food_item = meal_log.food
         linked_water_log.drink_item = meal_log.food
         linked_water_log.linked_meal_log = meal_log
+        linked_water_log.caffeine_mg = caffeine_mg
+        linked_water_log.consumed_at = consumed_at
+        linked_water_log.origin_domain = origin_domain
+        linked_water_log.origin_record_id = origin_record_id
+        linked_water_log.correlation_id = correlation_id
+        linked_water_log.source_type = source_type
+        linked_water_log.source_ref = source_ref
+        linked_water_log.reward_owner_domain = reward_owner_domain
         linked_water_log.date = meal_log.date
         return HydrationRepository.save(
             linked_water_log,
@@ -602,6 +703,14 @@ class NutritionLoggingService:
                 "food_item",
                 "drink_item",
                 "linked_meal_log",
+                "caffeine_mg",
+                "consumed_at",
+                "origin_domain",
+                "origin_record_id",
+                "correlation_id",
+                "source_type",
+                "source_ref",
+                "reward_owner_domain",
                 "date",
             ],
         )
@@ -644,6 +753,10 @@ class NutritionLoggingService:
             return WaterLog.BEVERAGE_COFFEE
         if "juice" in text:
             return WaterLog.BEVERAGE_JUICE
+        if "milk" in text:
+            return WaterLog.BEVERAGE_MILK
+        if "soda" in text or "cola" in text or "soft drink" in text:
+            return WaterLog.BEVERAGE_SODA
         if "smoothie" in text or "shake" in text:
             return WaterLog.BEVERAGE_SMOOTHIE
         return WaterLog.BEVERAGE_OTHER

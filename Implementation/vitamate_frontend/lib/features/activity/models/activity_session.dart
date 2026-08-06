@@ -14,6 +14,7 @@ class ActivitySession {
     required this.metValueSnapshot,
     required this.estimatedCalories,
     required this.caloriesBurned,
+    required this.finalActivityLogId,
     required this.startedAt,
     required this.pausedAt,
     required this.endedAt,
@@ -34,6 +35,7 @@ class ActivitySession {
   final double metValueSnapshot;
   final int estimatedCalories;
   final int caloriesBurned;
+  final int? finalActivityLogId;
   final DateTime startedAt;
   final DateTime? pausedAt;
   final DateTime? endedAt;
@@ -80,8 +82,9 @@ class ActivitySession {
       return caloriesBurned;
     }
     final elapsedMinutes = elapsedSecondsAt(now) / 60;
-    final live = ((metValueSnapshot * 3.5 * userWeightKg) / 200 * elapsedMinutes)
-        .round();
+    final live =
+        ((metValueSnapshot * 3.5 * userWeightKg) / 200 * elapsedMinutes)
+            .round();
     return live > caloriesBurned ? live : caloriesBurned;
   }
 
@@ -105,7 +108,10 @@ class ActivitySession {
       metValueSnapshot: (json['met_value_snapshot'] as num?)?.toDouble() ?? 0,
       estimatedCalories: (json['estimated_calories'] as num?)?.toInt() ?? 0,
       caloriesBurned: (json['calories_burned'] as num?)?.toInt() ?? 0,
-      startedAt: DateTime.parse((json['started_at'] ?? '').toString()).toLocal(),
+      finalActivityLogId: (json['final_activity_log_id'] as num?)?.toInt(),
+      startedAt: DateTime.parse(
+        (json['started_at'] ?? '').toString(),
+      ).toLocal(),
       pausedAt: _parseDateTime(json['paused_at']),
       endedAt: _parseDateTime(json['ended_at']),
       totalPausedSeconds: (json['total_paused_seconds'] as num?)?.toInt() ?? 0,

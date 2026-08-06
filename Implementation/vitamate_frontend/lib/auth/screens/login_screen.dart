@@ -3,31 +3,36 @@ import 'package:flutter/material.dart';
 
 import '../../core/routing/routes.dart';
 import '../../core/testing/app_test_keys.dart';
+import '../../core/theme/vitamate_theme.dart';
 import '../../shared/utils/validators.dart';
 import '../state/auth_controller.dart';
 
 const _pageBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF5F0FF), Color(0xFFFFFDFF), Color(0xFFF2F0FF)],
+  colors: [
+    VitaMateTheme.background,
+    VitaMateTheme.surface,
+    VitaMateTheme.softSurface,
+  ],
 );
 
 const _shellBackground = LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [Color(0xFFF4EEFF), Color(0xFFFFFDFF)],
+  colors: [VitaMateTheme.softSurface, VitaMateTheme.surface],
 );
 
 const _buttonGradient = LinearGradient(
   begin: Alignment.centerLeft,
   end: Alignment.centerRight,
-  colors: [Color(0xFF8D4BEE), Color(0xFFA217F4)],
+  colors: [VitaMateTheme.primaryGlow, VitaMateTheme.primary],
 );
 
-const _deepPurple = Color(0xFF42118B);
-const _midPurple = Color(0xFF8A33FF);
-const _hintPurple = Color(0xFFB06AFF);
-const _strokePurple = Color(0xFFE7D5FF);
+const _deepPurple = VitaMateTheme.primaryDeep;
+const _midPurple = VitaMateTheme.primary;
+const _hintPurple = VitaMateTheme.textMuted;
+const _strokePurple = VitaMateTheme.border;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -150,7 +155,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final disableAndroidAutofill =
         defaultTargetPlatform == TargetPlatform.android;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: VitaMateTheme.background,
       resizeToAvoidBottomInset: true,
       body: Container(
         decoration: const BoxDecoration(gradient: _pageBackground),
@@ -185,7 +190,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             children: [
                               Center(
                                 child: Image.asset(
-                                  'assets/images/logo.png',
+                                  'assets/images/finallogo.png',
                                   height: isVeryCompact
                                       ? 56
                                       : isCompact

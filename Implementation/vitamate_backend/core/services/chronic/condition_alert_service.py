@@ -7,6 +7,16 @@ from core.models import ConditionAlert
 
 class ConditionAlertService:
     @staticmethod
+    def mark_seen(*, user, alert_id: int) -> bool:
+        return bool(
+            ConditionAlert.objects.filter(
+                pk=alert_id,
+                user_condition__user=user,
+                status=ConditionAlert.STATUS_OPEN,
+            ).update(status=ConditionAlert.STATUS_SEEN)
+        )
+
+    @staticmethod
     def sync_alerts(*, user_condition, alerts: list[dict], on_date=None) -> list[ConditionAlert]:
         on_date = on_date or timezone.localdate()
         persisted = []

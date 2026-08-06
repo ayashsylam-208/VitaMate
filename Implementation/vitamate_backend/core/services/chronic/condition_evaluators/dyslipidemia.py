@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from core.models import ConditionRuleProfile
 from core.services.chronic.condition_evaluators.base import BaseConditionEvaluator
+from core.services.chronic.lipid_panel_values import LipidPanelValues
 
 
 class DyslipidemiaEvaluator(BaseConditionEvaluator):
@@ -77,10 +78,10 @@ class DyslipidemiaEvaluator(BaseConditionEvaluator):
         ]
 
     def classify_reading(self, user_condition, latest_record) -> str:
-        payload = latest_record.payload or {}
-        ldl = self._numeric(payload.get("ldl"), default=latest_record.value_1)
-        hdl = self._numeric(payload.get("hdl"))
-        triglycerides = self._numeric(payload.get("triglycerides"), default=latest_record.value_3)
+        values = LipidPanelValues.from_measurement(latest_record)
+        ldl = values.ldl_mg_dl
+        hdl = values.hdl_mg_dl
+        triglycerides = values.triglycerides_mg_dl
         if (
             ldl is not None
             and ldl <= self._ldl_target(user_condition)

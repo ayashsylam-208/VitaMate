@@ -10,11 +10,30 @@ class WaterRepository {
 
   final WaterApi _api;
 
-  Future<HydrationSummary> getSummary({CancelToken? cancelToken}) {
-    return _api.getSummary(cancelToken: cancelToken);
+  Future<HydrationSummary> getSummary({
+    DateTime? date,
+    CancelToken? cancelToken,
+  }) {
+    return _api.getSummary(date: date, cancelToken: cancelToken);
   }
 
-  Future<List<WaterLog>> getTodayLogs() => _api.getTodayLogs();
+  Future<List<WaterLog>> getLogs({
+    DateTime? date,
+    DateTime? from,
+    DateTime? to,
+    CancelToken? cancelToken,
+  }) {
+    return _api.getLogs(
+      date: date,
+      from: from,
+      to: to,
+      cancelToken: cancelToken,
+    );
+  }
+
+  Future<List<WaterLog>> getTodayLogs({CancelToken? cancelToken}) {
+    return _api.getTodayLogs(cancelToken: cancelToken);
+  }
 
   Future<List<FoodItem>> searchBeverages(
     String query, {
@@ -24,28 +43,39 @@ class WaterRepository {
     return _api.searchBeverages(query, limit: limit, cancelToken: cancelToken);
   }
 
-  Future<void> addWaterMl(int amountMl) => _api.addWaterMl(amountMl);
+  Future<WaterLog> addWaterMl(int amountMl, {DateTime? consumedAt}) {
+    return _api.addWaterMl(amountMl, consumedAt: consumedAt);
+  }
 
-  Future<void> addNamedBeverage({
+  Future<WaterLog> addNamedBeverage({
     required int amountMl,
     required String beverageType,
     required String beverageName,
+    DateTime? consumedAt,
+    double? caffeineMg,
   }) {
     return _api.addNamedBeverage(
       amountMl: amountMl,
       beverageType: beverageType,
       beverageName: beverageName,
+      consumedAt: consumedAt,
+      caffeineMg: caffeineMg,
     );
   }
 
-  Future<void> addCatalogBeverage({
+  Future<WaterLog> addCatalogBeverage({
     required int foodItemId,
     required int amountMl,
+    DateTime? consumedAt,
   }) {
-    return _api.addCatalogBeverage(foodItemId: foodItemId, amountMl: amountMl);
+    return _api.addCatalogBeverage(
+      foodItemId: foodItemId,
+      amountMl: amountMl,
+      consumedAt: consumedAt,
+    );
   }
 
-  Future<void> addCustomBeverage({
+  Future<WaterLog> addCustomBeverage({
     required int amountMl,
     required String name,
     required String beverageType,
@@ -59,6 +89,7 @@ class WaterRepository {
     required double waterG,
     required double caffeineMg,
     bool saveForReuse = true,
+    DateTime? consumedAt,
   }) {
     return _api.addCustomBeverage(
       amountMl: amountMl,
@@ -74,6 +105,27 @@ class WaterRepository {
       waterG: waterG,
       caffeineMg: caffeineMg,
       saveForReuse: saveForReuse,
+      consumedAt: consumedAt,
     );
   }
+
+  Future<WaterLog> updateLog({
+    required int id,
+    int? amountMl,
+    String? beverageType,
+    String? beverageName,
+    DateTime? consumedAt,
+    double? caffeineMg,
+  }) {
+    return _api.updateLog(
+      id: id,
+      amountMl: amountMl,
+      beverageType: beverageType,
+      beverageName: beverageName,
+      consumedAt: consumedAt,
+      caffeineMg: caffeineMg,
+    );
+  }
+
+  Future<void> deleteLog(int id) => _api.deleteLog(id);
 }
